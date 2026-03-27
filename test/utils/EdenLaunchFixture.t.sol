@@ -1,0 +1,335 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+import {DeployEdenByEqualFi} from "script/DeployEdenByEqualFi.s.sol";
+import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockController.sol";
+import {PositionNFT} from "src/nft/PositionNFT.sol";
+import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
+import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
+import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
+import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
+import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
+import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
+import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
+import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
+import {EdenStEVEFacet} from "src/eden/EdenStEVEFacet.sol";
+import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
+import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
+import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
+import {BasketToken} from "src/tokens/BasketToken.sol";
+import {Types} from "src/libraries/Types.sol";
+
+contract MockERC20Launch is ERC20 {
+    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
+
+contract MockFeeOnTransferLaunch is ERC20 {
+    uint256 internal constant BPS = 10_000;
+
+    uint256 public feeBps = 1000;
+    address public feeSink = address(0xdead);
+
+    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        if (from == address(0) || to == address(0) || feeBps == 0) {
+            super._update(from, to, value);
+            return;
+        }
+
+        uint256 fee = (value * feeBps) / BPS;
+        uint256 remainder = value - fee;
+        super._update(from, feeSink, fee);
+        super._update(from, to, remainder);
+    }
+}
+
+abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
+    address internal treasury = _addr("treasury");
+    address internal alice = _addr("alice");
+    address internal bob = _addr("bob");
+    address internal carol = _addr("carol");
+
+    address internal diamond;
+    PositionNFT internal positionNft;
+    FixedDelayTimelockController internal timelockController;
+
+    MockERC20Launch internal eve;
+    MockERC20Launch internal alt;
+    MockFeeOnTransferLaunch internal fot;
+
+    uint256 internal steveBasketId;
+    address internal steveToken;
+    uint256 internal altBasketId;
+    address internal altBasketToken;
+    uint256 internal timelockSaltNonce;
+
+    function setUp() public virtual {
+        LaunchDeployment memory deployment = deployLaunch(address(this), address(this), treasury);
+        diamond = deployment.diamond;
+        positionNft = PositionNFT(deployment.positionNFT);
+        timelockController = FixedDelayTimelockController(payable(deployment.timelockController));
+
+        eve = new MockERC20Launch("EVE", "EVE");
+        alt = new MockERC20Launch("ALT", "ALT");
+        fot = new MockFeeOnTransferLaunch("FoT", "FOT");
+    }
+
+    function _bootstrapCorePools() internal {
+        _setDefaultPoolConfig(_poolConfig());
+        _initPoolWithActionFees(1, address(eve), _poolConfig(), _actionFees());
+        _initPoolWithActionFees(2, address(alt), _poolConfig(), _actionFees());
+    }
+
+    function _bootstrapCorePoolsWithFoT() internal {
+        _setDefaultPoolConfig(_poolConfig());
+        _initPoolWithActionFees(1, address(eve), _poolConfig(), _actionFees());
+        _initPoolWithActionFees(2, address(alt), _poolConfig(), _actionFees());
+        _initPoolWithActionFees(3, address(fot), _poolConfig(), _actionFees());
+    }
+
+    function _bootstrapEdenProduct() internal {
+        _bootstrapCorePools();
+
+        (steveBasketId, steveToken) = _createStEVE(_stEveParams(address(eve)));
+        (altBasketId, altBasketToken) =
+            _createBasket(_singleAssetParams("ALT Basket", "ALTB", address(alt), "ipfs://alt", 2, 0, 0));
+
+        _configureRewards(address(eve), 10e18, true);
+        _configureLending(altBasketId, 1 days, 14 days);
+
+        uint256[] memory mins = new uint256[](1);
+        mins[0] = 1e18;
+        uint256[] memory fees = new uint256[](1);
+        fees[0] = 0;
+        _configureBorrowFeeTiers(altBasketId, mins, fees);
+    }
+
+    function _timelockCall(address target, bytes memory data) internal returns (bytes memory result) {
+        bytes32 salt = keccak256(abi.encodePacked("edenfi-test-salt", timelockSaltNonce++));
+        timelockController.schedule(target, 0, data, bytes32(0), salt, 7 days);
+        vm.warp(block.timestamp + 7 days + 1);
+        timelockController.execute(target, 0, data, bytes32(0), salt);
+        result = "";
+    }
+
+    function _setDefaultPoolConfig(Types.PoolConfig memory config) internal {
+        _timelockCall(diamond, abi.encodeWithSelector(PoolManagementFacet.setDefaultPoolConfig.selector, config));
+    }
+
+    function _initPoolWithActionFees(
+        uint256 pid,
+        address underlying,
+        Types.PoolConfig memory config,
+        Types.ActionFeeSet memory actionFees
+    ) internal {
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(PoolManagementFacet.initPoolWithActionFees.selector, pid, underlying, config, actionFees)
+        );
+    }
+
+    function _createBasket(EdenBasketBase.CreateBasketParams memory params)
+        internal
+        returns (uint256 basketId, address basketToken)
+    {
+        basketId = EdenViewFacet(diamond).basketCount();
+        _timelockCall(diamond, abi.encodeWithSelector(EdenBasketFacet.createBasket.selector, params));
+        basketToken = EdenBasketFacet(diamond).getBasket(basketId).token;
+    }
+
+    function _createStEVE(EdenBasketBase.CreateBasketParams memory params)
+        internal
+        returns (uint256 basketId, address basketToken)
+    {
+        _timelockCall(diamond, abi.encodeWithSelector(EdenStEVEFacet.createStEVE.selector, params));
+        basketId = EdenStEVEFacet(diamond).steveBasketId();
+        basketToken = EdenBasketFacet(diamond).getBasket(basketId).token;
+    }
+
+    function _configureRewards(address rewardToken, uint256 rewardRatePerSecond, bool enabled) internal {
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(EdenRewardFacet.configureRewards.selector, rewardToken, rewardRatePerSecond, enabled)
+        );
+    }
+
+    function _configureLending(uint256 basketId, uint40 minDuration, uint40 maxDuration) internal {
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(EdenLendingFacet.configureLending.selector, basketId, minDuration, maxDuration)
+        );
+    }
+
+    function _configureBorrowFeeTiers(
+        uint256 basketId,
+        uint256[] memory minCollateralUnits,
+        uint256[] memory flatFeeNative
+    ) internal {
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(
+                EdenLendingFacet.configureBorrowFeeTiers.selector, basketId, minCollateralUnits, flatFeeNative
+            )
+        );
+    }
+
+    function _setBasketMetadata(uint256 basketId, string memory uri, uint8 basketType) internal {
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(EdenAdminFacet.setBasketMetadata.selector, basketId, uri, basketType)
+        );
+    }
+
+    function _setProtocolURI(string memory uri) internal {
+        _timelockCall(diamond, abi.encodeWithSelector(EdenAdminFacet.setProtocolURI.selector, uri));
+    }
+
+    function _setContractVersion(string memory version_) internal {
+        _timelockCall(diamond, abi.encodeWithSelector(EdenAdminFacet.setContractVersion.selector, version_));
+    }
+
+    function _setFacetVersion(address facet, string memory version_) internal {
+        _timelockCall(diamond, abi.encodeWithSelector(EdenAdminFacet.setFacetVersion.selector, facet, version_));
+    }
+
+    function _setBasketPaused(uint256 basketId, bool paused) internal {
+        _timelockCall(diamond, abi.encodeWithSelector(EdenAdminFacet.setBasketPaused.selector, basketId, paused));
+    }
+
+    function _setBasketFees(
+        uint256 basketId,
+        uint16[] memory mintFeeBps,
+        uint16[] memory burnFeeBps,
+        uint16 flashFeeBps
+    ) internal {
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(EdenAdminFacet.setBasketFees.selector, basketId, mintFeeBps, burnFeeBps, flashFeeBps)
+        );
+    }
+
+    function _setPoolFeeShareBps(uint16 poolFeeShareBps) internal {
+        _timelockCall(diamond, abi.encodeWithSelector(EdenAdminFacet.setPoolFeeShareBps.selector, poolFeeShareBps));
+    }
+
+    function _setTimelockController(address newController) internal {
+        _timelockCall(diamond, abi.encodeWithSelector(EdenAdminFacet.setTimelockController.selector, newController));
+        timelockController = FixedDelayTimelockController(payable(newController));
+    }
+
+    function _mintPosition(address user, uint256 homePoolId) internal returns (uint256 positionId) {
+        vm.prank(user);
+        positionId = PositionManagementFacet(diamond).mintPosition(homePoolId);
+    }
+
+    function _mintWalletBasket(address user, uint256 basketId, ERC20 asset, uint256 units) internal {
+        uint256[] memory maxInputs = new uint256[](1);
+        maxInputs[0] = units;
+        vm.startPrank(user);
+        asset.approve(diamond, units);
+        EdenBasketFacet(diamond).mintBasket(basketId, units, user, maxInputs);
+        vm.stopPrank();
+    }
+
+    function _depositWalletStEVEToPosition(address user, uint256 positionId, uint256 amount) internal {
+        vm.startPrank(user);
+        BasketToken(steveToken).approve(diamond, amount);
+        EdenStEVEFacet(diamond).depositStEVEToPosition(positionId, amount, amount);
+        vm.stopPrank();
+    }
+
+    function _poolConfig() internal pure returns (Types.PoolConfig memory cfg) {
+        Types.FixedTermConfig[] memory fixedTerms = new Types.FixedTermConfig[](1);
+        fixedTerms[0] = Types.FixedTermConfig({durationSecs: 7 days, apyBps: 500});
+
+        cfg.rollingApyBps = 500;
+        cfg.depositorLTVBps = 8000;
+        cfg.maintenanceRateBps = 100;
+        cfg.flashLoanFeeBps = 20;
+        cfg.flashLoanAntiSplit = false;
+        cfg.minDepositAmount = 1e18;
+        cfg.minLoanAmount = 1e18;
+        cfg.minTopupAmount = 1e18;
+        cfg.isCapped = false;
+        cfg.depositCap = 0;
+        cfg.maxUserCount = 0;
+        cfg.aumFeeMinBps = 10;
+        cfg.aumFeeMaxBps = 100;
+        cfg.fixedTermConfigs = fixedTerms;
+    }
+
+    function _actionFees() internal pure returns (Types.ActionFeeSet memory actionFees) {
+        actionFees.borrowFee = Types.ActionFeeConfig({amount: 0, enabled: false});
+        actionFees.repayFee = Types.ActionFeeConfig({amount: 0, enabled: false});
+        actionFees.withdrawFee = Types.ActionFeeConfig({amount: 0, enabled: false});
+        actionFees.flashFee = Types.ActionFeeConfig({amount: 0, enabled: false});
+        actionFees.closeRollingFee = Types.ActionFeeConfig({amount: 0, enabled: false});
+    }
+
+    function _singleAssetParams(
+        string memory name_,
+        string memory symbol_,
+        address asset,
+        string memory uri_,
+        uint8 basketType,
+        uint16 mintFee,
+        uint16 burnFee
+    ) internal pure returns (EdenBasketBase.CreateBasketParams memory p) {
+        p.name = name_;
+        p.symbol = symbol_;
+        p.uri = uri_;
+        p.assets = new address[](1);
+        p.assets[0] = asset;
+        p.bundleAmounts = new uint256[](1);
+        p.bundleAmounts[0] = 1e18;
+        p.mintFeeBps = new uint16[](1);
+        p.mintFeeBps[0] = mintFee;
+        p.burnFeeBps = new uint16[](1);
+        p.burnFeeBps[0] = burnFee;
+        p.flashFeeBps = 50;
+        p.basketType = basketType;
+    }
+
+    function _stEveParams(address asset) internal pure returns (EdenBasketBase.CreateBasketParams memory p) {
+        p = _singleAssetParams("stEVE", "stEVE", asset, "ipfs://steve", 1, 0, 0);
+    }
+
+    function _addr(string memory label) internal pure returns (address) {
+        return address(uint160(uint256(keccak256(bytes(label)))));
+    }
+
+    function assertTrue(bool condition) internal pure {
+        require(condition, "assertTrue failed");
+    }
+
+    function assertEq(uint256 left, uint256 right) internal pure {
+        require(left == right, "assertEq(uint256) failed");
+    }
+
+    function assertEq(address left, address right) internal pure {
+        require(left == right, "assertEq(address) failed");
+    }
+
+    function assertEq(bytes32 left, bytes32 right) internal pure {
+        require(left == right, "assertEq(bytes32) failed");
+    }
+
+    function assertEq(string memory left, string memory right) internal pure {
+        require(keccak256(bytes(left)) == keccak256(bytes(right)), "assertEq(string) failed");
+    }
+
+    function assertGt(uint256 left, uint256 right) internal pure {
+        require(left > right, "assertGt failed");
+    }
+}

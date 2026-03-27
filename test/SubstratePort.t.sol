@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// Smoke coverage only: this suite intentionally seeds library/accounting state directly.
 pragma solidity ^0.8.20;
 
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -147,7 +148,7 @@ interface Vm {
     function prank(address) external;
 }
 
-contract SubstratePortTest {
+contract SubstratePortSmokeTest {
     bytes32 internal constant ROUTER_SOURCE = keccak256("TEST_ROUTER");
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
