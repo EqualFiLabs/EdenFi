@@ -5,6 +5,7 @@ import {EdenLendingFacet} from "./EdenLendingFacet.sol";
 import {PositionNFT} from "../nft/PositionNFT.sol";
 import {BasketToken} from "../tokens/BasketToken.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
+import {LibEdenAdminStorage} from "../libraries/LibEdenAdminStorage.sol";
 import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
 import {LibEdenLendingStorage} from "../libraries/LibEdenLendingStorage.sol";
 import {LibEdenRewardStorage} from "../libraries/LibEdenRewardStorage.sol";
@@ -51,8 +52,11 @@ contract EdenViewFacet is EdenLendingFacet {
     struct ProductConfigView {
         address treasury;
         address timelock;
+        uint256 timelockDelaySeconds;
         uint256 basketCount;
         uint16 poolFeeShareBps;
+        string protocolURI;
+        string contractVersion;
         bool steveConfigured;
         uint256 steveBasketId;
         address rewardToken;
@@ -157,8 +161,11 @@ contract EdenViewFacet is EdenLendingFacet {
 
         view_.treasury = LibAppStorage.treasuryAddress(app);
         view_.timelock = LibAppStorage.timelockAddress(app);
+        view_.timelockDelaySeconds = LibEdenAdminStorage.TIMELOCK_DELAY_SECONDS;
         view_.basketCount = LibEdenBasketStorage.s().basketCount;
         view_.poolFeeShareBps = _basketPoolFeeShareBps();
+        view_.protocolURI = LibEdenAdminStorage.s().protocolURI;
+        view_.contractVersion = LibEdenAdminStorage.s().contractVersion;
         view_.steveConfigured = steve.configured;
         view_.steveBasketId = steve.configured ? steve.basketId : 0;
         view_.rewardToken = rewards.config.rewardToken;

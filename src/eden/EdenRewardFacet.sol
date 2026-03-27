@@ -26,7 +26,7 @@ contract EdenRewardFacet is EdenStEVEFacet {
     event RewardsClaimed(uint256 indexed tokenId, bytes32 indexed positionKey, address indexed to, uint256 amount);
 
     function configureRewards(address rewardToken, uint256 rewardRatePerSecond, bool enabled) external nonReentrant {
-        LibAccess.enforceOwnerOrTimelock();
+        LibAccess.enforceTimelockOrOwnerIfUnset();
         if (rewardToken == address(0)) revert InvalidUnderlying();
 
         LibEdenRewardStorage.RewardStorage storage rewards = LibEdenRewardStorage.s();

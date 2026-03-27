@@ -33,7 +33,7 @@ contract EdenBasketFacet is EdenBasketBase, ReentrancyGuardModifiers {
         nonReentrant
         returns (uint256 basketId, address token)
     {
-        LibAccess.enforceOwnerOrTimelock();
+        LibAccess.enforceTimelockOrOwnerIfUnset();
         _validateCreateParams(params);
 
         LibAppStorage.AppStorage storage app = LibAppStorage.s();

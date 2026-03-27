@@ -139,7 +139,7 @@ contract EdenBasketFacetTest {
     function setUp() public {
         harness = new EdenBasketHarness();
         harness.setOwner(address(this));
-        harness.setTimelock(_addr("timelock"));
+        harness.setTimelock(address(this));
         harness.setTreasury(treasury);
         harness.setFeeSplits(1000, 0);
 

@@ -279,7 +279,7 @@ contract EdenLendingFacet is EdenRewardFacet {
         basketExists(basketId)
     {
         LibCurrency.assertZeroMsgValue();
-        LibAccess.enforceOwnerOrTimelock();
+        LibAccess.enforceTimelockOrOwnerIfUnset();
         if (minDuration == 0 || maxDuration < minDuration) {
             revert InvalidDuration(0, minDuration, maxDuration);
         }
@@ -297,7 +297,7 @@ contract EdenLendingFacet is EdenRewardFacet {
         uint256[] calldata flatFeeNative
     ) external nonReentrant basketExists(basketId) {
         LibCurrency.assertZeroMsgValue();
-        LibAccess.enforceOwnerOrTimelock();
+        LibAccess.enforceTimelockOrOwnerIfUnset();
 
         uint256 len = minCollateralUnits.length;
         if (len == 0 || len != flatFeeNative.length) revert InvalidArrayLength();

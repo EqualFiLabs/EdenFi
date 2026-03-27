@@ -95,7 +95,7 @@ contract EdenRewardFacetTest {
     function setUp() public {
         harness = new EdenRewardHarness();
         harness.setOwner(address(this));
-        harness.setTimelock(_addr("timelock"));
+        harness.setTimelock(address(this));
         harness.setTreasury(_addr("treasury"));
         harness.setFeeSplits(1000, 0);
 

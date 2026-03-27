@@ -28,7 +28,7 @@ contract EdenStEVEFacet is EdenBasketFacet, PositionManagementFacet {
         nonReentrant
         returns (uint256 basketId, address token)
     {
-        LibAccess.enforceOwnerOrTimelock();
+        LibAccess.enforceTimelockOrOwnerIfUnset();
         if (LibEdenStEVEStorage.s().configured) revert InvalidParameterRange("stEVE already configured");
         if (params.assets.length != 1) revert InvalidBundleDefinition();
         if (params.basketType != 1) revert InvalidParameterRange("stEVE basketType");
