@@ -50,6 +50,7 @@ contract EdenStEVEFacet is EdenBasketFacet, PositionManagementFacet {
         external
         payable
         nonReentrant
+        virtual
         returns (uint256 received)
     {
         LibEdenStEVEStorage.StEVEStorage storage store = LibEdenStEVEStorage.s();
@@ -66,6 +67,7 @@ contract EdenStEVEFacet is EdenBasketFacet, PositionManagementFacet {
 
         LibActiveCreditIndex.settle(pid, positionKey);
         LibFeeIndex.settle(pid, positionKey);
+        _beforeEligiblePrincipalChange(positionKey);
 
         uint256 currentPrincipal = pool.userPrincipal[positionKey];
         bool isNewUser = currentPrincipal == 0;
@@ -98,6 +100,7 @@ contract EdenStEVEFacet is EdenBasketFacet, PositionManagementFacet {
         external
         payable
         nonReentrant
+        virtual
         returns (uint256 withdrawn)
     {
         LibEdenStEVEStorage.StEVEStorage storage store = LibEdenStEVEStorage.s();
@@ -114,6 +117,7 @@ contract EdenStEVEFacet is EdenBasketFacet, PositionManagementFacet {
 
         LibActiveCreditIndex.settle(pid, positionKey);
         LibFeeIndex.settle(pid, positionKey);
+        _beforeEligiblePrincipalChange(positionKey);
 
         uint256 currentPrincipal = pool.userPrincipal[positionKey];
         uint256 totalEncumbered = pool.userSameAssetDebt[positionKey];
@@ -150,22 +154,27 @@ contract EdenStEVEFacet is EdenBasketFacet, PositionManagementFacet {
         public
         override
         basketExists(basketId)
+        virtual
         returns (uint256 minted)
     {
-        minted = super.mintBasketFromPosition(positionId, basketId, units);
-
         LibEdenStEVEStorage.StEVEStorage storage store = LibEdenStEVEStorage.s();
         if (store.configured && basketId == store.basketId) {
             bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
+            _beforeEligiblePrincipalChange(positionKey);
+            minted = super.mintBasketFromPosition(positionId, basketId, units);
             store.eligiblePrincipal[positionKey] += minted;
             store.eligibleSupply += minted;
+            return minted;
         }
+
+        minted = super.mintBasketFromPosition(positionId, basketId, units);
     }
 
     function burnBasketFromPosition(uint256 positionId, uint256 basketId, uint256 units)
         public
         override
         basketExists(basketId)
+        virtual
         returns (uint256[] memory assetsOut)
     {
         LibEdenStEVEStorage.StEVEStorage storage store = LibEdenStEVEStorage.s();
@@ -173,6 +182,7 @@ contract EdenStEVEFacet is EdenBasketFacet, PositionManagementFacet {
             bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
             uint256 eligible = store.eligiblePrincipal[positionKey];
             if (units > eligible) revert InsufficientPrincipal(units, eligible);
+            _beforeEligiblePrincipalChange(positionKey);
             store.eligiblePrincipal[positionKey] = eligible - units;
             store.eligibleSupply -= units;
         }
@@ -192,4 +202,6 @@ contract EdenStEVEFacet is EdenBasketFacet, PositionManagementFacet {
     function eligiblePrincipalOfPosition(uint256 tokenId) external view returns (uint256) {
         return LibEdenStEVEStorage.s().eligiblePrincipal[LibPositionHelpers.positionKey(tokenId)];
     }
+
+    function _beforeEligiblePrincipalChange(bytes32 positionKey) internal virtual {}
 }
