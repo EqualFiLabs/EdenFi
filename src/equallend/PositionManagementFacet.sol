@@ -56,44 +56,7 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
         uint256 amount,
         uint256 maxAmount
     ) external payable nonReentrant {
-        if (amount == 0) {
-            revert InvalidParameterRange("amount=0");
-        }
-
-        _requireOwnership(tokenId);
-        _assertTokenPool(tokenId, pid);
-
-        Types.PoolData storage p = _pool(pid);
-        LibCurrency.assertMsgValue(p.underlying, amount);
-
-        bytes32 positionKey = _getPositionKey(tokenId);
-        LibPositionHelpers.ensurePoolMembership(positionKey, pid, true);
-
-        LibActiveCreditIndex.settle(pid, positionKey);
-        LibFeeIndex.settle(pid, positionKey);
-
-        uint256 currentPrincipal = p.userPrincipal[positionKey];
-        bool isNewUser = currentPrincipal == 0;
-        _enforceMaxUsers(p, isNewUser);
-
-        uint256 received = LibCurrency.pullAtLeast(p.underlying, msg.sender, amount, maxAmount);
-        if (received < p.poolConfig.minDepositAmount) {
-            revert DepositBelowMinimum(received, p.poolConfig.minDepositAmount);
-        }
-
-        uint256 newPrincipal = currentPrincipal + received;
-        _enforceDepositCap(p, newPrincipal);
-
-        p.userPrincipal[positionKey] = newPrincipal;
-        p.totalDeposits += received;
-        p.trackedBalance += received;
-        p.userFeeIndex[positionKey] = p.feeIndex;
-        p.userMaintenanceIndex[positionKey] = p.maintenanceIndex;
-        if (isNewUser) {
-            p.userCount += 1;
-        }
-
-        emit DepositedToPosition(tokenId, msg.sender, pid, received, newPrincipal);
+        _depositToPosition(tokenId, pid, amount, maxAmount, msg.sender);
     }
 
     function withdrawFromPosition(
@@ -102,51 +65,7 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
         uint256 principalToWithdraw,
         uint256 minReceived
     ) external payable nonReentrant {
-        LibCurrency.assertZeroMsgValue();
-        if (principalToWithdraw == 0) {
-            revert InvalidParameterRange("amount=0");
-        }
-
-        _requireOwnership(tokenId);
-        _assertTokenPool(tokenId, pid);
-
-        Types.PoolData storage p = _pool(pid);
-        bytes32 positionKey = _getPositionKey(tokenId);
-        LibPositionHelpers.ensurePoolMembership(positionKey, pid, true);
-
-        LibActiveCreditIndex.settle(pid, positionKey);
-        LibFeeIndex.settle(pid, positionKey);
-
-        uint256 currentPrincipal = p.userPrincipal[positionKey];
-        uint256 totalEncumbered = p.userSameAssetDebt[positionKey];
-        uint256 encumbrance = LibEncumbrance.total(positionKey, pid);
-        if (encumbrance > totalEncumbered) {
-            totalEncumbered = encumbrance;
-        }
-
-        if (totalEncumbered > currentPrincipal) {
-            revert InsufficientPrincipal(totalEncumbered, currentPrincipal);
-        }
-
-        uint256 availablePrincipal = currentPrincipal - totalEncumbered;
-        if (principalToWithdraw > availablePrincipal) {
-            revert InsufficientPrincipal(principalToWithdraw, availablePrincipal);
-        }
-
-        uint256 newPrincipal = currentPrincipal - principalToWithdraw;
-        p.userPrincipal[positionKey] = newPrincipal;
-        p.totalDeposits -= principalToWithdraw;
-        p.trackedBalance -= principalToWithdraw;
-        if (newPrincipal == 0 && p.userCount > 0) {
-            p.userCount -= 1;
-        }
-        if (LibCurrency.isNative(p.underlying)) {
-            LibAppStorage.s().nativeTrackedTotal -= principalToWithdraw;
-        }
-
-        LibCurrency.transferWithMin(p.underlying, msg.sender, principalToWithdraw, minReceived);
-
-        emit WithdrawnFromPosition(tokenId, msg.sender, pid, principalToWithdraw, newPrincipal);
+        _withdrawFromPosition(tokenId, pid, principalToWithdraw, minReceived, msg.sender);
     }
 
     function cleanupMembership(uint256 tokenId, uint256 pid) external payable nonReentrant {
@@ -199,5 +118,107 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
         if (maxUsers > 0 && p.userCount >= maxUsers) {
             revert MaxUserCountExceeded(maxUsers);
         }
+    }
+
+    function _depositToPosition(
+        uint256 tokenId,
+        uint256 pid,
+        uint256 amount,
+        uint256 maxAmount,
+        address fundingAccount
+    ) internal returns (uint256 received) {
+        if (amount == 0) {
+            revert InvalidParameterRange("amount=0");
+        }
+
+        _requireOwnership(tokenId);
+        _assertTokenPool(tokenId, pid);
+
+        Types.PoolData storage p = _pool(pid);
+        LibCurrency.assertMsgValue(p.underlying, amount);
+
+        bytes32 positionKey = _getPositionKey(tokenId);
+        LibPositionHelpers.ensurePoolMembership(positionKey, pid, true);
+
+        LibActiveCreditIndex.settle(pid, positionKey);
+        LibFeeIndex.settle(pid, positionKey);
+
+        uint256 currentPrincipal = p.userPrincipal[positionKey];
+        bool isNewUser = currentPrincipal == 0;
+        _enforceMaxUsers(p, isNewUser);
+
+        received = LibCurrency.pullAtLeast(p.underlying, fundingAccount, amount, maxAmount);
+        if (received < p.poolConfig.minDepositAmount) {
+            revert DepositBelowMinimum(received, p.poolConfig.minDepositAmount);
+        }
+
+        uint256 newPrincipal = currentPrincipal + received;
+        _enforceDepositCap(p, newPrincipal);
+
+        p.userPrincipal[positionKey] = newPrincipal;
+        p.totalDeposits += received;
+        p.trackedBalance += received;
+        p.userFeeIndex[positionKey] = p.feeIndex;
+        p.userMaintenanceIndex[positionKey] = p.maintenanceIndex;
+        if (isNewUser) {
+            p.userCount += 1;
+        }
+
+        emit DepositedToPosition(tokenId, msg.sender, pid, received, newPrincipal);
+    }
+
+    function _withdrawFromPosition(
+        uint256 tokenId,
+        uint256 pid,
+        uint256 principalToWithdraw,
+        uint256 minReceived,
+        address recipient
+    ) internal returns (uint256 withdrawn) {
+        LibCurrency.assertZeroMsgValue();
+        if (principalToWithdraw == 0) {
+            revert InvalidParameterRange("amount=0");
+        }
+
+        _requireOwnership(tokenId);
+        _assertTokenPool(tokenId, pid);
+
+        Types.PoolData storage p = _pool(pid);
+        bytes32 positionKey = _getPositionKey(tokenId);
+        LibPositionHelpers.ensurePoolMembership(positionKey, pid, true);
+
+        LibActiveCreditIndex.settle(pid, positionKey);
+        LibFeeIndex.settle(pid, positionKey);
+
+        uint256 currentPrincipal = p.userPrincipal[positionKey];
+        uint256 totalEncumbered = p.userSameAssetDebt[positionKey];
+        uint256 encumbrance = LibEncumbrance.total(positionKey, pid);
+        if (encumbrance > totalEncumbered) {
+            totalEncumbered = encumbrance;
+        }
+
+        if (totalEncumbered > currentPrincipal) {
+            revert InsufficientPrincipal(totalEncumbered, currentPrincipal);
+        }
+
+        uint256 availablePrincipal = currentPrincipal - totalEncumbered;
+        if (principalToWithdraw > availablePrincipal) {
+            revert InsufficientPrincipal(principalToWithdraw, availablePrincipal);
+        }
+
+        uint256 newPrincipal = currentPrincipal - principalToWithdraw;
+        p.userPrincipal[positionKey] = newPrincipal;
+        p.totalDeposits -= principalToWithdraw;
+        p.trackedBalance -= principalToWithdraw;
+        if (newPrincipal == 0 && p.userCount > 0) {
+            p.userCount -= 1;
+        }
+        if (LibCurrency.isNative(p.underlying)) {
+            LibAppStorage.s().nativeTrackedTotal -= principalToWithdraw;
+        }
+
+        LibCurrency.transferWithMin(p.underlying, recipient, principalToWithdraw, minReceived);
+        withdrawn = principalToWithdraw;
+
+        emit WithdrawnFromPosition(tokenId, msg.sender, pid, principalToWithdraw, newPrincipal);
     }
 }

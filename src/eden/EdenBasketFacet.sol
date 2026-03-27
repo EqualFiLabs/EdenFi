@@ -47,30 +47,8 @@ contract EdenBasketFacet is EdenBasketBase, ReentrancyGuardModifiers {
         }
 
         basketId = store.basketCount;
-        store.basketCount = basketId + 1;
-
         token = address(new BasketToken(params.name, params.symbol, address(this), basketId));
-
-        LibEdenBasketStorage.BasketConfig storage basket = store.baskets[basketId];
-        basket.assets = params.assets;
-        basket.bundleAmounts = params.bundleAmounts;
-        basket.mintFeeBps = params.mintFeeBps;
-        basket.burnFeeBps = params.burnFeeBps;
-        basket.flashFeeBps = params.flashFeeBps;
-        basket.token = token;
-        basket.poolId = _createBasketTokenPool(token);
-
-        store.basketMetadata[basketId] = LibEdenBasketStorage.BasketMetadata({
-            name: params.name,
-            symbol: params.symbol,
-            uri: params.uri,
-            creator: msg.sender,
-            createdAt: uint64(block.timestamp),
-            basketType: params.basketType
-        });
-        store.tokenToBasketIdPlusOne[token] = basketId + 1;
-
-        emit BasketCreated(basketId, token, params.assets, params.bundleAmounts);
+        _createBasketInternal(params, basketId, token);
     }
 
     function mintBasket(uint256 basketId, uint256 units, address to, uint256[] calldata maxInputAmounts)
@@ -126,9 +104,10 @@ contract EdenBasketFacet is EdenBasketBase, ReentrancyGuardModifiers {
     }
 
     function mintBasketFromPosition(uint256 positionId, uint256 basketId, uint256 units)
-        external
+        public
         nonReentrant
         basketExists(basketId)
+        virtual
         returns (uint256 minted)
     {
         if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
@@ -179,9 +158,10 @@ contract EdenBasketFacet is EdenBasketBase, ReentrancyGuardModifiers {
     }
 
     function burnBasketFromPosition(uint256 positionId, uint256 basketId, uint256 units)
-        external
+        public
         nonReentrant
         basketExists(basketId)
+        virtual
         returns (uint256[] memory assetsOut)
     {
         if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
@@ -596,6 +576,32 @@ contract EdenBasketFacet is EdenBasketBase, ReentrancyGuardModifiers {
 
     function _basketEncumbranceId(uint256 basketId) internal pure returns (uint256) {
         return uint256(keccak256(abi.encodePacked("EDEN_BASKET_ENCUMBRANCE", basketId)));
+    }
+
+    function _createBasketInternal(CreateBasketParams calldata params, uint256 basketId, address token) internal {
+        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
+        store.basketCount = basketId + 1;
+
+        LibEdenBasketStorage.BasketConfig storage basket = store.baskets[basketId];
+        basket.assets = params.assets;
+        basket.bundleAmounts = params.bundleAmounts;
+        basket.mintFeeBps = params.mintFeeBps;
+        basket.burnFeeBps = params.burnFeeBps;
+        basket.flashFeeBps = params.flashFeeBps;
+        basket.token = token;
+        basket.poolId = _createBasketTokenPool(token);
+
+        store.basketMetadata[basketId] = LibEdenBasketStorage.BasketMetadata({
+            name: params.name,
+            symbol: params.symbol,
+            uri: params.uri,
+            creator: msg.sender,
+            createdAt: uint64(block.timestamp),
+            basketType: params.basketType
+        });
+        store.tokenToBasketIdPlusOne[token] = basketId + 1;
+
+        emit BasketCreated(basketId, token, params.assets, params.bundleAmounts);
     }
 
     function _createBasketTokenPool(address underlying) private returns (uint256 pid) {
