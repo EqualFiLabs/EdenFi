@@ -3,10 +3,12 @@ pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
+import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
 import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
+import {InvalidArrayLength, InvalidUnits, IndexPaused, NoPoolForAsset} from "src/libraries/Errors.sol";
 
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
 
@@ -94,6 +96,54 @@ contract EdenBasketFacetTest is EdenLaunchFixture {
         uint256[] memory maxInputs = new uint256[](1);
         maxInputs[0] = 10e18;
         vm.expectRevert(abi.encodeWithSelector(LibCurrency.LibCurrency_InsufficientReceived.selector, 9e18, 10e18));
+        EdenBasketFacet(diamond).mintBasket(basketId, 10e18, bob, maxInputs);
+        vm.stopPrank();
+    }
+
+    function test_CreateBasket_RevertsForMissingCanonicalPool() public {
+        _bootstrapCorePools();
+        address missingAsset = _addr("missing-asset");
+        EdenBasketBase.CreateBasketParams memory params =
+            _singleAssetParams("Missing Pool", "MISS", missingAsset, "ipfs://missing", 0, 0, 0);
+        bytes memory data = abi.encodeWithSelector(EdenBasketFacet.createBasket.selector, params);
+        bytes32 salt = keccak256("missing-basket-pool");
+
+        timelockController.schedule(diamond, 0, data, bytes32(0), salt, 7 days);
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.expectRevert(abi.encodeWithSelector(NoPoolForAsset.selector, missingAsset));
+        timelockController.execute(diamond, 0, data, bytes32(0), salt);
+    }
+
+    function test_MintBasket_RevertsForInvalidUnitsPausedBasketAndInputShape() public {
+        _bootstrapCorePools();
+
+        (uint256 basketId,) =
+            _createBasket(_singleAssetParams("Guarded Basket", "GBASK", address(eve), "ipfs://guarded", 0, 1000, 0));
+
+        eve.mint(bob, 100e18);
+
+        vm.startPrank(bob);
+        eve.approve(diamond, 100e18);
+
+        uint256[] memory wrongLen = new uint256[](0);
+        vm.expectRevert(InvalidArrayLength.selector);
+        EdenBasketFacet(diamond).mintBasket(basketId, 10e18, bob, wrongLen);
+
+        uint256[] memory maxInputs = new uint256[](1);
+        maxInputs[0] = 11e18;
+        vm.expectRevert(InvalidUnits.selector);
+        EdenBasketFacet(diamond).mintBasket(basketId, 0, bob, maxInputs);
+
+        maxInputs[0] = 10e18;
+        vm.expectRevert(abi.encodeWithSelector(LibCurrency.LibCurrency_InvalidMax.selector, 10e18, 11e18));
+        EdenBasketFacet(diamond).mintBasket(basketId, 10e18, bob, maxInputs);
+        vm.stopPrank();
+
+        _setBasketPaused(basketId, true);
+
+        vm.startPrank(bob);
+        maxInputs[0] = 11e18;
+        vm.expectRevert(abi.encodeWithSelector(IndexPaused.selector, basketId));
         EdenBasketFacet(diamond).mintBasket(basketId, 10e18, bob, maxInputs);
         vm.stopPrank();
     }

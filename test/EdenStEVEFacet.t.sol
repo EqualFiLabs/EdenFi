@@ -3,11 +3,13 @@ pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
+import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
 import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
 import {EdenStEVEFacet} from "src/eden/EdenStEVEFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
-import {NotNFTOwner} from "src/libraries/Errors.sol";
+import {InsufficientPrincipal, InvalidParameterRange, NotNFTOwner} from "src/libraries/Errors.sol";
+import {BasketToken} from "src/tokens/BasketToken.sol";
 
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
 
@@ -20,11 +22,12 @@ contract EdenStEVEFacetTest is EdenLaunchFixture {
 
     function test_CreateStEVE_WalletMintStaysNonEligible() public {
         eve.mint(bob, 20e18);
+        uint256 emptyPositionId = _mintPosition(bob, 1);
 
         _mintWalletBasket(bob, steveBasketId, eve, 10e18);
 
         assertEq(EdenStEVEFacet(diamond).eligibleSupply(), 0);
-        assertEq(EdenStEVEFacet(diamond).eligiblePrincipalOfPosition(999), 0);
+        assertEq(EdenStEVEFacet(diamond).eligiblePrincipalOfPosition(emptyPositionId), 0);
     }
 
     function test_DepositWithdrawStEVE_TracksEligibleSupply() public {
@@ -81,5 +84,36 @@ contract EdenStEVEFacetTest is EdenLaunchFixture {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(NotNFTOwner.selector, alice, positionId));
         EdenStEVEFacet(diamond).withdrawStEVEFromPosition(positionId, 4e18, 4e18);
+    }
+
+    function test_CreateStEVE_RevertsWhenAlreadyConfigured() public {
+        EdenBasketBase.CreateBasketParams memory params = _stEveParams(address(eve));
+        params.basketType = 0;
+        bytes memory data = abi.encodeWithSelector(EdenStEVEFacet.createStEVE.selector, params);
+        bytes32 salt = keccak256("invalid-steve-basket-type");
+
+        timelockController.schedule(diamond, 0, data, bytes32(0), salt, 7 days);
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "stEVE already configured"));
+        timelockController.execute(diamond, 0, data, bytes32(0), salt);
+    }
+
+    function test_DepositAndWithdrawStEVE_RevertForZeroAmountAndInsufficientPrincipal() public {
+        eve.mint(bob, 20e18);
+        _mintWalletBasket(bob, steveBasketId, eve, 10e18);
+
+        uint256 positionId = _mintPosition(bob, 1);
+
+        vm.startPrank(bob);
+        BasketToken(steveToken).approve(diamond, 10e18);
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "amount=0"));
+        EdenStEVEFacet(diamond).depositStEVEToPosition(positionId, 0, 0);
+        vm.stopPrank();
+
+        _depositWalletStEVEToPosition(bob, positionId, 10e18);
+
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(InsufficientPrincipal.selector, 11e18, 10e18));
+        EdenStEVEFacet(diamond).withdrawStEVEFromPosition(positionId, 11e18, 11e18);
     }
 }

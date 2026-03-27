@@ -4,6 +4,8 @@ pragma solidity ^0.8.20;
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenStEVEFacet} from "src/eden/EdenStEVEFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
+import {LibCurrency} from "src/libraries/LibCurrency.sol";
+import {InvalidParameterRange} from "src/libraries/Errors.sol";
 
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
 
@@ -112,5 +114,42 @@ contract EdenRewardFacetTest is EdenLaunchFixture {
 
         assertEq(claimed, previewBeforeTransfer);
         assertEq(eve.balanceOf(carol) - carolBefore, previewBeforeTransfer);
+    }
+
+    function test_RewardAccrual_RevertsOnRepeatedClaimAndHandlesZeroEligibleSupply() public {
+        eve.mint(address(this), 100e18);
+        eve.approve(diamond, 100e18);
+        EdenRewardFacet(diamond).fundRewards(100e18, 100e18);
+
+        EdenRewardFacet.RewardView memory beforeWarp = EdenRewardFacet(diamond).getRewardConfig();
+        vm.warp(block.timestamp + 10);
+        EdenRewardFacet.RewardView memory afterWarp = EdenRewardFacet(diamond).getRewardConfig();
+        assertEq(beforeWarp.rewardReserve, afterWarp.rewardReserve);
+
+        eve.mint(alice, 20e18);
+        _mintWalletBasket(alice, steveBasketId, eve, 10e18);
+        uint256 positionId = _mintPosition(alice, 1);
+        _depositWalletStEVEToPosition(alice, positionId, 10e18);
+
+        vm.warp(block.timestamp + 2);
+        vm.prank(alice);
+        uint256 claimed = EdenRewardFacet(diamond).claimRewards(positionId, alice);
+        assertGt(claimed, 0);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "nothing claimable"));
+        EdenRewardFacet(diamond).claimRewards(positionId, alice);
+    }
+
+    function test_FundRewards_RevertsForZeroAmountAndFoTUnderreceipt() public {
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "amount=0"));
+        EdenRewardFacet(diamond).fundRewards(0, 0);
+
+        _configureRewards(address(fot), 30e18, true);
+        fot.mint(address(this), 100e18);
+        fot.approve(diamond, 100e18);
+
+        vm.expectRevert(abi.encodeWithSelector(LibCurrency.LibCurrency_InsufficientReceived.selector, 9e18, 10e18));
+        EdenRewardFacet(diamond).fundRewards(10e18, 10e18);
     }
 }

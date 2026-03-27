@@ -3,12 +3,14 @@ pragma solidity ^0.8.20;
 
 import {Vm} from "forge-std/Vm.sol";
 
+import {OwnershipFacet} from "src/core/OwnershipFacet.sol";
 import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
 import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockController.sol";
+import {IDiamondCut} from "src/interfaces/IDiamondCut.sol";
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
 
 contract EdenAdminFacetTest is EdenLaunchFixture {
@@ -128,6 +130,17 @@ contract EdenAdminFacetTest is EdenLaunchFixture {
 
         EdenAdminFacet.GovernanceConfigView memory governance = EdenAdminFacet(diamond).getGovernanceConfig();
         assertEq(governance.timelock, address(goodController));
+    }
+
+    function test_GovernanceNegatives_RejectUnauthorizedOwnershipAndDiamondCuts() public {
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibDiamond: must be owner"));
+        OwnershipFacet(diamond).transferOwnership(alice);
+
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](0);
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
     }
 
     function _assertEventEmitted(bytes32 topic0) internal {

@@ -17,6 +17,15 @@ import {LibFeeIndex} from "src/libraries/LibFeeIndex.sol";
 import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {Types} from "src/libraries/Types.sol";
+import {
+    CanonicalPoolAlreadyInitialized,
+    IndexPaused,
+    InvalidArrayLength,
+    InvalidBundleDefinition,
+    InvalidUnits,
+    NoPoolForAsset
+} from "src/libraries/Errors.sol";
+import {LibCurrency} from "src/libraries/LibCurrency.sol";
 
 contract MockERC20Index is ERC20 {
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
@@ -115,6 +124,8 @@ contract EqualIndexHarness is
 
 interface Vm {
     function prank(address) external;
+    function expectRevert(bytes4) external;
+    function expectRevert(bytes calldata) external;
 }
 
 contract EqualIndexPortTest {
@@ -210,6 +221,59 @@ contract EqualIndexPortTest {
         _assertEq(harness.principalOf(indexPoolId, positionKey), 0, "index pool principal after burn");
         _assertEq(harness.indexEncumbranceOf(positionKey, 1), 0, "encumbrance released after burn");
         _assertGt(harness.principalOf(1, positionKey), 0, "base pool principal remains");
+    }
+
+    function test_CreateIndex_RevertsForInvalidDefinitionsAndMissingPools() public {
+        EqualIndexBaseV3.CreateIndexParams memory badLengths = _singleAssetParams("Bad", "BAD", 0, 0);
+        badLengths.bundleAmounts = new uint256[](0);
+        vm.expectRevert(InvalidArrayLength.selector);
+        harness.createIndex(badLengths);
+
+        EqualIndexBaseV3.CreateIndexParams memory duplicateAssets = _singleAssetParams("Dup", "DUP", 0, 0);
+        duplicateAssets.assets = new address[](2);
+        duplicateAssets.assets[0] = address(token);
+        duplicateAssets.assets[1] = address(token);
+        duplicateAssets.bundleAmounts = new uint256[](2);
+        duplicateAssets.bundleAmounts[0] = 1e18;
+        duplicateAssets.bundleAmounts[1] = 1e18;
+        duplicateAssets.mintFeeBps = new uint16[](2);
+        duplicateAssets.burnFeeBps = new uint16[](2);
+        vm.expectRevert(InvalidBundleDefinition.selector);
+        harness.createIndex(duplicateAssets);
+
+        MockERC20Index missing = new MockERC20Index("Missing", "MISS");
+        EqualIndexBaseV3.CreateIndexParams memory missingPool = _singleAssetParams("Missing", "MISS", 0, 0);
+        missingPool.assets[0] = address(missing);
+        vm.expectRevert(abi.encodeWithSelector(NoPoolForAsset.selector, address(missing)));
+        harness.createIndex(missingPool);
+    }
+
+    function test_EqualIndex_RevertsForCanonicalDuplicatePausedIndexAndInvalidMintInputs() public {
+        vm.expectRevert(abi.encodeWithSelector(CanonicalPoolAlreadyInitialized.selector, address(token), 1));
+        harness.initPool(address(token));
+
+        (uint256 indexId,) = harness.createIndex(_singleAssetParams("Guarded", "GRD", 1000, 0));
+
+        token.mint(bob, 50e18);
+        vm.prank(bob);
+        token.approve(address(harness), 50e18);
+
+        uint256[] memory maxInputs = new uint256[](1);
+        maxInputs[0] = 11e18;
+
+        vm.expectRevert(InvalidUnits.selector);
+        harness.mint(indexId, 0, bob, maxInputs);
+
+        maxInputs[0] = 10e18;
+        vm.expectRevert(abi.encodeWithSelector(LibCurrency.LibCurrency_InvalidMax.selector, 10e18, 11e18));
+        harness.mint(indexId, 10e18, bob, maxInputs);
+
+        vm.prank(_addr("timelock"));
+        harness.setPaused(indexId, true);
+
+        maxInputs[0] = 11e18;
+        vm.expectRevert(abi.encodeWithSelector(IndexPaused.selector, indexId));
+        harness.mint(indexId, 10e18, bob, maxInputs);
     }
 
     function _singleAssetParams(

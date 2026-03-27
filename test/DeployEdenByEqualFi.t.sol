@@ -100,9 +100,8 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         EdenViewFacet.ProductConfigView memory product = EdenViewFacet(launchedDiamond).getProductConfig();
         _assertEqAddress(product.timelock, address(controller), "product timelock");
 
-        (bool directOk,) =
-            launchedDiamond.call(abi.encodeWithSelector(EdenAdminFacet.setProtocolURI.selector, "ipfs://blocked"));
-        _assertTrue(!directOk, "direct admin call should fail after handoff");
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        EdenAdminFacet(launchedDiamond).setProtocolURI("ipfs://blocked");
 
         _timelockCall(
             controller,
@@ -115,6 +114,25 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             keccak256(bytes("ipfs://timelocked")),
             "timelock admin call succeeds"
         );
+    }
+
+    function test_DeployLaunch_TimelockRejectsInvalidDelayMutation() public {
+        LaunchDeployment memory deployment = deployLaunch(address(this), address(this), treasury);
+        FixedDelayTimelockController controller =
+            FixedDelayTimelockController(payable(deployment.timelockController));
+
+        bytes memory data = abi.encodeWithSelector(FixedDelayTimelockController.updateDelay.selector, 1 days);
+        bytes32 salt = keccak256("invalid-delay");
+
+        controller.schedule(address(controller), 0, data, bytes32(0), salt, 7 days);
+        vm.warp(block.timestamp + 7 days + 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FixedDelayTimelockController.FixedDelayTimelockController_InvalidDelay.selector, 1 days, 7 days
+            )
+        );
+        controller.execute(address(controller), 0, data, bytes32(0), salt);
     }
 
     function test_DeployLaunch_SupportsWalletFlowsAndAdminReads() public {
