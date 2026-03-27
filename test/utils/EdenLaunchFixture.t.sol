@@ -20,7 +20,9 @@ import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {BasketToken} from "src/tokens/BasketToken.sol";
+import {IDiamondCut} from "src/interfaces/IDiamondCut.sol";
 import {Types} from "src/libraries/Types.sol";
+import {ProtocolTestSupportFacet} from "test/utils/ProtocolTestSupport.sol";
 
 contract MockERC20Launch is ERC20 {
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
@@ -64,6 +66,7 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
     address internal diamond;
     PositionNFT internal positionNft;
     FixedDelayTimelockController internal timelockController;
+    ProtocolTestSupportFacet internal testSupport;
 
     MockERC20Launch internal eve;
     MockERC20Launch internal alt;
@@ -248,6 +251,41 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
     function _mintPosition(address user, uint256 homePoolId) internal returns (uint256 positionId) {
         vm.prank(user);
         positionId = PositionManagementFacet(diamond).mintPosition(homePoolId);
+    }
+
+    function _installTestSupportFacet() internal {
+        ProtocolTestSupportFacet facet = new ProtocolTestSupportFacet();
+        bytes4[] memory selectors = new bytes4[](8);
+        selectors[0] = ProtocolTestSupportFacet.setManagedPoolCreationFee.selector;
+        selectors[1] = ProtocolTestSupportFacet.setManagedPoolSystemShareBps.selector;
+        selectors[2] = ProtocolTestSupportFacet.setTreasuryShareBps.selector;
+        selectors[3] = ProtocolTestSupportFacet.setActiveCreditShareBps.selector;
+        selectors[4] = ProtocolTestSupportFacet.assetToPoolId.selector;
+        selectors[5] = ProtocolTestSupportFacet.permissionlessPoolForToken.selector;
+        selectors[6] = ProtocolTestSupportFacet.getPoolView.selector;
+        selectors[7] = ProtocolTestSupportFacet.isWhitelisted.selector;
+
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(facet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: selectors
+        });
+        _timelockCall(diamond, abi.encodeWithSelector(IDiamondCut.diamondCut.selector, cuts, address(0), bytes("")));
+
+        bytes4[] memory routeSelectors = new bytes4[](1);
+        routeSelectors[0] = ProtocolTestSupportFacet.routeManagedShareExternal.selector;
+        IDiamondCut.FacetCut[] memory routeCut = new IDiamondCut.FacetCut[](1);
+        routeCut[0] = IDiamondCut.FacetCut({
+            facetAddress: address(facet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: routeSelectors
+        });
+        _timelockCall(
+            diamond, abi.encodeWithSelector(IDiamondCut.diamondCut.selector, routeCut, address(0), bytes(""))
+        );
+
+        testSupport = ProtocolTestSupportFacet(diamond);
     }
 
     function _mintWalletBasket(address user, uint256 basketId, ERC20 asset, uint256 units) internal {
