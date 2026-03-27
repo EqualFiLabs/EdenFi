@@ -1,0 +1,420 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma solidity ^0.8.20;
+
+import {EdenLendingFacet} from "./EdenLendingFacet.sol";
+import {PositionNFT} from "../nft/PositionNFT.sol";
+import {BasketToken} from "../tokens/BasketToken.sol";
+import {LibAppStorage} from "../libraries/LibAppStorage.sol";
+import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
+import {LibEdenLendingStorage} from "../libraries/LibEdenLendingStorage.sol";
+import {LibEdenRewardStorage} from "../libraries/LibEdenRewardStorage.sol";
+import {LibEdenStEVEStorage} from "../libraries/LibEdenStEVEStorage.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
+import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
+import {Types} from "../libraries/Types.sol";
+import "../libraries/Errors.sol";
+
+contract EdenViewFacet is EdenLendingFacet {
+    uint8 public constant ACTION_OK = 0;
+    uint8 public constant ACTION_UNKNOWN_BASKET = 1;
+    uint8 public constant ACTION_BASKET_PAUSED = 2;
+    uint8 public constant ACTION_INVALID_UNITS = 3;
+    uint8 public constant ACTION_INSUFFICIENT_BALANCE = 4;
+    uint8 public constant ACTION_POSITION_MISMATCH = 5;
+    uint8 public constant ACTION_LOAN_NOT_FOUND = 6;
+    uint8 public constant ACTION_LOAN_EXPIRED = 7;
+    uint8 public constant ACTION_NOTHING_CLAIMABLE = 8;
+    uint8 public constant ACTION_INVALID_DURATION = 9;
+    uint8 public constant ACTION_INSUFFICIENT_COLLATERAL = 10;
+    uint8 public constant ACTION_BELOW_MINIMUM_TIER = 11;
+    uint8 public constant ACTION_REWARDS_DISABLED = 12;
+
+    struct BasketSummary {
+        uint256 basketId;
+        string name;
+        string symbol;
+        string uri;
+        address token;
+        uint256 poolId;
+        uint256 totalUnits;
+        uint8 basketType;
+        bool paused;
+        bool isStEVE;
+        address[] assets;
+        uint256[] bundleAmounts;
+        uint16[] mintFeeBps;
+        uint16[] burnFeeBps;
+        uint16 flashFeeBps;
+    }
+
+    struct ProductConfigView {
+        address treasury;
+        address timelock;
+        uint256 basketCount;
+        uint16 poolFeeShareBps;
+        bool steveConfigured;
+        uint256 steveBasketId;
+        address rewardToken;
+        uint256 rewardRatePerSecond;
+        uint256 rewardReserve;
+        bool rewardsEnabled;
+    }
+
+    struct PositionBasketView {
+        uint256 basketId;
+        uint256 poolId;
+        address token;
+        uint8 basketType;
+        uint256 units;
+        uint256 encumberedUnits;
+        uint256 availableUnits;
+        bool paused;
+    }
+
+    struct PositionRewardView {
+        uint256 eligiblePrincipal;
+        uint256 accruedRewards;
+        uint256 claimableRewards;
+    }
+
+    struct PositionPortfolio {
+        uint256 positionId;
+        bytes32 positionKey;
+        address owner;
+        uint256 homePoolId;
+        PositionBasketView[] baskets;
+        PositionRewardView rewards;
+        LoanView[] loans;
+    }
+
+    struct UserPortfolio {
+        address user;
+        uint256[] positionIds;
+        PositionPortfolio[] positions;
+    }
+
+    struct ActionCheck {
+        bool ok;
+        uint8 code;
+        string reason;
+    }
+
+    function basketCount() external view returns (uint256) {
+        return LibEdenBasketStorage.s().basketCount;
+    }
+
+    function getBasketIds(uint256 start, uint256 limit) external view returns (uint256[] memory basketIds) {
+        uint256 count = LibEdenBasketStorage.s().basketCount;
+        if (start >= count || limit == 0) return new uint256[](0);
+
+        uint256 remaining = count - start;
+        uint256 resultLen = remaining < limit ? remaining : limit;
+        basketIds = new uint256[](resultLen);
+        for (uint256 i = 0; i < resultLen; i++) {
+            basketIds[i] = start + i;
+        }
+    }
+
+    function getBasketSummary(uint256 basketId) public view basketExists(basketId) returns (BasketSummary memory summary) {
+        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
+        LibEdenBasketStorage.BasketConfig storage basket = store.baskets[basketId];
+        LibEdenBasketStorage.BasketMetadata storage metadata = store.basketMetadata[basketId];
+
+        summary.basketId = basketId;
+        summary.name = metadata.name;
+        summary.symbol = metadata.symbol;
+        summary.uri = metadata.uri;
+        summary.token = basket.token;
+        summary.poolId = basket.poolId;
+        summary.totalUnits = basket.totalUnits;
+        summary.basketType = metadata.basketType;
+        summary.paused = basket.paused;
+        summary.isStEVE = LibEdenStEVEStorage.s().configured && basketId == LibEdenStEVEStorage.s().basketId;
+        summary.assets = basket.assets;
+        summary.bundleAmounts = basket.bundleAmounts;
+        summary.mintFeeBps = basket.mintFeeBps;
+        summary.burnFeeBps = basket.burnFeeBps;
+        summary.flashFeeBps = basket.flashFeeBps;
+    }
+
+    function getBasketSummaries(uint256 start, uint256 limit) external view returns (BasketSummary[] memory summaries) {
+        uint256 count = LibEdenBasketStorage.s().basketCount;
+        if (start >= count || limit == 0) return new BasketSummary[](0);
+
+        uint256 remaining = count - start;
+        uint256 resultLen = remaining < limit ? remaining : limit;
+        summaries = new BasketSummary[](resultLen);
+        for (uint256 i = 0; i < resultLen; i++) {
+            summaries[i] = getBasketSummary(start + i);
+        }
+    }
+
+    function getProductConfig() external view returns (ProductConfigView memory view_) {
+        LibAppStorage.AppStorage storage app = LibAppStorage.s();
+        LibEdenRewardStorage.RewardStorage storage rewards = LibEdenRewardStorage.s();
+        LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
+
+        view_.treasury = LibAppStorage.treasuryAddress(app);
+        view_.timelock = LibAppStorage.timelockAddress(app);
+        view_.basketCount = LibEdenBasketStorage.s().basketCount;
+        view_.poolFeeShareBps = _basketPoolFeeShareBps();
+        view_.steveConfigured = steve.configured;
+        view_.steveBasketId = steve.configured ? steve.basketId : 0;
+        view_.rewardToken = rewards.config.rewardToken;
+        view_.rewardRatePerSecond = rewards.config.rewardRatePerSecond;
+        view_.rewardReserve = _previewRewardReserve();
+        view_.rewardsEnabled = rewards.config.enabled;
+    }
+
+    function getUserPositionIds(address user) public view returns (uint256[] memory positionIds) {
+        PositionNFT nft = PositionNFT(LibPositionNFT.s().positionNFTContract);
+        uint256 balance = nft.balanceOf(user);
+        positionIds = new uint256[](balance);
+        for (uint256 i = 0; i < balance; i++) {
+            positionIds[i] = nft.tokenOfOwnerByIndex(user, i);
+        }
+    }
+
+    function getUserPositionIdsPaginated(address user, uint256 start, uint256 limit)
+        external
+        view
+        returns (uint256[] memory positionIds)
+    {
+        PositionNFT nft = PositionNFT(LibPositionNFT.s().positionNFTContract);
+        uint256 balance = nft.balanceOf(user);
+        if (start >= balance || limit == 0) return new uint256[](0);
+
+        uint256 remaining = balance - start;
+        uint256 resultLen = remaining < limit ? remaining : limit;
+        positionIds = new uint256[](resultLen);
+        for (uint256 i = 0; i < resultLen; i++) {
+            positionIds[i] = nft.tokenOfOwnerByIndex(user, start + i);
+        }
+    }
+
+    function getPositionPortfolio(uint256 positionId) public view returns (PositionPortfolio memory portfolio) {
+        PositionNFT nft = PositionNFT(LibPositionNFT.s().positionNFTContract);
+        bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
+        uint256[] memory loanIds = getLoanIdsByBorrower(positionId);
+
+        portfolio.positionId = positionId;
+        portfolio.positionKey = positionKey;
+        portfolio.owner = nft.ownerOf(positionId);
+        portfolio.homePoolId = nft.getPoolId(positionId);
+        portfolio.baskets = _positionBaskets(positionKey);
+        portfolio.rewards = PositionRewardView({
+            eligiblePrincipal: LibEdenStEVEStorage.s().eligiblePrincipal[positionKey],
+            accruedRewards: LibEdenRewardStorage.s().accruedRewards[positionKey],
+            claimableRewards: _previewPositionRewards(positionKey)
+        });
+        portfolio.loans = new LoanView[](loanIds.length);
+        for (uint256 i = 0; i < loanIds.length; i++) {
+            portfolio.loans[i] = getLoanView(loanIds[i]);
+        }
+    }
+
+    function getUserPortfolio(address user) external view returns (UserPortfolio memory portfolio) {
+        uint256[] memory positionIds = getUserPositionIds(user);
+        portfolio.user = user;
+        portfolio.positionIds = positionIds;
+        portfolio.positions = new PositionPortfolio[](positionIds.length);
+        for (uint256 i = 0; i < positionIds.length; i++) {
+            portfolio.positions[i] = getPositionPortfolio(positionIds[i]);
+        }
+    }
+
+    function canMint(uint256 basketId, uint256 units) external view returns (ActionCheck memory) {
+        if (basketId >= LibEdenBasketStorage.s().basketCount) {
+            return _fail(ACTION_UNKNOWN_BASKET, "unknown basket");
+        }
+        if (units == 0 || units % UNIT_SCALE != 0) {
+            return _fail(ACTION_INVALID_UNITS, "invalid units");
+        }
+        if (LibEdenBasketStorage.s().baskets[basketId].paused) {
+            return _fail(ACTION_BASKET_PAUSED, "basket paused");
+        }
+        return _ok();
+    }
+
+    function canBurn(address owner, uint256 basketId, uint256 units) external view returns (ActionCheck memory) {
+        if (basketId >= LibEdenBasketStorage.s().basketCount) {
+            return _fail(ACTION_UNKNOWN_BASKET, "unknown basket");
+        }
+        if (units == 0 || units % UNIT_SCALE != 0) {
+            return _fail(ACTION_INVALID_UNITS, "invalid units");
+        }
+        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        if (basket.paused) {
+            return _fail(ACTION_BASKET_PAUSED, "basket paused");
+        }
+        if (BasketToken(basket.token).balanceOf(owner) < units) {
+            return _fail(ACTION_INSUFFICIENT_BALANCE, "insufficient basket balance");
+        }
+        return _ok();
+    }
+
+    function canBorrow(uint256 positionId, uint256 basketId, uint256 collateralUnits, uint40 duration)
+        external
+        view
+        returns (ActionCheck memory)
+    {
+        if (basketId >= LibEdenBasketStorage.s().basketCount) {
+            return _fail(ACTION_UNKNOWN_BASKET, "unknown basket");
+        }
+        if (collateralUnits == 0 || collateralUnits % UNIT_SCALE != 0) {
+            return _fail(ACTION_INVALID_UNITS, "invalid collateral units");
+        }
+
+        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        if (basket.paused) {
+            return _fail(ACTION_BASKET_PAUSED, "basket paused");
+        }
+
+        LibEdenLendingStorage.LendingStorage storage lending = LibEdenLendingStorage.s();
+        LibEdenLendingStorage.LendingConfig memory config = lending.lendingConfigs[basketId];
+        if (
+            duration == 0 || config.minDuration == 0 || duration < config.minDuration || duration > config.maxDuration
+        ) {
+            return _fail(ACTION_INVALID_DURATION, "invalid duration");
+        }
+
+        bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
+        uint256 availableCollateral = _availableCollateral(positionKey, basket.poolId);
+        if (collateralUnits > availableCollateral) {
+            return _fail(ACTION_INSUFFICIENT_COLLATERAL, "insufficient available collateral");
+        }
+
+        if (!_hasBorrowFeeTier(lending.borrowFeeTiers[basketId], collateralUnits)) {
+            return _fail(ACTION_BELOW_MINIMUM_TIER, "below minimum fee tier");
+        }
+
+        (address[] memory assets, uint256[] memory principals) =
+            _deriveLoanPrincipals(basket, collateralUnits, LibEdenLendingStorage.DEFAULT_LTV_BPS);
+        uint256 newLockedCollateral = lending.lockedCollateralUnits[basketId] + collateralUnits;
+        if (
+            !_redeemabilityInvariantSatisfied(
+                basketId, basket, assets, principals, newLockedCollateral, basket.totalUnits
+            )
+        ) {
+            return _fail(ACTION_INSUFFICIENT_BALANCE, "basket vault invariant would fail");
+        }
+
+        return _ok();
+    }
+
+    function canRepay(uint256 positionId, uint256 loanId) external view returns (ActionCheck memory) {
+        LibEdenLendingStorage.LendingStorage storage lending = LibEdenLendingStorage.s();
+        LibEdenLendingStorage.Loan storage loan = lending.loans[loanId];
+        if (loan.borrowerPositionKey == bytes32(0) || lending.loanClosed[loanId]) {
+            return _fail(ACTION_LOAN_NOT_FOUND, "loan not found");
+        }
+        if (loan.borrowerPositionKey != LibPositionHelpers.positionKey(positionId)) {
+            return _fail(ACTION_POSITION_MISMATCH, "position mismatch");
+        }
+        return _ok();
+    }
+
+    function canExtend(uint256 positionId, uint256 loanId, uint40 addedDuration)
+        external
+        view
+        returns (ActionCheck memory)
+    {
+        LibEdenLendingStorage.LendingStorage storage lending = LibEdenLendingStorage.s();
+        LibEdenLendingStorage.Loan storage loan = lending.loans[loanId];
+        if (loan.borrowerPositionKey == bytes32(0) || lending.loanClosed[loanId]) {
+            return _fail(ACTION_LOAN_NOT_FOUND, "loan not found");
+        }
+        if (loan.borrowerPositionKey != LibPositionHelpers.positionKey(positionId)) {
+            return _fail(ACTION_POSITION_MISMATCH, "position mismatch");
+        }
+        if (block.timestamp > loan.maturity) {
+            return _fail(ACTION_LOAN_EXPIRED, "loan expired");
+        }
+
+        LibEdenLendingStorage.LendingConfig memory config = lending.lendingConfigs[loan.basketId];
+        if (addedDuration == 0 || config.maxDuration == 0) {
+            return _fail(ACTION_INVALID_DURATION, "invalid duration");
+        }
+
+        uint256 extendedMaturity = uint256(loan.maturity) + addedDuration;
+        if (extendedMaturity > block.timestamp + config.maxDuration) {
+            return _fail(ACTION_INVALID_DURATION, "invalid duration");
+        }
+
+        return _ok();
+    }
+
+    function canClaimRewards(uint256 positionId) external view returns (ActionCheck memory) {
+        LibEdenRewardStorage.RewardStorage storage rewards = LibEdenRewardStorage.s();
+        if (!rewards.config.enabled || rewards.config.rewardToken == address(0)) {
+            return _fail(ACTION_REWARDS_DISABLED, "rewards disabled");
+        }
+        if (_previewPositionRewards(LibPositionHelpers.positionKey(positionId)) == 0) {
+            return _fail(ACTION_NOTHING_CLAIMABLE, "nothing claimable");
+        }
+        return _ok();
+    }
+
+    function _positionBaskets(bytes32 positionKey) internal view returns (PositionBasketView[] memory baskets) {
+        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
+        uint256 count = store.basketCount;
+        uint256 holdings;
+
+        for (uint256 basketId = 0; basketId < count; basketId++) {
+            LibEdenBasketStorage.BasketConfig storage basket = store.baskets[basketId];
+            uint256 principal = LibAppStorage.s().pools[basket.poolId].userPrincipal[positionKey];
+            uint256 encumbered = LibEncumbrance.total(positionKey, basket.poolId);
+            if (principal > 0 || encumbered > 0) {
+                holdings++;
+            }
+        }
+
+        baskets = new PositionBasketView[](holdings);
+        uint256 index;
+        for (uint256 basketId = 0; basketId < count; basketId++) {
+            LibEdenBasketStorage.BasketConfig storage basket = store.baskets[basketId];
+            uint256 principal = LibAppStorage.s().pools[basket.poolId].userPrincipal[positionKey];
+            uint256 encumbered = LibEncumbrance.total(positionKey, basket.poolId);
+            if (principal == 0 && encumbered == 0) continue;
+
+            baskets[index++] = PositionBasketView({
+                basketId: basketId,
+                poolId: basket.poolId,
+                token: basket.token,
+                basketType: store.basketMetadata[basketId].basketType,
+                units: principal,
+                encumberedUnits: encumbered,
+                availableUnits: principal > encumbered ? principal - encumbered : 0,
+                paused: basket.paused
+            });
+        }
+    }
+
+    function _hasBorrowFeeTier(LibEdenLendingStorage.BorrowFeeTier[] storage tiers, uint256 collateralUnits)
+        internal
+        view
+        returns (bool found)
+    {
+        uint256 len = tiers.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (collateralUnits >= tiers[i].minCollateralUnits) {
+                found = true;
+            } else {
+                break;
+            }
+        }
+    }
+
+    function _ok() internal pure returns (ActionCheck memory check) {
+        check.ok = true;
+        check.code = ACTION_OK;
+        check.reason = "ok";
+    }
+
+    function _fail(uint8 code, string memory reason) internal pure returns (ActionCheck memory check) {
+        check.ok = false;
+        check.code = code;
+        check.reason = reason;
+    }
+}
