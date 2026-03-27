@@ -1,4 +1,4 @@
-# EdenFi Substrate Extract
+# EqualFi Substrate Extract
 
 Initial ported systems from EqualFi:
 
@@ -17,9 +17,9 @@ Intentional simplification in this first EdenFi pass:
 - direct-lending and other product-specific debt systems are not pulled in yet
 - the goal is a reusable protocol substrate, not a full EqualFi product port
 
-This gives EdenFi a clean starting point for:
+This gives the EqualFi substrate a clean starting point for:
 
 - position-owned collateral
 - module-safe encumbrance expansion
 - pool-native yield routing
-- future EDEN-on-EdenFi rebuilding
+- future EDEN by EqualFi rebuilding

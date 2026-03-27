@@ -1,10 +1,13 @@
 # EdenFi
 
-EdenFi is the shared protocol substrate intended to sit between the current
-EDEN launch product and the broader long-term EqualFi architecture.
+This directory is named `EdenFi`, but the shared protocol substrate being built
+here is **EqualFi**.
+
+The first product being built on top of that substrate is the basket system
+called **EDEN**, branded as **EDEN by EqualFi**.
 
 The goal is to extract and harden the reusable core primitives first, then
-build EDEN as the first focused product on top of that foundation.
+build EDEN by EqualFi as the first focused product on top of that foundation.
 
 Initial focus:
 - position containers
