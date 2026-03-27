@@ -59,7 +59,7 @@ contract EqualIndexHarness is
         LibPositionNFT.s().nftModeEnabled = nft != address(0);
     }
 
-    function setDefaultPoolConfig(Types.PoolConfig calldata config) external {
+    function setDefaultPoolConfig(Types.PoolConfig calldata config) external override {
         LibAppStorage.AppStorage storage store = LibAppStorage.s();
         store.defaultPoolConfigSet = true;
 

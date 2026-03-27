@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.20;
 
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {EdenLendingFacet} from "./EdenLendingFacet.sol";
 import {PositionNFT} from "../nft/PositionNFT.sol";
 import {BasketToken} from "../tokens/BasketToken.sol";
@@ -173,6 +174,22 @@ contract EdenViewFacet is EdenLendingFacet {
         view_.rewardReserve = _previewRewardReserve();
         view_.rewardsEnabled = rewards.config.enabled;
     }
+
+    function getPositionTokenURI(uint256 positionId) external view returns (string memory) {
+        PositionNFT nft = PositionNFT(LibPositionNFT.s().positionNFTContract);
+        return string.concat(
+            "equalfi://positions/",
+            Strings.toString(positionId),
+            "?poolId=",
+            Strings.toString(nft.getPoolId(positionId))
+        );
+    }
+
+    function hasOpenOffers(bytes32) external pure returns (bool) {
+        return false;
+    }
+
+    function cancelOffersForPosition(bytes32) external pure {}
 
     function getUserPositionIds(address user) public view returns (uint256[] memory positionIds) {
         PositionNFT nft = PositionNFT(LibPositionNFT.s().positionNFTContract);

@@ -34,6 +34,7 @@ contract PoolManagementFacet {
     event WhitelistToggled(uint256 indexed pid, bool enabled);
     event ManagerTransferred(uint256 indexed pid, address indexed oldManager, address indexed newManager);
     event ManagerRenounced(uint256 indexed pid, address indexed formerManager);
+    event DefaultPoolConfigUpdated(uint256 fixedTermCount);
 
     /// @notice Initialize a new pool with immutable configuration and action fees
     /// @param pid Pool ID (must be unused)
@@ -221,6 +222,17 @@ contract PoolManagementFacet {
         while (store.pools[pid].initialized) {
             pid++;
         }
+    }
+
+    function setDefaultPoolConfig(Types.PoolConfig calldata config) external virtual {
+        LibAccess.enforceOwnerOrTimelock();
+        _validateDefaultPoolConfig(config);
+
+        LibAppStorage.AppStorage storage store = LibAppStorage.s();
+        _applyPoolConfig(store.defaultPoolConfig, config);
+        store.defaultPoolConfigSet = true;
+
+        emit DefaultPoolConfigUpdated(config.fixedTermConfigs.length);
     }
 
     function _defaultPoolConfig(LibAppStorage.AppStorage storage store)
@@ -604,6 +616,61 @@ contract PoolManagementFacet {
         }
         if (amount < store.actionFeeMin || amount > store.actionFeeMax) {
             revert ActionFeeBoundsViolation(amount, store.actionFeeMin, store.actionFeeMax);
+        }
+    }
+
+    function _validateDefaultPoolConfig(Types.PoolConfig calldata config) internal view {
+        if (config.minDepositAmount == 0) {
+            revert InvalidMinimumThreshold("minDepositAmount must be > 0");
+        }
+        if (config.minLoanAmount == 0) {
+            revert InvalidMinimumThreshold("minLoanAmount must be > 0");
+        }
+        if (config.isCapped && config.depositCap == 0) {
+            revert InvalidDepositCap();
+        }
+        if (config.aumFeeMinBps > config.aumFeeMaxBps) revert InvalidAumFeeBounds();
+        if (config.aumFeeMaxBps > 10_000) revert InvalidParameterRange("aumFeeMaxBps > 100%");
+        if (config.depositorLTVBps == 0 || config.depositorLTVBps > 10_000) revert InvalidLTVRatio();
+
+        uint16 maxRate = LibAppStorage.s().maxMaintenanceRateBps == 0 ? 100 : LibAppStorage.s().maxMaintenanceRateBps;
+        uint16 maintenanceRate = config.maintenanceRateBps;
+        if (maintenanceRate == 0) {
+            maintenanceRate = LibAppStorage.s().defaultMaintenanceRateBps;
+            if (maintenanceRate == 0) {
+                maintenanceRate = maxRate;
+            }
+        }
+        if (maintenanceRate > maxRate) revert InvalidMaintenanceRate();
+        if (config.flashLoanFeeBps > 10_000) revert InvalidFlashLoanFee();
+        if (config.rollingApyBps > 10_000) revert InvalidAPYRate("rollingApyBps > 100%");
+
+        _validateFixedTermConfigsCalldata(config.fixedTermConfigs);
+    }
+
+    function _applyPoolConfig(Types.PoolConfig storage target, Types.PoolConfig calldata config) internal {
+        target.rollingApyBps = config.rollingApyBps;
+        target.depositorLTVBps = config.depositorLTVBps;
+        target.maintenanceRateBps = config.maintenanceRateBps;
+        target.flashLoanFeeBps = config.flashLoanFeeBps;
+        target.flashLoanAntiSplit = config.flashLoanAntiSplit;
+        target.minDepositAmount = config.minDepositAmount;
+        target.minLoanAmount = config.minLoanAmount;
+        target.minTopupAmount = config.minTopupAmount;
+        target.isCapped = config.isCapped;
+        target.depositCap = config.depositCap;
+        target.maxUserCount = config.maxUserCount;
+        target.aumFeeMinBps = config.aumFeeMinBps;
+        target.aumFeeMaxBps = config.aumFeeMaxBps;
+        target.borrowFee = config.borrowFee;
+        target.repayFee = config.repayFee;
+        target.withdrawFee = config.withdrawFee;
+        target.flashFee = config.flashFee;
+        target.closeRollingFee = config.closeRollingFee;
+
+        delete target.fixedTermConfigs;
+        for (uint256 i = 0; i < config.fixedTermConfigs.length; i++) {
+            target.fixedTermConfigs.push(config.fixedTermConfigs[i]);
         }
     }
 }
