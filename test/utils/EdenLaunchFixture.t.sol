@@ -8,6 +8,7 @@ import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockCon
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
+import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
@@ -157,6 +158,22 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
         basketToken = EdenBasketFacet(diamond).getBasket(basketId).token;
     }
 
+    function _createIndex(EqualIndexBaseV3.CreateIndexParams memory params)
+        internal
+        returns (uint256 indexId, address indexToken)
+    {
+        (indexId, indexToken) = EqualIndexAdminFacetV3(diamond).createIndex(params);
+    }
+
+    function _createIndexThroughTimelock(EqualIndexBaseV3.CreateIndexParams memory params)
+        internal
+        returns (uint256 indexId, address indexToken)
+    {
+        indexId = _nextIndexId();
+        _timelockCall(diamond, abi.encodeWithSelector(EqualIndexAdminFacetV3.createIndex.selector, params));
+        indexToken = EqualIndexAdminFacetV3(diamond).getIndex(indexId).token;
+    }
+
     function _configureRewards(address rewardToken, uint256 rewardRatePerSecond, bool enabled) internal {
         _timelockCall(
             diamond,
@@ -303,6 +320,44 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
 
     function _stEveParams(address asset) internal pure returns (EdenBasketBase.CreateBasketParams memory p) {
         p = _singleAssetParams("stEVE", "stEVE", asset, "ipfs://steve", 1, 0, 0);
+    }
+
+    function _singleAssetIndexParams(
+        string memory name_,
+        string memory symbol_,
+        address asset,
+        uint16 mintFee,
+        uint16 burnFee
+    ) internal pure returns (EqualIndexBaseV3.CreateIndexParams memory p) {
+        p.name = name_;
+        p.symbol = symbol_;
+        p.assets = new address[](1);
+        p.assets[0] = asset;
+        p.bundleAmounts = new uint256[](1);
+        p.bundleAmounts[0] = 1e18;
+        p.mintFeeBps = new uint16[](1);
+        p.mintFeeBps[0] = mintFee;
+        p.burnFeeBps = new uint16[](1);
+        p.burnFeeBps[0] = burnFee;
+        p.flashFeeBps = 50;
+    }
+
+    function _boundUint(uint256 value, uint256 min, uint256 max) internal pure returns (uint256 bounded) {
+        require(max >= min, "invalid bound");
+        if (min == max) return min;
+        uint256 size = max - min + 1;
+        bounded = min + (value % size);
+    }
+
+    function _nextIndexId() internal view returns (uint256 indexId) {
+        while (true) {
+            try EqualIndexAdminFacetV3(diamond).getIndex(indexId) returns (EqualIndexBaseV3.IndexView memory) {
+                indexId++;
+            } catch {
+                return indexId;
+            }
+        }
+        return indexId;
     }
 
     function _addr(string memory label) internal pure returns (address) {
