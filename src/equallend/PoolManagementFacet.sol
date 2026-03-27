@@ -30,11 +30,65 @@ contract PoolManagementFacet {
     );
 
     event ManagedConfigUpdated(uint256 indexed pid, string parameter, bytes oldValue, bytes newValue);
+    event PoolAumFeeUpdated(uint256 indexed pid, uint16 oldFeeBps, uint16 newFeeBps);
     event WhitelistUpdated(uint256 indexed pid, bytes32 indexed user, bool added);
     event WhitelistToggled(uint256 indexed pid, bool enabled);
     event ManagerTransferred(uint256 indexed pid, address indexed oldManager, address indexed newManager);
     event ManagerRenounced(uint256 indexed pid, address indexed formerManager);
     event DefaultPoolConfigUpdated(uint256 fixedTermCount);
+
+    struct PoolConfigView {
+        address underlying;
+        bool initialized;
+        uint16 rollingApyBps;
+        uint16 depositorLTVBps;
+        uint16 maintenanceRateBps;
+        uint16 flashLoanFeeBps;
+        bool flashLoanAntiSplit;
+        uint256 minDepositAmount;
+        uint256 minLoanAmount;
+        uint256 minTopupAmount;
+        bool isCapped;
+        uint256 depositCap;
+        uint256 maxUserCount;
+        uint16 currentAumFeeBps;
+        uint16 aumFeeMinBps;
+        uint16 aumFeeMaxBps;
+        Types.FixedTermConfig[] fixedTermConfigs;
+        Types.ActionFeeConfig borrowFee;
+        Types.ActionFeeConfig repayFee;
+        Types.ActionFeeConfig withdrawFee;
+        Types.ActionFeeConfig flashFee;
+        Types.ActionFeeConfig closeRollingFee;
+    }
+
+    struct PoolInfoView {
+        address underlying;
+        bool initialized;
+        bool isManagedPool;
+        address manager;
+        bool whitelistEnabled;
+        bool deprecated;
+        uint256 totalDeposits;
+        uint256 indexEncumberedTotal;
+        uint256 trackedBalance;
+        uint256 yieldReserve;
+        uint256 feeIndex;
+        uint256 activeCreditIndex;
+        uint256 activeCreditPrincipalTotal;
+        uint256 activeCreditMaturedTotal;
+        uint256 userCount;
+    }
+
+    struct PoolMaintenanceView {
+        address foundationReceiver;
+        uint16 maintenanceRateBps;
+        uint64 lastMaintenanceTimestamp;
+        uint256 pendingMaintenance;
+        uint256 maintenanceIndex;
+        uint256 maintenanceIndexRemainder;
+        uint256 epochLength;
+    }
 
     /// @notice Initialize a new pool with immutable configuration and action fees
     /// @param pid Pool ID (must be unused)
@@ -241,6 +295,80 @@ contract PoolManagementFacet {
         store.defaultPoolConfigSet = true;
 
         emit DefaultPoolConfigUpdated(config.fixedTermConfigs.length);
+    }
+
+    function setAumFee(uint256 pid, uint16 aumFeeBps) external {
+        LibAccess.enforceTimelockOrOwnerIfUnset();
+
+        Types.PoolData storage p = LibAppStorage.s().pools[pid];
+        if (!p.initialized) revert PoolNotInitialized(pid);
+
+        uint16 minBps = p.poolConfig.aumFeeMinBps;
+        uint16 maxBps = p.poolConfig.aumFeeMaxBps;
+        if (aumFeeBps < minBps || aumFeeBps > maxBps) {
+            revert AumFeeOutOfBounds(aumFeeBps, minBps, maxBps);
+        }
+
+        uint16 oldFeeBps = p.currentAumFeeBps;
+        p.currentAumFeeBps = aumFeeBps;
+
+        emit PoolAumFeeUpdated(pid, oldFeeBps, aumFeeBps);
+    }
+
+    function getPoolConfigView(uint256 pid) external view returns (PoolConfigView memory view_) {
+        Types.PoolData storage p = _requireInitializedPool(pid);
+        view_.underlying = p.underlying;
+        view_.initialized = p.initialized;
+        view_.rollingApyBps = p.poolConfig.rollingApyBps;
+        view_.depositorLTVBps = p.poolConfig.depositorLTVBps;
+        view_.maintenanceRateBps = p.poolConfig.maintenanceRateBps;
+        view_.flashLoanFeeBps = p.poolConfig.flashLoanFeeBps;
+        view_.flashLoanAntiSplit = p.poolConfig.flashLoanAntiSplit;
+        view_.minDepositAmount = p.poolConfig.minDepositAmount;
+        view_.minLoanAmount = p.poolConfig.minLoanAmount;
+        view_.minTopupAmount = p.poolConfig.minTopupAmount;
+        view_.isCapped = p.poolConfig.isCapped;
+        view_.depositCap = p.poolConfig.depositCap;
+        view_.maxUserCount = p.poolConfig.maxUserCount;
+        view_.currentAumFeeBps = p.currentAumFeeBps;
+        view_.aumFeeMinBps = p.poolConfig.aumFeeMinBps;
+        view_.aumFeeMaxBps = p.poolConfig.aumFeeMaxBps;
+        view_.fixedTermConfigs = _copyFixedTermConfigs(p.poolConfig.fixedTermConfigs);
+        view_.borrowFee = p.poolConfig.borrowFee;
+        view_.repayFee = p.poolConfig.repayFee;
+        view_.withdrawFee = p.poolConfig.withdrawFee;
+        view_.flashFee = p.poolConfig.flashFee;
+        view_.closeRollingFee = p.poolConfig.closeRollingFee;
+    }
+
+    function getPoolInfoView(uint256 pid) external view returns (PoolInfoView memory view_) {
+        Types.PoolData storage p = _requireInitializedPool(pid);
+        view_.underlying = p.underlying;
+        view_.initialized = p.initialized;
+        view_.isManagedPool = p.isManagedPool;
+        view_.manager = p.manager;
+        view_.whitelistEnabled = p.whitelistEnabled;
+        view_.deprecated = p.deprecated;
+        view_.totalDeposits = p.totalDeposits;
+        view_.indexEncumberedTotal = p.indexEncumberedTotal;
+        view_.trackedBalance = p.trackedBalance;
+        view_.yieldReserve = p.yieldReserve;
+        view_.feeIndex = p.feeIndex;
+        view_.activeCreditIndex = p.activeCreditIndex;
+        view_.activeCreditPrincipalTotal = p.activeCreditPrincipalTotal;
+        view_.activeCreditMaturedTotal = p.activeCreditMaturedTotal;
+        view_.userCount = p.userCount;
+    }
+
+    function getPoolMaintenanceView(uint256 pid) external view returns (PoolMaintenanceView memory view_) {
+        Types.PoolData storage p = _requireInitializedPool(pid);
+        view_.foundationReceiver = LibAppStorage.s().foundationReceiver;
+        view_.maintenanceRateBps = p.poolConfig.maintenanceRateBps;
+        view_.lastMaintenanceTimestamp = p.lastMaintenanceTimestamp;
+        view_.pendingMaintenance = p.pendingMaintenance;
+        view_.maintenanceIndex = p.maintenanceIndex;
+        view_.maintenanceIndexRemainder = p.maintenanceIndexRemainder;
+        view_.epochLength = 1 days;
     }
 
     function _defaultPoolConfig(LibAppStorage.AppStorage storage store)
@@ -616,6 +744,23 @@ contract PoolManagementFacet {
         internal
     {
         emit ManagedConfigUpdated(pid, parameter, oldVal, newVal);
+    }
+
+    function _requireInitializedPool(uint256 pid) internal view returns (Types.PoolData storage p) {
+        p = LibAppStorage.s().pools[pid];
+        if (!p.initialized) revert PoolNotInitialized(pid);
+    }
+
+    function _copyFixedTermConfigs(Types.FixedTermConfig[] storage configs)
+        internal
+        view
+        returns (Types.FixedTermConfig[] memory out)
+    {
+        uint256 len = configs.length;
+        out = new Types.FixedTermConfig[](len);
+        for (uint256 i = 0; i < len; i++) {
+            out[i] = configs[i];
+        }
     }
 
     function _validateActionFee(LibAppStorage.AppStorage storage store, uint128 amount) internal view {
