@@ -21,6 +21,7 @@ error AumFeeOutOfBounds(uint16 attempted, uint16 min, uint16 max);
 
 // Pool initialization and configuration
 error PoolAlreadyExists(uint256 pid);
+error CanonicalPoolAlreadyInitialized(address underlying, uint256 existingPid);
 error PermissionlessPoolAlreadyInitialized(address underlying, uint256 existingPid);
 error DefaultPoolConfigNotSet();
 error InvalidUnderlying();
@@ -101,6 +102,9 @@ error FeeBaseOverflow();
 error SameAssetDebtMismatch(uint256 expected, uint256 actual);
 error NativeTransferFailed(address to, uint256 amount);
 error UnexpectedMsgValue(uint256 value);
+error NoClaimableYield(bytes32 positionKey, uint256 poolId);
+error InvalidTimelockController(address controller);
+error InvalidTimelockDelay(uint256 expected, uint256 actual);
 
 // Direct lending errors
 error DirectError_InvalidPositionNFT();

@@ -78,6 +78,10 @@ contract PoolManagementFacet {
         if (existingPid != 0) {
             revert PermissionlessPoolAlreadyInitialized(underlying, existingPid);
         }
+        existingPid = store.assetToPoolId[underlying];
+        if (existingPid != 0) {
+            revert CanonicalPoolAlreadyInitialized(underlying, existingPid);
+        }
 
         pid = _nextPoolId(store);
         (Types.PoolConfig memory config, Types.ActionFeeSet memory fees) =
@@ -123,6 +127,10 @@ contract PoolManagementFacet {
             if (existingPid != 0) {
                 revert PermissionlessPoolAlreadyInitialized(underlying, existingPid);
             }
+        }
+        uint256 canonicalPid = store.assetToPoolId[underlying];
+        if (canonicalPid != 0) {
+            revert CanonicalPoolAlreadyInitialized(underlying, canonicalPid);
         }
 
         // Validate minimum thresholds are non-zero

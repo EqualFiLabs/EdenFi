@@ -62,7 +62,11 @@ library LibFeeRouter {
             _transferTreasury(pool, toTreasury, pullFromTracked);
         }
         if (toActiveCredit > 0) {
-            _accrueActiveCredit(pool, pid, toActiveCredit, source, extraBacking);
+            bool accruedToActiveCredit = _accrueActiveCredit(pool, pid, toActiveCredit, source, extraBacking);
+            if (!accruedToActiveCredit) {
+                toFeeIndex += toActiveCredit;
+                toActiveCredit = 0;
+            }
         }
         if (toFeeIndex > 0) {
             if (extraBacking > 0) {
@@ -232,10 +236,14 @@ library LibFeeRouter {
         uint256 amount,
         bytes32 source,
         uint256 extraBacking
-    ) private {
-        if (amount == 0) return;
+    ) private returns (bool accrued) {
+        if (amount == 0) return false;
+        if (!LibActiveCreditIndex.hasMaturedBase(pid)) {
+            return false;
+        }
         _reserveYield(pool, pid, amount, extraBacking);
         LibActiveCreditIndex.accrueWithSource(pid, amount, source);
+        return true;
     }
 
     function _reserveYield(

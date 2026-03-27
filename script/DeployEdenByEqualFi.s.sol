@@ -1,0 +1,356 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Script.sol";
+import {console2} from "forge-std/console2.sol";
+
+import {Diamond} from "src/core/Diamond.sol";
+import {DiamondCutFacet} from "src/core/DiamondCutFacet.sol";
+import {DiamondLoupeFacet} from "src/core/DiamondLoupeFacet.sol";
+import {OwnershipFacet} from "src/core/OwnershipFacet.sol";
+import {DiamondInit} from "src/core/DiamondInit.sol";
+import {IDiamondCut} from "src/interfaces/IDiamondCut.sol";
+import {PositionNFT} from "src/nft/PositionNFT.sol";
+import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockController.sol";
+
+import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
+import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
+import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
+import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
+import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
+import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
+import {EdenStEVEFacet} from "src/eden/EdenStEVEFacet.sol";
+import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
+import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
+import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
+import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
+import {Types} from "src/libraries/Types.sol";
+
+interface IPoolManagementFacetInitDefault {
+    function initPool(address underlying) external payable returns (uint256);
+}
+
+interface IPoolManagementFacetInitConfig {
+    function initPool(uint256 pid, address underlying, Types.PoolConfig calldata config) external payable;
+}
+
+contract DeployEdenByEqualFi is Script {
+    uint256 internal constant LAUNCH_FACET_COUNT = 6;
+    uint256 internal constant CUT_BATCH_SIZE = 3;
+
+    struct BaseDeployment {
+        address diamond;
+        address positionNFT;
+    }
+
+    struct LaunchDeployment {
+        address diamond;
+        address positionNFT;
+        address timelockController;
+        address governor;
+        address treasury;
+    }
+
+    function runBase() external returns (BaseDeployment memory deployment) {
+        address treasury_ = vm.envAddress("TREASURY");
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.addr(deployerPrivateKey);
+        address owner_ = vm.envOr("OWNER", deployer);
+        require(deployer == owner_, "DeployEdenByEqualFi: PRIVATE_KEY must be OWNER");
+
+        vm.startBroadcast(deployerPrivateKey);
+        deployment = deployBase(owner_, treasury_);
+        vm.stopBroadcast();
+
+        console2.log("diamond", deployment.diamond);
+        console2.log("positionNFT", deployment.positionNFT);
+    }
+
+    function run() external returns (LaunchDeployment memory deployment) {
+        address governor_ = vm.envAddress("TIMELOCK");
+        address treasury_ = vm.envAddress("TREASURY");
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.addr(deployerPrivateKey);
+        address owner_ = vm.envOr("OWNER", deployer);
+        require(deployer == owner_, "DeployEdenByEqualFi: PRIVATE_KEY must be OWNER");
+
+        vm.startBroadcast(deployerPrivateKey);
+        deployment = deployLaunch(owner_, governor_, treasury_);
+        vm.stopBroadcast();
+
+        console2.log("diamond", deployment.diamond);
+        console2.log("positionNFT", deployment.positionNFT);
+        console2.log("timelockController", deployment.timelockController);
+        console2.log("governor", deployment.governor);
+        console2.log("treasury", deployment.treasury);
+    }
+
+    function deployBase(address owner_, address treasury_)
+        public
+        returns (BaseDeployment memory deployment)
+    {
+        DiamondCutFacet cut = new DiamondCutFacet();
+        DiamondLoupeFacet loupe = new DiamondLoupeFacet();
+        OwnershipFacet own = new OwnershipFacet();
+
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
+        cuts[0] = _cut(address(cut), _selectorsDiamondCut());
+        cuts[1] = _cut(address(loupe), _selectorsDiamondLoupe());
+        cuts[2] = _cut(address(own), _selectorsOwnership());
+
+        Diamond diamond = new Diamond(cuts, Diamond.DiamondArgs({owner: owner_}));
+        PositionNFT nftContract = new PositionNFT();
+        DiamondInit initializer = new DiamondInit();
+
+        IDiamondCut(address(diamond)).diamondCut(
+            new IDiamondCut.FacetCut[](0),
+            address(initializer),
+            abi.encodeWithSelector(DiamondInit.init.selector, address(0), treasury_, address(nftContract))
+        );
+
+        deployment = BaseDeployment({diamond: address(diamond), positionNFT: address(nftContract)});
+    }
+
+    function deployLaunch(address owner_, address governor_, address treasury_)
+        public
+        returns (LaunchDeployment memory deployment)
+    {
+        BaseDeployment memory base = deployBase(owner_, treasury_);
+        _installLaunchFacets(base.diamond);
+
+        address[] memory proposers = new address[](1);
+        proposers[0] = governor_;
+        address[] memory executors = new address[](1);
+        executors[0] = governor_;
+        FixedDelayTimelockController timelockController =
+            new FixedDelayTimelockController(proposers, executors, governor_);
+
+        EdenAdminFacet(base.diamond).setTimelockController(address(timelockController));
+        OwnershipFacet(base.diamond).transferOwnership(address(timelockController));
+
+        deployment = LaunchDeployment({
+            diamond: base.diamond,
+            positionNFT: base.positionNFT,
+            timelockController: address(timelockController),
+            governor: governor_,
+            treasury: treasury_
+        });
+    }
+
+    function _installLaunchFacets(address diamond) internal {
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](LAUNCH_FACET_COUNT);
+        uint256 i;
+
+        {
+            PoolManagementFacet facet = new PoolManagementFacet();
+            cuts[i++] = _cut(address(facet), _selectorsPoolManagement());
+        }
+        {
+            PositionManagementFacet facet = new PositionManagementFacet();
+            cuts[i++] = _cut(address(facet), _selectorsPositionManagement());
+        }
+        {
+            EqualIndexAdminFacetV3 facet = new EqualIndexAdminFacetV3();
+            cuts[i++] = _cut(address(facet), _selectorsEqualIndexAdmin());
+        }
+        {
+            EqualIndexActionsFacetV3 facet = new EqualIndexActionsFacetV3();
+            cuts[i++] = _cut(address(facet), _selectorsEqualIndexActions());
+        }
+        {
+            EqualIndexPositionFacet facet = new EqualIndexPositionFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualIndexPosition());
+        }
+        {
+            EdenAdminFacet facet = new EdenAdminFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEdenLaunch());
+        }
+
+        require(i == LAUNCH_FACET_COUNT, "DeployEdenByEqualFi: bad facet count");
+        _applyCutsInBatches(diamond, cuts, CUT_BATCH_SIZE);
+    }
+
+    function _applyCutsInBatches(address diamond, IDiamondCut.FacetCut[] memory cuts, uint256 batchSize) internal {
+        uint256 offset;
+        uint256 total = cuts.length;
+
+        while (offset < total) {
+            uint256 batchLen = total - offset;
+            if (batchLen > batchSize) {
+                batchLen = batchSize;
+            }
+
+            IDiamondCut.FacetCut[] memory batch = new IDiamondCut.FacetCut[](batchLen);
+            for (uint256 i; i < batchLen; ++i) {
+                batch[i] = cuts[offset + i];
+            }
+
+            IDiamondCut(diamond).diamondCut(batch, address(0), "");
+            offset += batchLen;
+        }
+    }
+
+    function _cut(address facet, bytes4[] memory selectors) internal pure returns (IDiamondCut.FacetCut memory) {
+        return IDiamondCut.FacetCut({
+            facetAddress: facet,
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: selectors
+        });
+    }
+
+    function _selectorsDiamondCut() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = DiamondCutFacet.diamondCut.selector;
+    }
+
+    function _selectorsDiamondLoupe() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](5);
+        s[0] = DiamondLoupeFacet.facets.selector;
+        s[1] = DiamondLoupeFacet.facetFunctionSelectors.selector;
+        s[2] = DiamondLoupeFacet.facetAddresses.selector;
+        s[3] = DiamondLoupeFacet.facetAddress.selector;
+        s[4] = DiamondLoupeFacet.supportsInterface.selector;
+    }
+
+    function _selectorsOwnership() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = OwnershipFacet.transferOwnership.selector;
+        s[1] = OwnershipFacet.owner.selector;
+    }
+
+    function _selectorsPoolManagement() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](21);
+        s[0] = PoolManagementFacet.initPoolWithActionFees.selector;
+        s[1] = IPoolManagementFacetInitConfig.initPool.selector;
+        s[2] = IPoolManagementFacetInitDefault.initPool.selector;
+        s[3] = PoolManagementFacet.initManagedPool.selector;
+        s[4] = PoolManagementFacet.setDefaultPoolConfig.selector;
+        s[5] = PoolManagementFacet.setRollingApy.selector;
+        s[6] = PoolManagementFacet.setDepositorLTV.selector;
+        s[7] = PoolManagementFacet.setMinDepositAmount.selector;
+        s[8] = PoolManagementFacet.setMinLoanAmount.selector;
+        s[9] = PoolManagementFacet.setMinTopupAmount.selector;
+        s[10] = PoolManagementFacet.setDepositCap.selector;
+        s[11] = PoolManagementFacet.setIsCapped.selector;
+        s[12] = PoolManagementFacet.setMaxUserCount.selector;
+        s[13] = PoolManagementFacet.setMaintenanceRate.selector;
+        s[14] = PoolManagementFacet.setFlashLoanFee.selector;
+        s[15] = PoolManagementFacet.setActionFees.selector;
+        s[16] = PoolManagementFacet.addToWhitelist.selector;
+        s[17] = PoolManagementFacet.removeFromWhitelist.selector;
+        s[18] = PoolManagementFacet.setWhitelistEnabled.selector;
+        s[19] = PoolManagementFacet.transferManager.selector;
+        s[20] = PoolManagementFacet.renounceManager.selector;
+    }
+
+    function _selectorsPositionManagement() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](6);
+        s[0] = PositionManagementFacet.mintPosition.selector;
+        s[1] = PositionManagementFacet.depositToPosition.selector;
+        s[2] = PositionManagementFacet.withdrawFromPosition.selector;
+        s[3] = PositionManagementFacet.cleanupMembership.selector;
+        s[4] = PositionManagementFacet.previewPositionYield.selector;
+        s[5] = PositionManagementFacet.claimPositionYield.selector;
+    }
+
+    function _selectorsEqualIndexAdmin() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](6);
+        s[0] = EqualIndexAdminFacetV3.createIndex.selector;
+        s[1] = EqualIndexAdminFacetV3.setPaused.selector;
+        s[2] = EqualIndexAdminFacetV3.getIndex.selector;
+        s[3] = EqualIndexAdminFacetV3.getVaultBalance.selector;
+        s[4] = EqualIndexAdminFacetV3.getFeePot.selector;
+        s[5] = EqualIndexAdminFacetV3.getIndexPoolId.selector;
+    }
+
+    function _selectorsEqualIndexActions() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = EqualIndexActionsFacetV3.mint.selector;
+        s[1] = EqualIndexActionsFacetV3.burn.selector;
+    }
+
+    function _selectorsEqualIndexPosition() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = EqualIndexPositionFacet.mintFromPosition.selector;
+        s[1] = EqualIndexPositionFacet.burnFromPosition.selector;
+    }
+
+    function _selectorsEdenLaunch() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](75);
+        s[0] = EdenBasketFacet.createBasket.selector;
+        s[1] = EdenBasketFacet.mintBasket.selector;
+        s[2] = EdenBasketFacet.burnBasket.selector;
+        s[3] = EdenBasketFacet.mintBasketFromPosition.selector;
+        s[4] = EdenBasketFacet.burnBasketFromPosition.selector;
+        s[5] = EdenBasketFacet.getBasket.selector;
+        s[6] = EdenBasketFacet.getBasketMetadata.selector;
+        s[7] = EdenBasketFacet.getBasketPoolId.selector;
+        s[8] = EdenBasketFacet.getBasketVaultBalance.selector;
+        s[9] = EdenBasketFacet.getBasketFeePot.selector;
+        s[10] = EdenStEVEFacet.createStEVE.selector;
+        s[11] = EdenStEVEFacet.depositStEVEToPosition.selector;
+        s[12] = EdenStEVEFacet.withdrawStEVEFromPosition.selector;
+        s[13] = EdenStEVEFacet.steveBasketId.selector;
+        s[14] = EdenStEVEFacet.eligibleSupply.selector;
+        s[15] = EdenStEVEFacet.eligiblePrincipalOfPosition.selector;
+        s[16] = EdenRewardFacet.configureRewards.selector;
+        s[17] = EdenRewardFacet.fundRewards.selector;
+        s[18] = EdenRewardFacet.claimRewards.selector;
+        s[19] = EdenRewardFacet.previewClaimRewards.selector;
+        s[20] = EdenRewardFacet.claimableRewards.selector;
+        s[21] = EdenRewardFacet.accruedRewardsOfPosition.selector;
+        s[22] = EdenRewardFacet.rewardCheckpointOfPosition.selector;
+        s[23] = EdenRewardFacet.getRewardConfig.selector;
+        s[24] = EdenLendingFacet.borrow.selector;
+        s[25] = EdenLendingFacet.repay.selector;
+        s[26] = EdenLendingFacet.extend.selector;
+        s[27] = EdenLendingFacet.recoverExpired.selector;
+        s[28] = EdenLendingFacet.configureLending.selector;
+        s[29] = EdenLendingFacet.configureBorrowFeeTiers.selector;
+        s[30] = EdenLendingFacet.loanCount.selector;
+        s[31] = EdenLendingFacet.borrowerLoanCount.selector;
+        s[32] = EdenLendingFacet.getLoanView.selector;
+        s[33] = EdenLendingFacet.getLoanIdsByBorrower.selector;
+        s[34] = EdenLendingFacet.getActiveLoanIdsByBorrower.selector;
+        s[35] = EdenLendingFacet.getLoansByBorrower.selector;
+        s[36] = EdenLendingFacet.getActiveLoansByBorrower.selector;
+        s[37] = EdenLendingFacet.getLoanIdsByBorrowerPaginated.selector;
+        s[38] = EdenLendingFacet.getActiveLoanIdsByBorrowerPaginated.selector;
+        s[39] = EdenLendingFacet.previewBorrow.selector;
+        s[40] = EdenLendingFacet.previewRepay.selector;
+        s[41] = EdenLendingFacet.previewExtend.selector;
+        s[42] = EdenLendingFacet.getOutstandingPrincipal.selector;
+        s[43] = EdenLendingFacet.getLockedCollateralUnits.selector;
+        s[44] = EdenViewFacet.basketCount.selector;
+        s[45] = EdenViewFacet.getBasketIds.selector;
+        s[46] = EdenViewFacet.getBasketSummary.selector;
+        s[47] = EdenViewFacet.getBasketSummaries.selector;
+        s[48] = EdenViewFacet.getProductConfig.selector;
+        s[49] = EdenViewFacet.getPositionTokenURI.selector;
+        s[50] = EdenViewFacet.hasOpenOffers.selector;
+        s[51] = EdenViewFacet.cancelOffersForPosition.selector;
+        s[52] = EdenViewFacet.getUserPositionIds.selector;
+        s[53] = EdenViewFacet.getUserPositionIdsPaginated.selector;
+        s[54] = EdenViewFacet.getPositionPortfolio.selector;
+        s[55] = EdenViewFacet.getUserPortfolio.selector;
+        s[56] = EdenViewFacet.canMint.selector;
+        s[57] = EdenViewFacet.canBurn.selector;
+        s[58] = EdenViewFacet.canBorrow.selector;
+        s[59] = EdenViewFacet.canRepay.selector;
+        s[60] = EdenViewFacet.canExtend.selector;
+        s[61] = EdenViewFacet.canClaimRewards.selector;
+        s[62] = EdenAdminFacet.setBasketMetadata.selector;
+        s[63] = EdenAdminFacet.setProtocolURI.selector;
+        s[64] = EdenAdminFacet.setContractVersion.selector;
+        s[65] = EdenAdminFacet.setFacetVersion.selector;
+        s[66] = EdenAdminFacet.setTimelockController.selector;
+        s[67] = EdenAdminFacet.setBasketPaused.selector;
+        s[68] = EdenAdminFacet.setBasketFees.selector;
+        s[69] = EdenAdminFacet.setPoolFeeShareBps.selector;
+        s[70] = EdenAdminFacet.protocolURI.selector;
+        s[71] = EdenAdminFacet.contractVersion.selector;
+        s[72] = EdenAdminFacet.facetVersion.selector;
+        s[73] = EdenAdminFacet.timelockDelaySeconds.selector;
+        s[74] = EdenAdminFacet.getGovernanceConfig.selector;
+    }
+}

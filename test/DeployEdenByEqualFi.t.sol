@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {DeployEdenByEqualFi} from "script/DeployEdenByEqualFi.s.sol";
+import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockController.sol";
 import {IDiamondLoupe} from "src/interfaces/IDiamondLoupe.sol";
 import {OwnershipFacet} from "src/core/OwnershipFacet.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
@@ -39,6 +40,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
     address internal alice = _addr("alice");
     address internal bob = _addr("bob");
     address internal carol = _addr("carol");
+    uint256 internal timelockSaltNonce;
 
     MockERC20Deploy internal eve;
     MockERC20Deploy internal alt;
@@ -50,9 +52,10 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         eve = new MockERC20Deploy("EVE", "EVE");
         alt = new MockERC20Deploy("ALT", "ALT");
 
-        LaunchDeployment memory deployment = deployLaunch(address(this), address(this), treasury);
+        BaseDeployment memory deployment = deployBase(address(this), treasury);
         diamond = deployment.diamond;
         positionNft = PositionNFT(deployment.positionNFT);
+        _installLaunchFacets(diamond);
     }
 
     function test_DeployLaunch_WiresDiamondCoreAndMinimalFacetSet() public {
@@ -85,6 +88,35 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         );
     }
 
+    function test_DeployLaunch_HandsOffGovernanceToFixedDelayTimelock() public {
+        LaunchDeployment memory deployment = deployLaunch(address(this), address(this), treasury);
+        address launchedDiamond = deployment.diamond;
+        FixedDelayTimelockController controller =
+            FixedDelayTimelockController(payable(deployment.timelockController));
+
+        _assertEqAddress(OwnershipFacet(launchedDiamond).owner(), address(controller), "owner handed to controller");
+        _assertEq(controller.getMinDelay(), 7 days, "controller delay");
+
+        EdenViewFacet.ProductConfigView memory product = EdenViewFacet(launchedDiamond).getProductConfig();
+        _assertEqAddress(product.timelock, address(controller), "product timelock");
+
+        (bool directOk,) =
+            launchedDiamond.call(abi.encodeWithSelector(EdenAdminFacet.setProtocolURI.selector, "ipfs://blocked"));
+        _assertTrue(!directOk, "direct admin call should fail after handoff");
+
+        _timelockCall(
+            controller,
+            launchedDiamond,
+            abi.encodeWithSelector(EdenAdminFacet.setProtocolURI.selector, "ipfs://timelocked")
+        );
+
+        _assertEqBytes32(
+            keccak256(bytes(EdenAdminFacet(launchedDiamond).protocolURI())),
+            keccak256(bytes("ipfs://timelocked")),
+            "timelock admin call succeeds"
+        );
+    }
+
     function test_DeployLaunch_SupportsWalletFlowsAndAdminReads() public {
         EdenDeploymentState memory state = _bootstrapEdenProduct();
 
@@ -102,7 +134,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         EdenAdminFacet(diamond).setContractVersion("launch-v1");
 
         EdenViewFacet.ProductConfigView memory product = EdenViewFacet(diamond).getProductConfig();
-        _assertEqAddress(product.timelock, address(this), "timelock set");
+        _assertEqAddress(product.timelock, address(0), "timelock unset before launch handoff");
         _assertEqAddress(product.treasury, treasury, "treasury set");
         _assertEq(product.steveBasketId, state.steveBasketId, "stEVE basket id");
         _assertEqAddress(product.rewardToken, address(eve), "reward token");
@@ -191,6 +223,13 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         EdenLendingFacet(diamond).configureBorrowFeeTiers(state.altBasketId, mins, fees);
     }
 
+    function _timelockCall(FixedDelayTimelockController controller, address target, bytes memory data) internal {
+        bytes32 salt = keccak256(abi.encodePacked("edenfi-timelock", timelockSaltNonce++));
+        controller.schedule(target, 0, data, bytes32(0), salt, 7 days);
+        vm.warp(block.timestamp + 7 days + 1);
+        controller.execute(target, 0, data, bytes32(0), salt);
+    }
+
     function _singleAssetParams(
         string memory name_,
         string memory symbol_,
@@ -250,6 +289,10 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
     }
 
     function _assertEqAddress(address left, address right, string memory message) internal pure {
+        require(left == right, message);
+    }
+
+    function _assertEqBytes32(bytes32 left, bytes32 right, string memory message) internal pure {
         require(left == right, message);
     }
 

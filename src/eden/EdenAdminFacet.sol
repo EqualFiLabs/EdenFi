@@ -8,6 +8,7 @@ import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEdenAdminStorage} from "../libraries/LibEdenAdminStorage.sol";
 import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
 import {LibDiamond} from "../libraries/LibDiamond.sol";
+import {LibTimelock} from "../libraries/LibTimelock.sol";
 import "../libraries/Errors.sol";
 
 contract EdenAdminFacet is EdenViewFacet {
@@ -21,6 +22,7 @@ contract EdenAdminFacet is EdenViewFacet {
     event ProtocolURIUpdated(string oldUri, string newUri);
     event ContractVersionUpdated(string oldVersion, string newVersion);
     event FacetVersionUpdated(address indexed facet, string oldVersion, string newVersion);
+    event TimelockControllerUpdated(address indexed oldTimelock, address indexed newTimelock);
     event BasketPausedUpdated(uint256 indexed basketId, bool paused);
     event BasketFeeConfigUpdated(
         uint256 indexed basketId,
@@ -86,6 +88,18 @@ contract EdenAdminFacet is EdenViewFacet {
         store.facetVersions[facet] = version;
 
         emit FacetVersionUpdated(facet, oldVersion, version);
+    }
+
+    function setTimelockController(address timelockController) external nonReentrant {
+        LibCurrency.assertZeroMsgValue();
+        LibAccess.enforceTimelockOrOwnerIfUnset();
+        LibTimelock.validateFixedDelayController(timelockController);
+
+        LibAppStorage.AppStorage storage app = LibAppStorage.s();
+        address oldTimelock = LibAppStorage.timelockAddress(app);
+        app.timelock = timelockController;
+
+        emit TimelockControllerUpdated(oldTimelock, timelockController);
     }
 
     function setBasketPaused(uint256 basketId, bool paused) external nonReentrant basketExists(basketId) {

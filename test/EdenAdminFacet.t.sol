@@ -2,9 +2,11 @@
 pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
+import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockController.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
@@ -93,6 +95,7 @@ contract EdenAdminFacetTest {
     event ProtocolURIUpdated(string oldUri, string newUri);
     event ContractVersionUpdated(string oldVersion, string newVersion);
     event FacetVersionUpdated(address indexed facet, string oldVersion, string newVersion);
+    event TimelockControllerUpdated(address indexed oldTimelock, address indexed newTimelock);
     event BasketPausedUpdated(uint256 indexed basketId, bool paused);
     event BasketFeeConfigUpdated(
         uint256 indexed basketId,
@@ -206,6 +209,30 @@ contract EdenAdminFacetTest {
         _assertEq(config.timelockDelaySeconds, 7 days, "product config delay");
         _assertEq(uint256(uint160(config.timelock)), uint256(uint160(address(this))), "product config timelock");
         _assertEq(uint256(uint160(config.rewardToken)), uint256(uint160(address(eve))), "product config reward token");
+    }
+
+    function test_SetTimelockController_RequiresFixedDelayController() public {
+        address[] memory proposers = new address[](1);
+        proposers[0] = address(this);
+        address[] memory executors = new address[](1);
+        executors[0] = address(this);
+
+        FixedDelayTimelockController goodController =
+            new FixedDelayTimelockController(proposers, executors, address(this));
+        TimelockController badController = new TimelockController(1 days, proposers, executors, address(this));
+
+        vm.expectEmit(true, true, false, true);
+        emit TimelockControllerUpdated(address(this), address(goodController));
+        harness.setTimelockController(address(goodController));
+
+        EdenAdminFacet.GovernanceConfigView memory governance = harness.getGovernanceConfig();
+        _assertEq(uint256(uint160(governance.timelock)), uint256(uint160(address(goodController))), "controller stored");
+
+        harness.setTimelock(address(this));
+        (bool badOk,) = address(harness).call(
+            abi.encodeWithSelector(harness.setTimelockController.selector, address(badController))
+        );
+        _assertTrue(!badOk, "non-fixed-delay timelock should fail");
     }
 
     function _singleAssetParams(

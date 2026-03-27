@@ -220,6 +220,12 @@ library LibActiveCreditIndex {
         emit ActiveCreditIndexAccrued(pid, amount, delta, newIndex, source);
     }
 
+    function hasMaturedBase(uint256 pid) internal returns (bool) {
+        Types.PoolData storage p = LibAppStorage.s().pools[pid];
+        _rollMatured(p);
+        return p.activeCreditMaturedTotal != 0;
+    }
+
     /// @notice Settle pending active credit yield for a user into accrued ledger and checkpoint index.
     function settle(uint256 pid, bytes32 user) internal {
         LibMaintenance.enforce(pid);

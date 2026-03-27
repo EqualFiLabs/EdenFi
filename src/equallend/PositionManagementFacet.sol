@@ -16,8 +16,10 @@ import {
     DepositBelowMinimum,
     DepositCapExceeded,
     InsufficientPrincipal,
+    InsufficientPoolLiquidity,
     InvalidParameterRange,
     MaxUserCountExceeded,
+    NoClaimableYield,
     PoolNotInitialized
 } from "../libraries/Errors.sol";
 
@@ -38,6 +40,13 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
         uint256 indexed poolId,
         uint256 principalWithdrawn,
         uint256 remainingPrincipal
+    );
+    event PositionYieldClaimed(
+        uint256 indexed tokenId,
+        address indexed owner,
+        uint256 indexed poolId,
+        address recipient,
+        uint256 claimed
     );
 
     function mintPosition(uint256 pid) external payable nonReentrant returns (uint256 tokenId) {
@@ -77,6 +86,48 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
         LibPositionHelpers.ensurePoolMembership(positionKey, pid, true);
         (bool canClear, string memory reason) = LibPoolMembership.canClearMembership(positionKey, pid);
         LibPoolMembership._leavePool(positionKey, pid, canClear, reason);
+    }
+
+    function previewPositionYield(uint256 tokenId, uint256 pid) external view returns (uint256 claimable) {
+        bytes32 positionKey = _getPositionKey(tokenId);
+        claimable = _previewPositionYield(positionKey, pid);
+    }
+
+    function claimPositionYield(
+        uint256 tokenId,
+        uint256 pid,
+        address recipient,
+        uint256 minReceived
+    ) external payable nonReentrant returns (uint256 claimed) {
+        LibCurrency.assertZeroMsgValue();
+        _requireOwnership(tokenId);
+
+        Types.PoolData storage p = _pool(pid);
+        bytes32 positionKey = _getPositionKey(tokenId);
+
+        LibActiveCreditIndex.settle(pid, positionKey);
+        LibFeeIndex.settle(pid, positionKey);
+
+        claimed = p.userAccruedYield[positionKey];
+        if (claimed == 0) {
+            revert NoClaimableYield(positionKey, pid);
+        }
+        if (claimed > p.yieldReserve) {
+            revert InsufficientPoolLiquidity(claimed, p.yieldReserve);
+        }
+        if (claimed > p.trackedBalance) {
+            revert InsufficientPrincipal(claimed, p.trackedBalance);
+        }
+
+        p.userAccruedYield[positionKey] = 0;
+        p.yieldReserve -= claimed;
+        p.trackedBalance -= claimed;
+        if (LibCurrency.isNative(p.underlying)) {
+            LibAppStorage.s().nativeTrackedTotal -= claimed;
+        }
+
+        LibCurrency.transferWithMin(p.underlying, recipient, claimed, minReceived);
+        emit PositionYieldClaimed(tokenId, msg.sender, pid, recipient, claimed);
     }
 
     function _pool(uint256 pid) internal view returns (Types.PoolData storage p) {
@@ -220,5 +271,16 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
         withdrawn = principalToWithdraw;
 
         emit WithdrawnFromPosition(tokenId, msg.sender, pid, principalToWithdraw, newPrincipal);
+    }
+
+    function _previewPositionYield(bytes32 positionKey, uint256 pid) internal view returns (uint256 claimable) {
+        Types.PoolData storage p = _pool(pid);
+        uint256 accrued = p.userAccruedYield[positionKey];
+        uint256 feePending = LibFeeIndex.pendingYield(pid, positionKey);
+        uint256 activePending = LibActiveCreditIndex.pendingYield(pid, positionKey);
+
+        uint256 feeOnly = feePending > accrued ? feePending - accrued : 0;
+        uint256 activeOnly = activePending > accrued ? activePending - accrued : 0;
+        claimable = accrued + feeOnly + activeOnly;
     }
 }

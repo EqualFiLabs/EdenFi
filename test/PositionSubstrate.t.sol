@@ -35,6 +35,10 @@ contract PositionSubstrateHarness is PoolManagementFacet, PositionManagementFace
         LibAppStorage.s().treasury = treasury_;
     }
 
+    function setPoolCreationFee(uint256 fee) external {
+        LibAppStorage.s().poolCreationFee = fee;
+    }
+
     function setFeeSplits(uint256 treasuryBps, uint256 activeCreditBps) external {
         if (treasuryBps > type(uint16).max || activeCreditBps > type(uint16).max) revert();
         LibAppStorage.AppStorage storage store = LibAppStorage.s();
@@ -88,6 +92,10 @@ contract PositionSubstrateHarness is PoolManagementFacet, PositionManagementFace
 
     function trackedBalanceOf(uint256 pid) external view returns (uint256) {
         return LibAppStorage.s().pools[pid].trackedBalance;
+    }
+
+    function yieldReserveOf(uint256 pid) external view returns (uint256) {
+        return LibAppStorage.s().pools[pid].yieldReserve;
     }
 
     function totalDepositsOf(uint256 pid) external view returns (uint256) {
@@ -239,6 +247,75 @@ contract PositionSubstrateTest {
 
         _assertEq(harness.accruedYieldOf(1, positionKey), 9e18, "active credit and fee index settled before principal increase");
         _assertEq(harness.principalOf(1, positionKey), 110e18, "principal after active credit deposit");
+    }
+
+    function test_InitPool_RevertWhenCanonicalUnderlyingAlreadyExists() public {
+        harness.setDefaultPoolConfig(_poolConfig());
+        harness.setPoolCreationFee(1);
+
+        vm.prank(alice);
+        (bool ok,) = address(harness).call{value: 1}(
+            abi.encodeWithSignature("initPool(address)", address(token))
+        );
+
+        _assertTrue(!ok, "duplicate canonical pool should fail");
+    }
+
+    function test_ClaimPositionYield_TransfersAccruedYield() public {
+        token.mint(alice, 200e18);
+
+        vm.prank(alice);
+        token.approve(address(harness), 200e18);
+
+        vm.prank(alice);
+        uint256 tokenId = harness.mintPosition(1);
+        bytes32 positionKey = positionNft.getPositionKey(tokenId);
+
+        vm.prank(alice);
+        harness.depositToPosition(tokenId, 1, 100e18, 100e18);
+
+        token.mint(address(harness), 10e18);
+        harness.seedPoolBalances(1, 100e18, 110e18);
+        harness.routeFeeSamePool(1, 10e18, ROUTER_SOURCE);
+
+        _assertEq(harness.previewPositionYield(tokenId, 1), 9e18, "preview claimable yield");
+
+        uint256 walletBefore = token.balanceOf(alice);
+        vm.prank(alice);
+        uint256 claimed = harness.claimPositionYield(tokenId, 1, alice, 9e18);
+
+        _assertEq(claimed, 9e18, "claimed amount");
+        _assertEq(token.balanceOf(alice), walletBefore + claimed, "wallet receives yield");
+        _assertEq(harness.accruedYieldOf(1, positionKey), 0, "accrued yield cleared");
+        _assertEq(harness.yieldReserveOf(1), 0, "yield reserve depleted");
+        _assertEq(harness.trackedBalanceOf(1), 100e18, "tracked balance decremented");
+    }
+
+    function test_RouteFeeSamePool_FallsBackToFeeIndexWhenNoActiveCreditBase() public {
+        harness.setFeeSplits(1000, 7000);
+
+        token.mint(alice, 200e18);
+        vm.prank(alice);
+        token.approve(address(harness), 200e18);
+
+        vm.prank(alice);
+        uint256 tokenId = harness.mintPosition(1);
+        bytes32 positionKey = positionNft.getPositionKey(tokenId);
+
+        vm.prank(alice);
+        harness.depositToPosition(tokenId, 1, 100e18, 100e18);
+
+        token.mint(address(harness), 10e18);
+        harness.seedPoolBalances(1, 100e18, 110e18);
+        (uint256 toTreasury, uint256 toActiveCredit, uint256 toFeeIndex) =
+            harness.routeFeeSamePool(1, 10e18, ROUTER_SOURCE);
+
+        _assertEq(toTreasury, 1e18, "treasury split preserved");
+        _assertEq(toActiveCredit, 0, "inactive active credit rerouted");
+        _assertEq(toFeeIndex, 9e18, "fee index absorbs inactive active credit share");
+        _assertEq(harness.pendingActiveCreditYield(1, positionKey), 0, "no active credit yield");
+        _assertEq(harness.pendingFeeYield(1, positionKey), 9e18, "fee yield receives rerouted share");
+        _assertEq(harness.yieldReserveOf(1), 9e18, "yield reserve fully backs fee yield");
     }
 
     function _poolConfig() internal pure returns (Types.PoolConfig memory cfg) {

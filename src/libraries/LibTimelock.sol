@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma solidity ^0.8.20;
+
+import {LibEdenAdminStorage} from "./LibEdenAdminStorage.sol";
+import {InvalidTimelockController, InvalidTimelockDelay} from "./Errors.sol";
+
+interface ITimelockControllerLike {
+    function getMinDelay() external view returns (uint256);
+}
+
+library LibTimelock {
+    function validateFixedDelayController(address controller) internal view {
+        if (controller == address(0) || controller.code.length == 0) {
+            revert InvalidTimelockController(controller);
+        }
+
+        uint256 delay;
+        try ITimelockControllerLike(controller).getMinDelay() returns (uint256 currentDelay) {
+            delay = currentDelay;
+        } catch {
+            revert InvalidTimelockController(controller);
+        }
+
+        uint256 expectedDelay = LibEdenAdminStorage.TIMELOCK_DELAY_SECONDS;
+        if (delay != expectedDelay) {
+            revert InvalidTimelockDelay(expectedDelay, delay);
+        }
+    }
+}
