@@ -13,6 +13,12 @@ import {InsufficientPoolLiquidity, InsufficientPrincipal} from "./Errors.sol";
 library LibFeeRouter {
     uint256 internal constant BPS_DENOMINATOR = 10_000;
 
+    struct RoutedSplit {
+        uint256 treasury;
+        uint256 active;
+        uint256 fee;
+    }
+
     event ManagedPoolSystemShareRouted(
         uint256 indexed managedPid,
         uint256 indexed basePid,
@@ -89,6 +95,17 @@ library LibFeeRouter {
             return routeSamePool(pid, amount, source, pullFromTracked, extraBacking);
         }
 
+        return _routeManagedShareConfigured(pid, amount, source, pullFromTracked, extraBacking, systemShareBps);
+    }
+
+    function _routeManagedShareConfigured(
+        uint256 pid,
+        uint256 amount,
+        bytes32 source,
+        bool pullFromTracked,
+        uint256 extraBacking,
+        uint16 systemShareBps
+    ) private returns (uint256 toTreasury, uint256 toActiveCredit, uint256 toFeeIndex) {
         uint256 systemShare = (amount * systemShareBps) / BPS_DENOMINATOR;
         uint256 managedShare = amount - systemShare;
 
@@ -96,19 +113,19 @@ library LibFeeRouter {
         uint256 managedExtraBacking = extraBacking - systemExtraBacking;
 
         if (systemShare > 0) {
-            (uint256 sysTreasury, uint256 sysActive, uint256 sysFee) =
-                _routeSystemShare(store, pool, pid, systemShare, source, pullFromTracked, systemExtraBacking);
-            toTreasury += sysTreasury;
-            toActiveCredit += sysActive;
-            toFeeIndex += sysFee;
+            RoutedSplit memory systemSplit =
+                _routeSystemShare(pid, systemShare, source, pullFromTracked, systemExtraBacking);
+            toTreasury += systemSplit.treasury;
+            toActiveCredit += systemSplit.active;
+            toFeeIndex += systemSplit.fee;
         }
 
         if (managedShare > 0) {
-            (uint256 manTreasury, uint256 manActive, uint256 manFee) =
-                routeSamePool(pid, managedShare, source, pullFromTracked, managedExtraBacking);
-            toTreasury += manTreasury;
-            toActiveCredit += manActive;
-            toFeeIndex += manFee;
+            RoutedSplit memory managedSplit =
+                _routeManagedPoolShare(pid, managedShare, source, pullFromTracked, managedExtraBacking);
+            toTreasury += managedSplit.treasury;
+            toActiveCredit += managedSplit.active;
+            toFeeIndex += managedSplit.fee;
         }
     }
 
@@ -119,25 +136,36 @@ library LibFeeRouter {
     }
 
     function _routeSystemShare(
-        LibAppStorage.AppStorage storage store,
-        Types.PoolData storage managedPool,
         uint256 managedPid,
         uint256 amount,
         bytes32 source,
         bool pullFromTracked,
         uint256 extraBacking
-    ) private returns (uint256 toTreasury, uint256 toActiveCredit, uint256 toFeeIndex) {
+    ) private returns (RoutedSplit memory split) {
+        LibAppStorage.AppStorage storage store = LibAppStorage.s();
+        Types.PoolData storage managedPool = store.pools[managedPid];
         uint256 basePid = store.assetToPoolId[managedPool.underlying];
         Types.PoolData storage basePool = store.pools[basePid];
         if (basePid == 0 || !basePool.initialized || basePool.totalDeposits == 0) {
             _routeSystemShareToTreasury(managedPool, amount, pullFromTracked);
             emit ManagedPoolSystemShareRouted(managedPid, 0, amount, source);
-            return (amount, 0, 0);
+            split.treasury = amount;
+            return split;
         }
 
         _transferBacking(managedPool, basePool, amount);
-        (toTreasury, toActiveCredit, toFeeIndex) = routeSamePool(basePid, amount, source, true, extraBacking);
+        (split.treasury, split.active, split.fee) = routeSamePool(basePid, amount, source, true, extraBacking);
         emit ManagedPoolSystemShareRouted(managedPid, basePid, amount, source);
+    }
+
+    function _routeManagedPoolShare(
+        uint256 pid,
+        uint256 amount,
+        bytes32 source,
+        bool pullFromTracked,
+        uint256 extraBacking
+    ) private returns (RoutedSplit memory split) {
+        (split.treasury, split.active, split.fee) = routeSamePool(pid, amount, source, pullFromTracked, extraBacking);
     }
 
     function _transferBacking(Types.PoolData storage fromPool, Types.PoolData storage toPool, uint256 amount)
