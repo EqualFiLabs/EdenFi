@@ -19,7 +19,11 @@ import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol"
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
+import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
+import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
+import {EdenBasketWalletFacet} from "src/eden/EdenBasketWalletFacet.sol";
 import {EdenStEVEFacet} from "src/eden/EdenStEVEFacet.sol";
+import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
@@ -35,7 +39,7 @@ interface IPoolManagementFacetInitConfig {
 }
 
 contract DeployEdenByEqualFi is Script {
-    uint256 internal constant LAUNCH_FACET_COUNT = 6;
+    uint256 internal constant LAUNCH_FACET_COUNT = 13;
     uint256 internal constant CUT_BATCH_SIZE = 3;
 
     struct BaseDeployment {
@@ -163,7 +167,35 @@ contract DeployEdenByEqualFi is Script {
         }
         {
             EdenAdminFacet facet = new EdenAdminFacet();
-            cuts[i++] = _cut(address(facet), _selectorsEdenLaunch());
+            cuts[i++] = _cut(address(facet), _selectorsEdenAdmin());
+        }
+        {
+            EdenViewFacet facet = new EdenViewFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEdenView());
+        }
+        {
+            EdenLendingFacet facet = new EdenLendingFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEdenLending());
+        }
+        {
+            EdenRewardFacet facet = new EdenRewardFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEdenReward());
+        }
+        {
+            EdenStEVEActionFacet facet = new EdenStEVEActionFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEdenStEVE());
+        }
+        {
+            EdenBasketDataFacet facet = new EdenBasketDataFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEdenBasketData());
+        }
+        {
+            EdenBasketPositionFacet facet = new EdenBasketPositionFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEdenBasketPosition());
+        }
+        {
+            EdenBasketWalletFacet facet = new EdenBasketWalletFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEdenBasketWallet());
         }
 
         require(i == LAUNCH_FACET_COUNT, "DeployEdenByEqualFi: bad facet count");
@@ -219,7 +251,7 @@ contract DeployEdenByEqualFi is Script {
     }
 
     function _selectorsPoolManagement() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
+        s = new bytes4[](25);
         s[0] = PoolManagementFacet.initPoolWithActionFees.selector;
         s[1] = IPoolManagementFacetInitConfig.initPool.selector;
         s[2] = IPoolManagementFacetInitDefault.initPool.selector;
@@ -241,6 +273,10 @@ contract DeployEdenByEqualFi is Script {
         s[18] = PoolManagementFacet.setWhitelistEnabled.selector;
         s[19] = PoolManagementFacet.transferManager.selector;
         s[20] = PoolManagementFacet.renounceManager.selector;
+        s[21] = PoolManagementFacet.setAumFee.selector;
+        s[22] = PoolManagementFacet.getPoolConfigView.selector;
+        s[23] = PoolManagementFacet.getPoolInfoView.selector;
+        s[24] = PoolManagementFacet.getPoolMaintenanceView.selector;
     }
 
     function _selectorsPositionManagement() internal pure returns (bytes4[] memory s) {
@@ -275,82 +311,110 @@ contract DeployEdenByEqualFi is Script {
         s[1] = EqualIndexPositionFacet.burnFromPosition.selector;
     }
 
-    function _selectorsEdenLaunch() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](75);
-        s[0] = EdenBasketFacet.createBasket.selector;
-        s[1] = EdenBasketFacet.mintBasket.selector;
-        s[2] = EdenBasketFacet.burnBasket.selector;
-        s[3] = EdenBasketFacet.mintBasketFromPosition.selector;
-        s[4] = EdenBasketFacet.burnBasketFromPosition.selector;
-        s[5] = EdenBasketFacet.getBasket.selector;
-        s[6] = EdenBasketFacet.getBasketMetadata.selector;
-        s[7] = EdenBasketFacet.getBasketPoolId.selector;
-        s[8] = EdenBasketFacet.getBasketVaultBalance.selector;
-        s[9] = EdenBasketFacet.getBasketFeePot.selector;
-        s[10] = EdenStEVEFacet.createStEVE.selector;
-        s[11] = EdenStEVEFacet.depositStEVEToPosition.selector;
-        s[12] = EdenStEVEFacet.withdrawStEVEFromPosition.selector;
-        s[13] = EdenStEVEFacet.steveBasketId.selector;
-        s[14] = EdenStEVEFacet.eligibleSupply.selector;
-        s[15] = EdenStEVEFacet.eligiblePrincipalOfPosition.selector;
-        s[16] = EdenRewardFacet.configureRewards.selector;
-        s[17] = EdenRewardFacet.fundRewards.selector;
-        s[18] = EdenRewardFacet.claimRewards.selector;
-        s[19] = EdenRewardFacet.previewClaimRewards.selector;
-        s[20] = EdenRewardFacet.claimableRewards.selector;
-        s[21] = EdenRewardFacet.accruedRewardsOfPosition.selector;
-        s[22] = EdenRewardFacet.rewardCheckpointOfPosition.selector;
-        s[23] = EdenRewardFacet.getRewardConfig.selector;
-        s[24] = EdenLendingFacet.borrow.selector;
-        s[25] = EdenLendingFacet.repay.selector;
-        s[26] = EdenLendingFacet.extend.selector;
-        s[27] = EdenLendingFacet.recoverExpired.selector;
-        s[28] = EdenLendingFacet.configureLending.selector;
-        s[29] = EdenLendingFacet.configureBorrowFeeTiers.selector;
-        s[30] = EdenLendingFacet.loanCount.selector;
-        s[31] = EdenLendingFacet.borrowerLoanCount.selector;
-        s[32] = EdenLendingFacet.getLoanView.selector;
-        s[33] = EdenLendingFacet.getLoanIdsByBorrower.selector;
-        s[34] = EdenLendingFacet.getActiveLoanIdsByBorrower.selector;
-        s[35] = EdenLendingFacet.getLoansByBorrower.selector;
-        s[36] = EdenLendingFacet.getActiveLoansByBorrower.selector;
-        s[37] = EdenLendingFacet.getLoanIdsByBorrowerPaginated.selector;
-        s[38] = EdenLendingFacet.getActiveLoanIdsByBorrowerPaginated.selector;
-        s[39] = EdenLendingFacet.previewBorrow.selector;
-        s[40] = EdenLendingFacet.previewRepay.selector;
-        s[41] = EdenLendingFacet.previewExtend.selector;
-        s[42] = EdenLendingFacet.getOutstandingPrincipal.selector;
-        s[43] = EdenLendingFacet.getLockedCollateralUnits.selector;
-        s[44] = EdenViewFacet.basketCount.selector;
-        s[45] = EdenViewFacet.getBasketIds.selector;
-        s[46] = EdenViewFacet.getBasketSummary.selector;
-        s[47] = EdenViewFacet.getBasketSummaries.selector;
-        s[48] = EdenViewFacet.getProductConfig.selector;
-        s[49] = EdenViewFacet.getPositionTokenURI.selector;
-        s[50] = EdenViewFacet.hasOpenOffers.selector;
-        s[51] = EdenViewFacet.cancelOffersForPosition.selector;
-        s[52] = EdenViewFacet.getUserPositionIds.selector;
-        s[53] = EdenViewFacet.getUserPositionIdsPaginated.selector;
-        s[54] = EdenViewFacet.getPositionPortfolio.selector;
-        s[55] = EdenViewFacet.getUserPortfolio.selector;
-        s[56] = EdenViewFacet.canMint.selector;
-        s[57] = EdenViewFacet.canBurn.selector;
-        s[58] = EdenViewFacet.canBorrow.selector;
-        s[59] = EdenViewFacet.canRepay.selector;
-        s[60] = EdenViewFacet.canExtend.selector;
-        s[61] = EdenViewFacet.canClaimRewards.selector;
-        s[62] = EdenAdminFacet.setBasketMetadata.selector;
-        s[63] = EdenAdminFacet.setProtocolURI.selector;
-        s[64] = EdenAdminFacet.setContractVersion.selector;
-        s[65] = EdenAdminFacet.setFacetVersion.selector;
-        s[66] = EdenAdminFacet.setTimelockController.selector;
-        s[67] = EdenAdminFacet.setBasketPaused.selector;
-        s[68] = EdenAdminFacet.setBasketFees.selector;
-        s[69] = EdenAdminFacet.setPoolFeeShareBps.selector;
-        s[70] = EdenAdminFacet.protocolURI.selector;
-        s[71] = EdenAdminFacet.contractVersion.selector;
-        s[72] = EdenAdminFacet.facetVersion.selector;
-        s[73] = EdenAdminFacet.timelockDelaySeconds.selector;
-        s[74] = EdenAdminFacet.getGovernanceConfig.selector;
+    function _selectorsEdenBasketWallet() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = EdenBasketWalletFacet.createBasket.selector;
+        s[1] = EdenBasketWalletFacet.mintBasket.selector;
+        s[2] = EdenBasketWalletFacet.burnBasket.selector;
+    }
+
+    function _selectorsEdenBasketPosition() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = EdenBasketPositionFacet.mintBasketFromPosition.selector;
+        s[1] = EdenBasketPositionFacet.burnBasketFromPosition.selector;
+    }
+
+    function _selectorsEdenBasketData() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](5);
+        s[0] = EdenBasketDataFacet.getBasket.selector;
+        s[1] = EdenBasketDataFacet.getBasketMetadata.selector;
+        s[2] = EdenBasketDataFacet.getBasketPoolId.selector;
+        s[3] = EdenBasketDataFacet.getBasketVaultBalance.selector;
+        s[4] = EdenBasketDataFacet.getBasketFeePot.selector;
+    }
+
+    function _selectorsEdenStEVE() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](6);
+        s[0] = EdenStEVEActionFacet.createStEVE.selector;
+        s[1] = EdenStEVEActionFacet.depositStEVEToPosition.selector;
+        s[2] = EdenStEVEActionFacet.withdrawStEVEFromPosition.selector;
+        s[3] = EdenStEVEActionFacet.steveBasketId.selector;
+        s[4] = EdenStEVEActionFacet.eligibleSupply.selector;
+        s[5] = EdenStEVEActionFacet.eligiblePrincipalOfPosition.selector;
+    }
+
+    function _selectorsEdenReward() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](8);
+        s[0] = EdenRewardFacet.configureRewards.selector;
+        s[1] = EdenRewardFacet.fundRewards.selector;
+        s[2] = EdenRewardFacet.claimRewards.selector;
+        s[3] = EdenRewardFacet.previewClaimRewards.selector;
+        s[4] = EdenRewardFacet.claimableRewards.selector;
+        s[5] = EdenRewardFacet.accruedRewardsOfPosition.selector;
+        s[6] = EdenRewardFacet.rewardCheckpointOfPosition.selector;
+        s[7] = EdenRewardFacet.getRewardConfig.selector;
+    }
+
+    function _selectorsEdenLending() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](20);
+        s[0] = EdenLendingFacet.borrow.selector;
+        s[1] = EdenLendingFacet.repay.selector;
+        s[2] = EdenLendingFacet.extend.selector;
+        s[3] = EdenLendingFacet.recoverExpired.selector;
+        s[4] = EdenLendingFacet.configureLending.selector;
+        s[5] = EdenLendingFacet.configureBorrowFeeTiers.selector;
+        s[6] = EdenLendingFacet.loanCount.selector;
+        s[7] = EdenLendingFacet.borrowerLoanCount.selector;
+        s[8] = EdenLendingFacet.getLoanView.selector;
+        s[9] = EdenLendingFacet.getLoanIdsByBorrower.selector;
+        s[10] = EdenLendingFacet.getActiveLoanIdsByBorrower.selector;
+        s[11] = EdenLendingFacet.getLoansByBorrower.selector;
+        s[12] = EdenLendingFacet.getActiveLoansByBorrower.selector;
+        s[13] = EdenLendingFacet.getLoanIdsByBorrowerPaginated.selector;
+        s[14] = EdenLendingFacet.getActiveLoanIdsByBorrowerPaginated.selector;
+        s[15] = EdenLendingFacet.previewBorrow.selector;
+        s[16] = EdenLendingFacet.previewRepay.selector;
+        s[17] = EdenLendingFacet.previewExtend.selector;
+        s[18] = EdenLendingFacet.getOutstandingPrincipal.selector;
+        s[19] = EdenLendingFacet.getLockedCollateralUnits.selector;
+    }
+
+    function _selectorsEdenView() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](18);
+        s[0] = EdenViewFacet.basketCount.selector;
+        s[1] = EdenViewFacet.getBasketIds.selector;
+        s[2] = EdenViewFacet.getBasketSummary.selector;
+        s[3] = EdenViewFacet.getBasketSummaries.selector;
+        s[4] = EdenViewFacet.getProductConfig.selector;
+        s[5] = EdenViewFacet.getPositionTokenURI.selector;
+        s[6] = EdenViewFacet.hasOpenOffers.selector;
+        s[7] = EdenViewFacet.cancelOffersForPosition.selector;
+        s[8] = EdenViewFacet.getUserPositionIds.selector;
+        s[9] = EdenViewFacet.getUserPositionIdsPaginated.selector;
+        s[10] = EdenViewFacet.getPositionPortfolio.selector;
+        s[11] = EdenViewFacet.getUserPortfolio.selector;
+        s[12] = EdenViewFacet.canMint.selector;
+        s[13] = EdenViewFacet.canBurn.selector;
+        s[14] = EdenViewFacet.canBorrow.selector;
+        s[15] = EdenViewFacet.canRepay.selector;
+        s[16] = EdenViewFacet.canExtend.selector;
+        s[17] = EdenViewFacet.canClaimRewards.selector;
+    }
+
+    function _selectorsEdenAdmin() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](13);
+        s[0] = EdenAdminFacet.setBasketMetadata.selector;
+        s[1] = EdenAdminFacet.setProtocolURI.selector;
+        s[2] = EdenAdminFacet.setContractVersion.selector;
+        s[3] = EdenAdminFacet.setFacetVersion.selector;
+        s[4] = EdenAdminFacet.setTimelockController.selector;
+        s[5] = EdenAdminFacet.setBasketPaused.selector;
+        s[6] = EdenAdminFacet.setBasketFees.selector;
+        s[7] = EdenAdminFacet.setPoolFeeShareBps.selector;
+        s[8] = EdenAdminFacet.protocolURI.selector;
+        s[9] = EdenAdminFacet.contractVersion.selector;
+        s[10] = EdenAdminFacet.facetVersion.selector;
+        s[11] = EdenAdminFacet.timelockDelaySeconds.selector;
+        s[12] = EdenAdminFacet.getGovernanceConfig.selector;
     }
 }

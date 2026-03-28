@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Vm} from "forge-std/Vm.sol";
 
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
+import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {AumFeeOutOfBounds, PoolNotInitialized} from "src/libraries/Errors.sol";
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
 
@@ -13,6 +14,7 @@ contract PoolAumFacetTest is EdenLaunchFixture {
     function setUp() public override {
         super.setUp();
         _bootstrapCorePools();
+        _installTestSupportFacet();
     }
 
     function test_SetAumFee_IsTimelockOnlyAndEmitsEvent() public {
@@ -124,6 +126,39 @@ contract PoolAumFacetTest is EdenLaunchFixture {
 
         vm.expectRevert(abi.encodeWithSelector(PoolNotInitialized.selector, 99));
         PoolManagementFacet(diamond).getPoolMaintenanceView(99);
+    }
+
+    function test_PoolMaintenanceView_ReflectsLiveAccrualAndPayout() public {
+        testSupport.setFoundationReceiver(carol);
+
+        eve.mint(alice, 250e18);
+        uint256 positionId = _mintPosition(alice, 1);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 250e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 200e18, 200e18);
+        vm.stopPrank();
+
+        PoolManagementFacet.PoolMaintenanceView memory beforeMaintenance =
+            PoolManagementFacet(diamond).getPoolMaintenanceView(1);
+        uint256 receiverBefore = eve.balanceOf(carol);
+
+        vm.warp(block.timestamp + 365 days + 1);
+
+        vm.prank(alice);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 10e18, 10e18);
+
+        PoolManagementFacet.PoolMaintenanceView memory afterMaintenance =
+            PoolManagementFacet(diamond).getPoolMaintenanceView(1);
+        PoolManagementFacet.PoolInfoView memory info = PoolManagementFacet(diamond).getPoolInfoView(1);
+
+        assertEq(afterMaintenance.foundationReceiver, carol);
+        assertGt(uint256(afterMaintenance.lastMaintenanceTimestamp), uint256(beforeMaintenance.lastMaintenanceTimestamp));
+        assertGt(afterMaintenance.maintenanceIndex, beforeMaintenance.maintenanceIndex);
+        assertEq(afterMaintenance.pendingMaintenance, 0);
+        assertGt(eve.balanceOf(carol), receiverBefore);
+        assertTrue(info.totalDeposits < 210e18);
+        assertTrue(info.trackedBalance < 210e18);
     }
 
     function _assertIndexedEventEmitted(bytes32 topic0, bytes32 topic1) internal {

@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.20;
 
-import {EdenViewFacet} from "./EdenViewFacet.sol";
+import {EdenBasketBase} from "./EdenBasketBase.sol";
 import {LibAccess} from "../libraries/LibAccess.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEdenAdminStorage} from "../libraries/LibEdenAdminStorage.sol";
 import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
 import {LibDiamond} from "../libraries/LibDiamond.sol";
+import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
 import {LibTimelock} from "../libraries/LibTimelock.sol";
 import "../libraries/Errors.sol";
 
-contract EdenAdminFacet is EdenViewFacet {
+contract EdenAdminFacet is EdenBasketBase, ReentrancyGuardModifiers {
+
     event BasketMetadataUpdated(
         uint256 indexed basketId,
         string oldUri,

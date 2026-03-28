@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibFeeRouter} from "src/libraries/LibFeeRouter.sol";
+import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {Types} from "src/libraries/Types.sol";
 
@@ -45,6 +46,10 @@ contract ProtocolTestSupportFacet {
         store.activeCreditShareConfigured = true;
     }
 
+    function setFoundationReceiver(address receiver) external {
+        LibAppStorage.s().foundationReceiver = receiver;
+    }
+
     function assetToPoolId(address asset) external view returns (uint256) {
         return LibAppStorage.s().assetToPoolId[asset];
     }
@@ -73,6 +78,18 @@ contract ProtocolTestSupportFacet {
         PositionNFT nft = PositionNFT(LibPositionNFT.s().positionNFTContract);
         bytes32 positionKey = nft.getPositionKey(tokenId);
         return LibAppStorage.s().pools[pid].whitelist[positionKey];
+    }
+
+    function principalOf(uint256 pid, bytes32 positionKey) external view returns (uint256) {
+        return LibAppStorage.s().pools[pid].userPrincipal[positionKey];
+    }
+
+    function canClearMembership(uint256 pid, bytes32 positionKey)
+        external
+        view
+        returns (bool canClear, string memory reason)
+    {
+        return LibPoolMembership.canClearMembership(positionKey, pid);
     }
 
     function routeManagedShareExternal(

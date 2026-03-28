@@ -64,7 +64,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _assertEqAddress(positionNft.diamond(), diamond, "position nft diamond");
 
         address[] memory facetAddresses = IDiamondLoupe(diamond).facetAddresses();
-        _assertEq(facetAddresses.length, 9, "facet count");
+        _assertEq(facetAddresses.length, 16, "facet count");
 
         _assertTrue(
             IDiamondLoupe(diamond).facetAddress(PositionManagementFacet.mintPosition.selector) != address(0),

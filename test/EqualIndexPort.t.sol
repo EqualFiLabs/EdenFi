@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+// Smoke coverage only: this suite intentionally boots EqualIndex through a synthetic harness.
+
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
@@ -128,7 +130,7 @@ interface Vm {
     function expectRevert(bytes calldata) external;
 }
 
-contract EqualIndexPortTest {
+contract EqualIndexPortSmokeTest {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     EqualIndexHarness internal harness;

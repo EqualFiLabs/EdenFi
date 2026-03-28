@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
+
 import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
@@ -239,5 +241,15 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         assertEq(activeLoanIds.length, 0);
         activeLoanIds = EdenLendingFacet(diamond).getActiveLoanIdsByBorrowerPaginated(aliceAltPositionId, 0, 0);
         assertEq(activeLoanIds.length, 0);
+    }
+
+    function test_PositionMetadataAndOfferHooks_AreStable() public {
+        bytes32 positionKey = positionNft.getPositionKey(alicePositionId);
+
+        string memory tokenUri = positionNft.tokenURI(alicePositionId);
+        assertEq(tokenUri, string.concat("equalfi://positions/", Strings.toString(alicePositionId), "?poolId=1"));
+        assertTrue(!EdenViewFacet(diamond).hasOpenOffers(positionKey));
+
+        EdenViewFacet(diamond).cancelOffersForPosition(positionKey);
     }
 }

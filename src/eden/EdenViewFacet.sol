@@ -2,13 +2,15 @@
 pragma solidity ^0.8.20;
 
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
-import {EdenLendingFacet} from "./EdenLendingFacet.sol";
+import {EdenBasketBase} from "./EdenBasketBase.sol";
+import {EdenLendingLogic} from "./EdenLendingLogic.sol";
 import {PositionNFT} from "../nft/PositionNFT.sol";
 import {BasketToken} from "../tokens/BasketToken.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibEdenAdminStorage} from "../libraries/LibEdenAdminStorage.sol";
 import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
 import {LibEdenLendingStorage} from "../libraries/LibEdenLendingStorage.sol";
+import {LibEdenRewards} from "../libraries/LibEdenRewards.sol";
 import {LibEdenRewardStorage} from "../libraries/LibEdenRewardStorage.sol";
 import {LibEdenStEVEStorage} from "../libraries/LibEdenStEVEStorage.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -17,7 +19,7 @@ import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
 import {Types} from "../libraries/Types.sol";
 import "../libraries/Errors.sol";
 
-contract EdenViewFacet is EdenLendingFacet {
+contract EdenViewFacet is EdenLendingLogic {
     uint8 public constant ACTION_OK = 0;
     uint8 public constant ACTION_UNKNOWN_BASKET = 1;
     uint8 public constant ACTION_BASKET_PAUSED = 2;
@@ -171,7 +173,7 @@ contract EdenViewFacet is EdenLendingFacet {
         view_.steveBasketId = steve.configured ? steve.basketId : 0;
         view_.rewardToken = rewards.config.rewardToken;
         view_.rewardRatePerSecond = rewards.config.rewardRatePerSecond;
-        view_.rewardReserve = _previewRewardReserve();
+        view_.rewardReserve = LibEdenRewards.previewRewardReserve();
         view_.rewardsEnabled = rewards.config.enabled;
     }
 
@@ -220,7 +222,7 @@ contract EdenViewFacet is EdenLendingFacet {
     function getPositionPortfolio(uint256 positionId) public view returns (PositionPortfolio memory portfolio) {
         PositionNFT nft = PositionNFT(LibPositionNFT.s().positionNFTContract);
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
-        uint256[] memory loanIds = getLoanIdsByBorrower(positionId);
+        uint256[] memory loanIds = _loanIdsByBorrower(positionId);
 
         portfolio.positionId = positionId;
         portfolio.positionKey = positionKey;
@@ -230,11 +232,11 @@ contract EdenViewFacet is EdenLendingFacet {
         portfolio.rewards = PositionRewardView({
             eligiblePrincipal: LibEdenStEVEStorage.s().eligiblePrincipal[positionKey],
             accruedRewards: LibEdenRewardStorage.s().accruedRewards[positionKey],
-            claimableRewards: _previewPositionRewards(positionKey)
+            claimableRewards: LibEdenRewards.previewPositionRewards(positionKey)
         });
         portfolio.loans = new LoanView[](loanIds.length);
         for (uint256 i = 0; i < loanIds.length; i++) {
-            portfolio.loans[i] = getLoanView(loanIds[i]);
+            portfolio.loans[i] = _getLoanView(loanIds[i]);
         }
     }
 
@@ -374,7 +376,7 @@ contract EdenViewFacet is EdenLendingFacet {
         if (!rewards.config.enabled || rewards.config.rewardToken == address(0)) {
             return _fail(ACTION_REWARDS_DISABLED, "rewards disabled");
         }
-        if (_previewPositionRewards(LibPositionHelpers.positionKey(positionId)) == 0) {
+        if (LibEdenRewards.previewPositionRewards(LibPositionHelpers.positionKey(positionId)) == 0) {
             return _fail(ACTION_NOTHING_CLAIMABLE, "nothing claimable");
         }
         return _ok();

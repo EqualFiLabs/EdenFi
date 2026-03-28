@@ -255,15 +255,18 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
 
     function _installTestSupportFacet() internal {
         ProtocolTestSupportFacet facet = new ProtocolTestSupportFacet();
-        bytes4[] memory selectors = new bytes4[](8);
+        bytes4[] memory selectors = new bytes4[](11);
         selectors[0] = ProtocolTestSupportFacet.setManagedPoolCreationFee.selector;
         selectors[1] = ProtocolTestSupportFacet.setManagedPoolSystemShareBps.selector;
         selectors[2] = ProtocolTestSupportFacet.setTreasuryShareBps.selector;
         selectors[3] = ProtocolTestSupportFacet.setActiveCreditShareBps.selector;
-        selectors[4] = ProtocolTestSupportFacet.assetToPoolId.selector;
-        selectors[5] = ProtocolTestSupportFacet.permissionlessPoolForToken.selector;
-        selectors[6] = ProtocolTestSupportFacet.getPoolView.selector;
-        selectors[7] = ProtocolTestSupportFacet.isWhitelisted.selector;
+        selectors[4] = ProtocolTestSupportFacet.setFoundationReceiver.selector;
+        selectors[5] = ProtocolTestSupportFacet.assetToPoolId.selector;
+        selectors[6] = ProtocolTestSupportFacet.permissionlessPoolForToken.selector;
+        selectors[7] = ProtocolTestSupportFacet.getPoolView.selector;
+        selectors[8] = ProtocolTestSupportFacet.isWhitelisted.selector;
+        selectors[9] = ProtocolTestSupportFacet.principalOf.selector;
+        selectors[10] = ProtocolTestSupportFacet.canClearMembership.selector;
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({

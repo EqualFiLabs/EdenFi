@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+// Synthetic subsystem coverage only: managed routing is exercised through the test support facet
+// until a first-class product flow routes through routeManagedShare.
+
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {Types} from "src/libraries/Types.sol";

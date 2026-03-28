@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {EdenBasketBase} from "./EdenBasketBase.sol";
 import {EdenBasketLogic} from "./EdenBasketLogic.sol";
-import {PositionManagementFacet} from "../equallend/PositionManagementFacet.sol";
+import {EdenPositionPoolHelpers} from "./EdenPositionPoolHelpers.sol";
 import {LibActiveCreditIndex} from "../libraries/LibActiveCreditIndex.sol";
 import {LibAccess} from "../libraries/LibAccess.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
@@ -14,11 +14,12 @@ import {LibEdenStEVEStorage} from "../libraries/LibEdenStEVEStorage.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
 import {LibPoolMembership} from "../libraries/LibPoolMembership.sol";
+import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
 import {StEVEToken} from "../tokens/StEVEToken.sol";
 import {Types} from "../libraries/Types.sol";
 import "../libraries/Errors.sol";
 
-contract EdenStEVEFacet is EdenBasketLogic, PositionManagementFacet {
+contract EdenStEVEActionFacet is EdenBasketLogic, EdenPositionPoolHelpers, ReentrancyGuardModifiers {
     event StEVEConfigured(uint256 indexed basketId, address indexed token);
     event StEVEDepositedToPosition(uint256 indexed tokenId, bytes32 indexed positionKey, uint256 amount);
     event StEVEWithdrawnFromPosition(uint256 indexed tokenId, bytes32 indexed positionKey, uint256 amount);

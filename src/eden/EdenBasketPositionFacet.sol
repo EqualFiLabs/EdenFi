@@ -3,11 +3,9 @@ pragma solidity ^0.8.20;
 
 import {BasketToken} from "../tokens/BasketToken.sol";
 import {EdenBasketLogic} from "./EdenBasketLogic.sol";
-import {LibAccess} from "../libraries/LibAccess.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
-import {LibCurrency} from "../libraries/LibCurrency.sol";
-import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
 import {LibEdenRewards} from "../libraries/LibEdenRewards.sol";
+import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
 import {LibEdenStEVEStorage} from "../libraries/LibEdenStEVEStorage.sol";
 import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
 import {LibPoolMembership} from "../libraries/LibPoolMembership.sol";
@@ -16,87 +14,9 @@ import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
 import {Types} from "../libraries/Types.sol";
 import "../libraries/Errors.sol";
 
-contract EdenBasketFacet is EdenBasketLogic, ReentrancyGuardModifiers {
-    event BasketMinted(uint256 indexed basketId, address indexed caller, address indexed to, uint256 units);
-    event BasketBurned(uint256 indexed basketId, address indexed caller, address indexed to, uint256 units);
-
-    function createBasket(CreateBasketParams calldata params)
-        external
-        nonReentrant
-        returns (uint256 basketId, address token)
-    {
-        LibAccess.enforceTimelockOrOwnerIfUnset();
-        _validateCreateParams(params);
-
-        LibAppStorage.AppStorage storage app = LibAppStorage.s();
-        for (uint256 i = 0; i < params.assets.length; i++) {
-            if (app.assetToPoolId[params.assets[i]] == 0) revert NoPoolForAsset(params.assets[i]);
-        }
-
-        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
-        if (store.poolFeeShareBps == 0) {
-            store.poolFeeShareBps = 1000;
-        }
-
-        basketId = store.basketCount;
-        token = address(new BasketToken(params.name, params.symbol, address(this), basketId));
-        _createBasketInternal(params, basketId, token);
-    }
-
-    function mintBasket(uint256 basketId, uint256 units, address to, uint256[] calldata maxInputAmounts)
-        external
-        payable
-        nonReentrant
-        basketExists(basketId)
-        returns (uint256 minted)
-    {
-        if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
-        if (basket.paused) revert IndexPaused(basketId);
-        if (maxInputAmounts.length != basket.assets.length) revert InvalidArrayLength();
-
-        WalletMintState memory state;
-        state.required = new uint256[](basket.assets.length);
-        state.feeAmounts = new uint256[](basket.assets.length);
-
-        _prepareWalletMint(basketId, basket, units, maxInputAmounts, state);
-
-        basket.totalUnits += units;
-        BasketToken(basket.token).mintIndexUnits(to, units);
-        emit BasketMinted(basketId, msg.sender, to, units);
-        return units;
-    }
-
-    function burnBasket(uint256 basketId, uint256 units, address to)
-        external
-        payable
-        nonReentrant
-        basketExists(basketId)
-        returns (uint256[] memory assetsOut)
-    {
-        LibCurrency.assertZeroMsgValue();
-        if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
-
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
-        if (basket.paused) revert IndexPaused(basketId);
-        if (units > basket.totalUnits) revert InvalidUnits();
-        uint256 balance = BasketToken(basket.token).balanceOf(msg.sender);
-        if (balance < units) revert InsufficientIndexTokens(units, balance);
-
-        WalletBurnState memory state;
-        state.assetsOut = new uint256[](basket.assets.length);
-        state.feeAmounts = new uint256[](basket.assets.length);
-
-        _prepareWalletBurn(basketId, basket, units, to, state);
-
-        basket.totalUnits -= units;
-        BasketToken(basket.token).burnIndexUnits(msg.sender, units);
-        assetsOut = state.assetsOut;
-        emit BasketBurned(basketId, msg.sender, to, units);
-    }
-
+contract EdenBasketPositionFacet is EdenBasketLogic, ReentrancyGuardModifiers {
     function mintBasketFromPosition(uint256 positionId, uint256 basketId, uint256 units)
-        public
+        external
         nonReentrant
         basketExists(basketId)
         returns (uint256 minted)
@@ -160,7 +80,7 @@ contract EdenBasketFacet is EdenBasketLogic, ReentrancyGuardModifiers {
     }
 
     function burnBasketFromPosition(uint256 positionId, uint256 basketId, uint256 units)
-        public
+        external
         nonReentrant
         basketExists(basketId)
         returns (uint256[] memory assetsOut)
@@ -211,50 +131,6 @@ contract EdenBasketFacet is EdenBasketLogic, ReentrancyGuardModifiers {
         basketPool.userFeeIndex[positionKey] = basketPool.feeIndex;
         basketPool.userMaintenanceIndex[positionKey] = basketPool.maintenanceIndex;
         assetsOut = state.assetsOut;
-    }
-
-    function getBasket(uint256 basketId) external view basketExists(basketId) returns (BasketView memory basket_) {
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
-        basket_.assets = basket.assets;
-        basket_.bundleAmounts = basket.bundleAmounts;
-        basket_.mintFeeBps = basket.mintFeeBps;
-        basket_.burnFeeBps = basket.burnFeeBps;
-        basket_.flashFeeBps = basket.flashFeeBps;
-        basket_.totalUnits = basket.totalUnits;
-        basket_.token = basket.token;
-        basket_.poolId = basket.poolId;
-        basket_.paused = basket.paused;
-    }
-
-    function getBasketMetadata(uint256 basketId)
-        external
-        view
-        basketExists(basketId)
-        returns (LibEdenBasketStorage.BasketMetadata memory)
-    {
-        return LibEdenBasketStorage.s().basketMetadata[basketId];
-    }
-
-    function getBasketPoolId(uint256 basketId) external view basketExists(basketId) returns (uint256) {
-        return LibEdenBasketStorage.s().baskets[basketId].poolId;
-    }
-
-    function getBasketVaultBalance(uint256 basketId, address asset)
-        external
-        view
-        basketExists(basketId)
-        returns (uint256)
-    {
-        return LibEdenBasketStorage.s().vaultBalances[basketId][asset];
-    }
-
-    function getBasketFeePot(uint256 basketId, address asset)
-        external
-        view
-        basketExists(basketId)
-        returns (uint256)
-    {
-        return LibEdenBasketStorage.s().feePots[basketId][asset];
     }
 
     function _isStEveBasket(uint256 basketId) internal view returns (bool) {
