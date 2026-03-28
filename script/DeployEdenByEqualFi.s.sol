@@ -18,6 +18,10 @@ import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
+import {PositionAgentConfigFacet} from "src/agent-wallet/erc6551/PositionAgentConfigFacet.sol";
+import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFacet.sol";
+import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
+import {PositionAgentRegistryFacet} from "src/agent-wallet/erc6551/PositionAgentRegistryFacet.sol";
 import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
 import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
 import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
@@ -39,7 +43,7 @@ interface IPoolManagementFacetInitConfig {
 }
 
 contract DeployEdenByEqualFi is Script {
-    uint256 internal constant LAUNCH_FACET_COUNT = 13;
+    uint256 internal constant LAUNCH_FACET_COUNT = 17;
     uint256 internal constant CUT_BATCH_SIZE = 3;
 
     struct BaseDeployment {
@@ -164,6 +168,22 @@ contract DeployEdenByEqualFi is Script {
         {
             EqualIndexPositionFacet facet = new EqualIndexPositionFacet();
             cuts[i++] = _cut(address(facet), _selectorsEqualIndexPosition());
+        }
+        {
+            PositionAgentConfigFacet facet = new PositionAgentConfigFacet();
+            cuts[i++] = _cut(address(facet), _selectorsPositionAgentConfig());
+        }
+        {
+            PositionAgentTBAFacet facet = new PositionAgentTBAFacet();
+            cuts[i++] = _cut(address(facet), _selectorsPositionAgentTBA());
+        }
+        {
+            PositionAgentViewFacet facet = new PositionAgentViewFacet();
+            cuts[i++] = _cut(address(facet), _selectorsPositionAgentView());
+        }
+        {
+            PositionAgentRegistryFacet facet = new PositionAgentRegistryFacet();
+            cuts[i++] = _cut(address(facet), _selectorsPositionAgentRegistry());
         }
         {
             EdenAdminFacet facet = new EdenAdminFacet();
@@ -309,6 +329,37 @@ contract DeployEdenByEqualFi is Script {
         s = new bytes4[](2);
         s[0] = EqualIndexPositionFacet.mintFromPosition.selector;
         s[1] = EqualIndexPositionFacet.burnFromPosition.selector;
+    }
+
+    function _selectorsPositionAgentConfig() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = PositionAgentConfigFacet.setERC6551Registry.selector;
+        s[1] = PositionAgentConfigFacet.setERC6551Implementation.selector;
+        s[2] = PositionAgentConfigFacet.setIdentityRegistry.selector;
+    }
+
+    function _selectorsPositionAgentTBA() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = PositionAgentTBAFacet.computeTBAAddress.selector;
+        s[1] = PositionAgentTBAFacet.deployTBA.selector;
+        s[2] = PositionAgentTBAFacet.getTBAImplementation.selector;
+        s[3] = PositionAgentTBAFacet.getERC6551Registry.selector;
+    }
+
+    function _selectorsPositionAgentView() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](6);
+        s[0] = PositionAgentViewFacet.getTBAAddress.selector;
+        s[1] = PositionAgentViewFacet.getAgentId.selector;
+        s[2] = PositionAgentViewFacet.isAgentRegistered.selector;
+        s[3] = PositionAgentViewFacet.isTBADeployed.selector;
+        s[4] = PositionAgentViewFacet.getCanonicalRegistries.selector;
+        s[5] = PositionAgentViewFacet.getTBAInterfaceSupport.selector;
+    }
+
+    function _selectorsPositionAgentRegistry() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = PositionAgentRegistryFacet.recordAgentRegistration.selector;
+        s[1] = PositionAgentRegistryFacet.getIdentityRegistry.selector;
     }
 
     function _selectorsEdenBasketWallet() internal pure returns (bytes4[] memory s) {
