@@ -59,11 +59,42 @@ contract EqualScaleAlphaFacetHarness is EqualScaleAlphaFacet, PositionAgentViewF
             profile.active
         );
     }
+
+    function line(uint256 lineId) external view returns (LibEqualScaleAlphaStorage.CreditLine memory) {
+        return LibEqualScaleAlphaStorage.s().lines[lineId];
+    }
+
+    function borrowerLineIds(bytes32 borrowerPositionKey) external view returns (uint256[] memory) {
+        return LibEqualScaleAlphaStorage.s().borrowerLineIds[borrowerPositionKey];
+    }
+
+    function setLineCurrentCommittedAmount(uint256 lineId, uint256 currentCommittedAmount) external {
+        LibEqualScaleAlphaStorage.s().lines[lineId].currentCommittedAmount = currentCommittedAmount;
+    }
+
+    function setLineStatus(uint256 lineId, uint256 statusRaw) external {
+        if (statusRaw > uint256(LibEqualScaleAlphaStorage.CreditLineStatus.Closed)) {
+            revert("invalid status");
+        }
+        LibEqualScaleAlphaStorage.s().lines[lineId].status = LibEqualScaleAlphaStorage.CreditLineStatus(statusRaw);
+    }
 }
 
 contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     uint256 internal constant REGISTRATION_MODE_CANONICAL_OWNED = 1;
+    uint256 internal constant SETTLEMENT_POOL_ID = 17;
+    uint256 internal constant TARGET_LIMIT = 1_000e18;
+    uint256 internal constant MINIMUM_VIABLE_LINE = 400e18;
+    uint16 internal constant APR_BPS = 1_250;
+    uint256 internal constant MINIMUM_PAYMENT_PER_PERIOD = 50e18;
+    uint256 internal constant MAX_DRAW_PER_PERIOD = 300e18;
+    uint32 internal constant PAYMENT_INTERVAL_SECS = 30 days;
+    uint32 internal constant GRACE_PERIOD_SECS = 5 days;
+    uint40 internal constant FACILITY_TERM_SECS = 90 days;
+    uint40 internal constant REFINANCE_WINDOW_SECS = 7 days;
+    uint256 internal constant COLLATERAL_POOL_ID = 9;
+    uint256 internal constant COLLATERAL_AMOUNT = 250e18;
 
     EqualScaleAlphaFacetHarness internal facet;
     PositionNFT internal positionNft;
@@ -284,5 +315,376 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IEqualScaleAlphaErrors.InvalidBankrToken.selector));
         facet.updateBorrowerProfile(positionId, treasuryWallet, address(0), keccak256("updated"));
+    }
+
+    function test_createLineProposal_recordsTermsAndEmitsSoloWindowEvents() external {
+        uint256 positionId = _registerBorrowerProfileForAlice();
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+        uint40 expectedSoloExclusiveUntil = uint40(block.timestamp + 3 days);
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+
+        vm.expectEmit(true, true, true, true, address(facet));
+        emit LineProposalCreated(
+            1,
+            positionId,
+            positionKey,
+            SETTLEMENT_POOL_ID,
+            TARGET_LIMIT,
+            MINIMUM_VIABLE_LINE,
+            APR_BPS,
+            MINIMUM_PAYMENT_PER_PERIOD,
+            MAX_DRAW_PER_PERIOD,
+            PAYMENT_INTERVAL_SECS,
+            GRACE_PERIOD_SECS,
+            FACILITY_TERM_SECS,
+            REFINANCE_WINDOW_SECS,
+            LibEqualScaleAlphaStorage.CollateralMode.None,
+            0,
+            0
+        );
+        vm.expectEmit(true, false, false, true, address(facet));
+        emit CreditLineEnteredSoloWindow(1, expectedSoloExclusiveUntil);
+
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(positionId, params);
+
+        require(lineId == 1, "unexpected first line id");
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        require(line.borrowerPositionId == positionId, "borrower position mismatch");
+        require(line.borrowerPositionKey == positionKey, "borrower key mismatch");
+        require(line.settlementPoolId == SETTLEMENT_POOL_ID, "settlement pool mismatch");
+        require(line.requestedTargetLimit == TARGET_LIMIT, "target limit mismatch");
+        require(line.minimumViableLine == MINIMUM_VIABLE_LINE, "min viable mismatch");
+        require(line.aprBps == APR_BPS, "apr mismatch");
+        require(line.minimumPaymentPerPeriod == MINIMUM_PAYMENT_PER_PERIOD, "minimum payment mismatch");
+        require(line.maxDrawPerPeriod == MAX_DRAW_PER_PERIOD, "max draw mismatch");
+        require(line.paymentIntervalSecs == PAYMENT_INTERVAL_SECS, "payment interval mismatch");
+        require(line.gracePeriodSecs == GRACE_PERIOD_SECS, "grace mismatch");
+        require(line.facilityTermSecs == FACILITY_TERM_SECS, "facility term mismatch");
+        require(line.refinanceWindowSecs == REFINANCE_WINDOW_SECS, "refinance window mismatch");
+        require(
+            line.collateralMode == LibEqualScaleAlphaStorage.CollateralMode.None, "collateral mode mismatch"
+        );
+        require(line.borrowerCollateralPoolId == 0, "unexpected collateral pool");
+        require(line.borrowerCollateralAmount == 0, "unexpected collateral amount");
+        require(line.soloExclusiveUntil == expectedSoloExclusiveUntil, "solo window mismatch");
+        require(
+            line.status == LibEqualScaleAlphaStorage.CreditLineStatus.SoloWindow, "proposal should start in solo window"
+        );
+
+        uint256[] memory lineIds = facet.borrowerLineIds(positionKey);
+        require(lineIds.length == 1, "borrower line count mismatch");
+        require(lineIds[0] == lineId, "borrower line id mismatch");
+    }
+
+    function test_createLineProposal_assignsStrictlyMonotonicLineIds() external {
+        uint256 positionId = _registerBorrowerProfileForAlice();
+        EqualScaleAlphaFacet.LineProposalParams memory firstParams = _defaultProposalParamsNone();
+        EqualScaleAlphaFacet.LineProposalParams memory secondParams = _borrowerPostedProposalParams();
+        secondParams.settlementPoolId = SETTLEMENT_POOL_ID + 1;
+        secondParams.requestedTargetLimit = TARGET_LIMIT + 1;
+
+        vm.startPrank(alice);
+        uint256 firstLineId = facet.createLineProposal(positionId, firstParams);
+        uint256 secondLineId = facet.createLineProposal(positionId, secondParams);
+        vm.stopPrank();
+
+        require(secondLineId > firstLineId, "line ids should be monotonic");
+    }
+
+    function test_createLineProposal_revertsWithoutActiveBorrowerProfile() external {
+        uint256 positionId = positionNft.mint(alice, 7);
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.BorrowerProfileNotActive.selector, positionKey)
+        );
+        facet.createLineProposal(positionId, params);
+    }
+
+    function test_createLineProposal_revertsWhenMinimumViableLineExceedsTargetLimit() external {
+        uint256 positionId = _registerBorrowerProfileForAlice();
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.minimumViableLine = TARGET_LIMIT + 1;
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IEqualScaleAlphaErrors.InvalidProposalTerms.selector, "minimumViableLine > targetLimit"
+            )
+        );
+        facet.createLineProposal(positionId, params);
+    }
+
+    function test_createLineProposal_revertsWhenMaxDrawPerPeriodExceedsTargetLimit() external {
+        uint256 positionId = _registerBorrowerProfileForAlice();
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.maxDrawPerPeriod = TARGET_LIMIT + 1;
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.InvalidProposalTerms.selector, "maxDrawPerPeriod > targetLimit")
+        );
+        facet.createLineProposal(positionId, params);
+    }
+
+    function test_createLineProposal_revertsWhenCollateralModeNoneHasCollateralFields() external {
+        uint256 positionId = _registerBorrowerProfileForAlice();
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.borrowerCollateralPoolId = COLLATERAL_POOL_ID;
+        params.borrowerCollateralAmount = COLLATERAL_AMOUNT;
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IEqualScaleAlphaErrors.InvalidCollateralMode.selector,
+                LibEqualScaleAlphaStorage.CollateralMode.None,
+                COLLATERAL_POOL_ID,
+                COLLATERAL_AMOUNT
+            )
+        );
+        facet.createLineProposal(positionId, params);
+    }
+
+    function test_createLineProposal_revertsWhenBorrowerPostedCollateralFieldsMissing() external {
+        uint256 positionId = _registerBorrowerProfileForAlice();
+        EqualScaleAlphaFacet.LineProposalParams memory params = _borrowerPostedProposalParams();
+        params.borrowerCollateralPoolId = 0;
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IEqualScaleAlphaErrors.InvalidCollateralMode.selector,
+                LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted,
+                0,
+                COLLATERAL_AMOUNT
+            )
+        );
+        facet.createLineProposal(positionId, params);
+    }
+
+    function test_updateLineProposal_allowsBorrowerToChangePrefundingTerms() external {
+        uint256 positionId = _registerBorrowerProfileForAlice();
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+        EqualScaleAlphaFacet.LineProposalParams memory initialParams = _defaultProposalParamsNone();
+        EqualScaleAlphaFacet.LineProposalParams memory updatedParams = _updatedProposalParams();
+
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(positionId, initialParams);
+
+        vm.expectEmit(true, true, true, true, address(facet));
+        emit LineProposalUpdated(
+            lineId,
+            positionId,
+            positionKey,
+            SETTLEMENT_POOL_ID + 3,
+            TARGET_LIMIT + 50e18,
+            MINIMUM_VIABLE_LINE + 25e18,
+            APR_BPS + 100,
+            MINIMUM_PAYMENT_PER_PERIOD + 5e18,
+            MAX_DRAW_PER_PERIOD + 10e18,
+            PAYMENT_INTERVAL_SECS + 1 days,
+            GRACE_PERIOD_SECS + 1 days,
+            FACILITY_TERM_SECS + 10 days,
+            REFINANCE_WINDOW_SECS + 1 days,
+            LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted,
+            COLLATERAL_POOL_ID,
+            COLLATERAL_AMOUNT
+        );
+
+        vm.prank(alice);
+        facet.updateLineProposal(lineId, updatedParams);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        require(line.borrowerPositionId == positionId, "borrower position changed");
+        require(line.borrowerPositionKey == positionKey, "borrower key changed");
+        require(line.settlementPoolId == SETTLEMENT_POOL_ID + 3, "settlement pool not updated");
+        require(line.requestedTargetLimit == TARGET_LIMIT + 50e18, "target limit not updated");
+        require(line.minimumViableLine == MINIMUM_VIABLE_LINE + 25e18, "min viable not updated");
+        require(line.aprBps == APR_BPS + 100, "apr not updated");
+        require(
+            line.minimumPaymentPerPeriod == MINIMUM_PAYMENT_PER_PERIOD + 5e18, "minimum payment not updated"
+        );
+        require(line.maxDrawPerPeriod == MAX_DRAW_PER_PERIOD + 10e18, "max draw not updated");
+        require(line.paymentIntervalSecs == PAYMENT_INTERVAL_SECS + 1 days, "payment interval not updated");
+        require(line.gracePeriodSecs == GRACE_PERIOD_SECS + 1 days, "grace not updated");
+        require(line.facilityTermSecs == FACILITY_TERM_SECS + 10 days, "facility term not updated");
+        require(line.refinanceWindowSecs == REFINANCE_WINDOW_SECS + 1 days, "refinance window not updated");
+        require(
+            line.collateralMode == LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted,
+            "collateral mode not updated"
+        );
+        require(line.borrowerCollateralPoolId == COLLATERAL_POOL_ID, "collateral pool not updated");
+        require(line.borrowerCollateralAmount == COLLATERAL_AMOUNT, "collateral amount not updated");
+        require(
+            line.status == LibEqualScaleAlphaStorage.CreditLineStatus.SoloWindow, "status should stay pre-activation"
+        );
+    }
+
+    function test_updateLineProposal_revertsForNonOwner() external {
+        uint256 positionId = _registerBorrowerProfileForAlice();
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(positionId, params);
+
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.BorrowerPositionNotOwned.selector, bob, positionId)
+        );
+        facet.updateLineProposal(lineId, params);
+    }
+
+    function test_updateLineProposal_revertsWhenActiveCommitmentsExist() external {
+        uint256 positionId = _registerBorrowerProfileForAlice();
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(positionId, params);
+
+        facet.setLineCurrentCommittedAmount(lineId, 1);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.InvalidProposalTerms.selector, "proposal has active commitments")
+        );
+        facet.updateLineProposal(lineId, params);
+    }
+
+    function test_cancelLineProposal_closesPrefundingProposal() external {
+        uint256 positionId = _registerBorrowerProfileForAlice();
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(positionId, params);
+
+        vm.expectEmit(true, true, true, true, address(facet));
+        emit ProposalCancelled(lineId, positionId, positionKey);
+
+        vm.prank(alice);
+        facet.cancelLineProposal(lineId);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        require(line.borrowerPositionId == positionId, "borrower position changed");
+        require(line.borrowerPositionKey == positionKey, "borrower key changed");
+        require(line.currentCommittedAmount == 0, "commitments not cleared");
+        require(line.soloExclusiveUntil == 0, "solo window not cleared");
+        require(line.activeLimit == 0, "active limit not cleared");
+        require(line.outstandingPrincipal == 0, "outstanding principal not cleared");
+        require(
+            line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Closed, "proposal should be terminal after cancel"
+        );
+    }
+
+    function test_cancelLineProposal_revertsForNonOwner() external {
+        uint256 positionId = _registerBorrowerProfileForAlice();
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(positionId, params);
+
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.BorrowerPositionNotOwned.selector, bob, positionId)
+        );
+        facet.cancelLineProposal(lineId);
+    }
+
+    function test_cancelLineProposal_revertsWhenActiveCommitmentsExist() external {
+        uint256 positionId = _registerBorrowerProfileForAlice();
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(positionId, params);
+
+        facet.setLineCurrentCommittedAmount(lineId, 1);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.InvalidProposalTerms.selector, "proposal has active commitments")
+        );
+        facet.cancelLineProposal(lineId);
+    }
+
+    function test_cancelLineProposal_revertsAfterActivationOrTerminalState() external {
+        uint256 positionId = _registerBorrowerProfileForAlice();
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(positionId, params);
+
+        facet.setLineStatus(lineId, uint256(LibEqualScaleAlphaStorage.CreditLineStatus.Active));
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IEqualScaleAlphaErrors.InvalidProposalTerms.selector,
+                "proposal not mutable in status Active for line 1"
+            )
+        );
+        facet.cancelLineProposal(lineId);
+    }
+
+    function _registerBorrowerProfileForAlice() internal returns (uint256 positionId) {
+        positionId = positionNft.mint(alice, 7);
+        uint256 agentId = 17;
+        address tba = facet.getTBAAddress(positionId);
+
+        facet.setPositionAgentRegistration(positionId, agentId, REGISTRATION_MODE_CANONICAL_OWNED, address(0));
+        identityRegistry.setOwner(agentId, tba);
+
+        vm.prank(alice);
+        facet.registerBorrowerProfile(positionId, treasuryWallet, bankrToken, keccak256("profile"));
+    }
+
+    function _defaultProposalParamsNone() internal pure returns (EqualScaleAlphaFacet.LineProposalParams memory params) {
+        params = EqualScaleAlphaFacet.LineProposalParams({
+            settlementPoolId: SETTLEMENT_POOL_ID,
+            requestedTargetLimit: TARGET_LIMIT,
+            minimumViableLine: MINIMUM_VIABLE_LINE,
+            aprBps: APR_BPS,
+            minimumPaymentPerPeriod: MINIMUM_PAYMENT_PER_PERIOD,
+            maxDrawPerPeriod: MAX_DRAW_PER_PERIOD,
+            paymentIntervalSecs: PAYMENT_INTERVAL_SECS,
+            gracePeriodSecs: GRACE_PERIOD_SECS,
+            facilityTermSecs: FACILITY_TERM_SECS,
+            refinanceWindowSecs: REFINANCE_WINDOW_SECS,
+            collateralMode: LibEqualScaleAlphaStorage.CollateralMode.None,
+            borrowerCollateralPoolId: 0,
+            borrowerCollateralAmount: 0
+        });
+    }
+
+    function _borrowerPostedProposalParams()
+        internal
+        pure
+        returns (EqualScaleAlphaFacet.LineProposalParams memory params)
+    {
+        params = _defaultProposalParamsNone();
+        params.collateralMode = LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted;
+        params.borrowerCollateralPoolId = COLLATERAL_POOL_ID;
+        params.borrowerCollateralAmount = COLLATERAL_AMOUNT;
+    }
+
+    function _updatedProposalParams() internal pure returns (EqualScaleAlphaFacet.LineProposalParams memory params) {
+        params = EqualScaleAlphaFacet.LineProposalParams({
+            settlementPoolId: SETTLEMENT_POOL_ID + 3,
+            requestedTargetLimit: TARGET_LIMIT + 50e18,
+            minimumViableLine: MINIMUM_VIABLE_LINE + 25e18,
+            aprBps: APR_BPS + 100,
+            minimumPaymentPerPeriod: MINIMUM_PAYMENT_PER_PERIOD + 5e18,
+            maxDrawPerPeriod: MAX_DRAW_PER_PERIOD + 10e18,
+            paymentIntervalSecs: PAYMENT_INTERVAL_SECS + 1 days,
+            gracePeriodSecs: GRACE_PERIOD_SECS + 1 days,
+            facilityTermSecs: FACILITY_TERM_SECS + 10 days,
+            refinanceWindowSecs: REFINANCE_WINDOW_SECS + 1 days,
+            collateralMode: LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted,
+            borrowerCollateralPoolId: COLLATERAL_POOL_ID,
+            borrowerCollateralAmount: COLLATERAL_AMOUNT
+        });
     }
 }
