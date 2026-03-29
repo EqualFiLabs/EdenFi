@@ -168,7 +168,7 @@ contract EqualScaleAlphaViewFacet {
         });
     }
 
-    function previewRepay(uint256 lineId, uint256 amount) external view returns (RepayPreview memory preview) {
+    function previewLineRepay(uint256 lineId, uint256 amount) external view returns (RepayPreview memory preview) {
         LibEqualScaleAlphaStorage.CreditLine storage line = LibEqualScaleAlphaStorage.s().lines[lineId];
         (uint256 accruedInterest,, uint256 minimumDue) = _liveAccounting(line);
         uint256 totalOutstanding = line.outstandingPrincipal + accruedInterest;

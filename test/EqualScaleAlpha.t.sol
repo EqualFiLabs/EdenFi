@@ -157,7 +157,7 @@ contract EqualScaleAlphaIntegrationTest is DeployEdenByEqualFi {
         alt.mint(alice, repayAmount);
         vm.startPrank(alice);
         alt.approve(diamond, repayAmount);
-        EqualScaleAlphaFacet(diamond).repay(lineId, repayAmount);
+        EqualScaleAlphaFacet(diamond).repayLine(lineId, repayAmount);
         EqualScaleAlphaFacet(diamond).closeLine(lineId);
         vm.stopPrank();
 
@@ -218,7 +218,7 @@ contract EqualScaleAlphaIntegrationTest is DeployEdenByEqualFi {
         alt.mint(alice, 250e18);
         vm.startPrank(alice);
         alt.approve(diamond, 250e18);
-        EqualScaleAlphaFacet(diamond).repay(lineId, 250e18);
+        EqualScaleAlphaFacet(diamond).repayLine(lineId, 250e18);
         vm.stopPrank();
 
         commitments = EqualScaleAlphaViewFacet(diamond).getLineCommitments(lineId);
@@ -348,7 +348,7 @@ contract EqualScaleAlphaIntegrationTest is DeployEdenByEqualFi {
             alt.mint(alice, 100e18);
             vm.startPrank(alice);
             alt.approve(diamond, 100e18);
-            EqualScaleAlphaFacet(diamond).repay(lineId, 100e18);
+            EqualScaleAlphaFacet(diamond).repayLine(lineId, 100e18);
             vm.stopPrank();
 
             line = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
@@ -564,10 +564,10 @@ contract EqualScaleAlphaIntegrationTest is DeployEdenByEqualFi {
     }
 
     function _fullRepayAmount(uint256 lineId) internal view returns (uint256) {
-        return EqualScaleAlphaViewFacet(diamond).previewRepay(lineId, type(uint256).max).effectiveAmount;
+        return EqualScaleAlphaViewFacet(diamond).previewLineRepay(lineId, type(uint256).max).effectiveAmount;
     }
 
-    function _selectorsEqualScaleAlpha() internal pure returns (bytes4[] memory s) {
+    function _selectorsEqualScaleAlpha() internal pure override returns (bytes4[] memory s) {
         s = new bytes4[](19);
         s[0] = EqualScaleAlphaFacet.registerBorrowerProfile.selector;
         s[1] = EqualScaleAlphaFacet.updateBorrowerProfile.selector;
@@ -580,7 +580,7 @@ contract EqualScaleAlphaIntegrationTest is DeployEdenByEqualFi {
         s[8] = EqualScaleAlphaFacet.cancelCommitment.selector;
         s[9] = EqualScaleAlphaFacet.activateLine.selector;
         s[10] = EqualScaleAlphaFacet.draw.selector;
-        s[11] = EqualScaleAlphaFacet.repay.selector;
+        s[11] = EqualScaleAlphaFacet.repayLine.selector;
         s[12] = EqualScaleAlphaFacet.enterRefinancing.selector;
         s[13] = EqualScaleAlphaFacet.rollCommitment.selector;
         s[14] = EqualScaleAlphaFacet.exitCommitment.selector;
@@ -590,14 +590,14 @@ contract EqualScaleAlphaIntegrationTest is DeployEdenByEqualFi {
         s[18] = EqualScaleAlphaFacet.closeLine.selector;
     }
 
-    function _selectorsEqualScaleAlphaAdmin() internal pure returns (bytes4[] memory s) {
+    function _selectorsEqualScaleAlphaAdmin() internal pure override returns (bytes4[] memory s) {
         s = new bytes4[](3);
         s[0] = EqualScaleAlphaAdminFacet.freezeLine.selector;
         s[1] = EqualScaleAlphaAdminFacet.unfreezeLine.selector;
         s[2] = EqualScaleAlphaAdminFacet.setChargeOffThreshold.selector;
     }
 
-    function _selectorsEqualScaleAlphaView() internal pure returns (bytes4[] memory s) {
+    function _selectorsEqualScaleAlphaView() internal pure override returns (bytes4[] memory s) {
         s = new bytes4[](12);
         s[0] = EqualScaleAlphaViewFacet.getBorrowerProfile.selector;
         s[1] = EqualScaleAlphaViewFacet.getCreditLine.selector;
@@ -605,7 +605,7 @@ contract EqualScaleAlphaIntegrationTest is DeployEdenByEqualFi {
         s[3] = EqualScaleAlphaViewFacet.getLineCommitments.selector;
         s[4] = EqualScaleAlphaViewFacet.getLenderPositionCommitments.selector;
         s[5] = EqualScaleAlphaViewFacet.previewDraw.selector;
-        s[6] = EqualScaleAlphaViewFacet.previewRepay.selector;
+        s[6] = EqualScaleAlphaViewFacet.previewLineRepay.selector;
         s[7] = EqualScaleAlphaViewFacet.isLineDrawEligible.selector;
         s[8] = EqualScaleAlphaViewFacet.currentMinimumDue.selector;
         s[9] = EqualScaleAlphaViewFacet.getTreasuryTelemetry.selector;

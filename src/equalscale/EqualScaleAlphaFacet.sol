@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IEqualScaleAlphaErrors} from "src/equalscale/IEqualScaleAlphaErrors.sol";
 import {IEqualScaleAlphaEvents} from "src/equalscale/IEqualScaleAlphaEvents.sol";
+import {LibEqualScaleAlphaLifecycle} from "src/equalscale/LibEqualScaleAlphaLifecycle.sol";
 import {LibActiveCreditIndex} from "src/libraries/LibActiveCreditIndex.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
@@ -332,237 +333,36 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         emit CreditDrawn(lineId, amount, line.outstandingPrincipal, line.currentPeriodDrawn);
     }
 
-    function repay(uint256 lineId, uint256 amount) external {
-        if (amount == 0) {
-            revert InvalidProposalTerms("amount == 0");
-        }
-
-        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
-        LibEqualScaleAlphaStorage.CreditLine storage line = store.lines[lineId];
-        bytes32 borrowerPositionKey = _requireBorrowerPositionOwner(line.borrowerPositionId);
-        if (!_repaymentAllowed(line.status)) {
-            revert InvalidProposalTerms("line not repayable during current status");
-        }
-
-        _accrueInterest(line);
-
-        uint256 totalOutstanding = line.outstandingPrincipal + line.accruedInterest;
-        if (totalOutstanding == 0) {
-            revert InvalidProposalTerms("line has no outstanding obligation");
-        }
-
-        uint256 effectiveAmount = amount > totalOutstanding ? totalOutstanding : amount;
-        uint256 requiredMinimumDue = _requiredMinimumDue(line);
-        uint256 interestComponent = effectiveAmount > line.accruedInterest ? line.accruedInterest : effectiveAmount;
-        uint256 principalComponent = effectiveAmount - interestComponent;
-
-        Types.PoolData storage settlementPool = LibAppStorage.s().pools[line.settlementPoolId];
-        uint256 received =
-            LibCurrency.pullAtLeast(settlementPool.underlying, msg.sender, effectiveAmount, effectiveAmount);
-        settlementPool.trackedBalance += received;
-
-        _settleSettlementPosition(line.settlementPoolId, borrowerPositionKey);
-
-        line.accruedInterest -= interestComponent;
-        line.outstandingPrincipal -= principalComponent;
-        line.totalInterestRepaid += interestComponent;
-        line.totalPrincipalRepaid += principalComponent;
-        line.paidSinceLastDue += effectiveAmount;
-
-        if (principalComponent != 0) {
-            _reduceBorrowerDebt(settlementPool, line.settlementPoolId, borrowerPositionKey, principalComponent);
-        }
-
-        _allocateRepayment(store, lineId, interestComponent, principalComponent);
-        _recordPaymentRecord(store, lineId, effectiveAmount, principalComponent, interestComponent);
-
-        bool minimumDueSatisfied = requiredMinimumDue == 0 || line.paidSinceLastDue >= requiredMinimumDue;
-        if (minimumDueSatisfied) {
-            _advanceDueCheckpoint(line);
-        }
-
-        _cureLineIfCovered(line, minimumDueSatisfied);
-
-        _emitCreditPaymentMade(lineId, effectiveAmount, principalComponent, interestComponent, line);
+    function repayLine(uint256 lineId, uint256 amount) external {
+        LibEqualScaleAlphaLifecycle.repayLine(lineId, amount);
     }
 
     function enterRefinancing(uint256 lineId) external {
-        LibEqualScaleAlphaStorage.CreditLine storage line = LibEqualScaleAlphaStorage.s().lines[lineId];
-        if (
-            line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Active
-                && line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Frozen
-        ) {
-            revert InvalidProposalTerms("line not active for refinancing");
-        }
-        if (block.timestamp < line.termEndAt) {
-            revert InvalidProposalTerms("facility term still active");
-        }
-
-        _accrueInterest(line);
-        line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing;
-
-        emit CreditLineEnteredRefinancing(
-            lineId, line.refinanceEndAt, line.currentCommittedAmount, line.outstandingPrincipal
-        );
+        LibEqualScaleAlphaLifecycle.enterRefinancing(lineId);
     }
 
     function rollCommitment(uint256 lineId, uint256 lenderPositionId) external {
-        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
-        LibEqualScaleAlphaStorage.CreditLine storage line = store.lines[lineId];
-        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing) {
-            revert InvalidProposalTerms("line not in refinancing");
-        }
-
-        bytes32 lenderPositionKey = _requireLenderPositionOwner(lenderPositionId, line.settlementPoolId);
-        LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionId];
-        if (
-            commitment.committedAmount == 0 || commitment.lenderPositionKey != lenderPositionKey
-                || !_refinanceCommitmentMutable(commitment.status)
-        ) {
-            revert InvalidProposalTerms("no active commitment");
-        }
-
-        commitment.status = LibEqualScaleAlphaStorage.CommitmentStatus.Rolled;
-
-        emit CommitmentRolled(
-            lineId, lenderPositionId, lenderPositionKey, commitment.committedAmount, line.currentCommittedAmount
-        );
+        LibEqualScaleAlphaLifecycle.rollCommitment(lineId, lenderPositionId);
     }
 
     function exitCommitment(uint256 lineId, uint256 lenderPositionId) external {
-        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
-        LibEqualScaleAlphaStorage.CreditLine storage line = store.lines[lineId];
-        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing) {
-            revert InvalidProposalTerms("line not in refinancing");
-        }
-
-        bytes32 lenderPositionKey = _requireLenderPositionOwner(lenderPositionId, line.settlementPoolId);
-        LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionId];
-        if (
-            commitment.committedAmount == 0 || commitment.lenderPositionKey != lenderPositionKey
-                || !_refinanceCommitmentMutable(commitment.status)
-        ) {
-            revert InvalidProposalTerms("no active commitment");
-        }
-
-        uint256 exitedAmount = commitment.committedAmount;
-        commitment.committedAmount = 0;
-        commitment.status = LibEqualScaleAlphaStorage.CommitmentStatus.Exited;
-        line.currentCommittedAmount -= exitedAmount;
-
-        _settleSettlementPosition(line.settlementPoolId, lenderPositionKey);
-        LibModuleEncumbrance.unencumber(
-            lenderPositionKey, line.settlementPoolId, _settlementCommitmentModuleId(lineId), exitedAmount
-        );
-
-        emit CommitmentExited(lineId, lenderPositionId, lenderPositionKey, exitedAmount, line.currentCommittedAmount);
+        LibEqualScaleAlphaLifecycle.exitCommitment(lineId, lenderPositionId);
     }
 
     function resolveRefinancing(uint256 lineId) external {
-        LibEqualScaleAlphaStorage.CreditLine storage line = LibEqualScaleAlphaStorage.s().lines[lineId];
-        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing) {
-            revert InvalidProposalTerms("line not in refinancing");
-        }
-        if (block.timestamp < line.refinanceEndAt) {
-            revert InvalidProposalTerms("refinance window still active");
-        }
-
-        _accrueInterest(line);
-
-        if (line.currentCommittedAmount >= line.requestedTargetLimit) {
-            _restartLineTerm(line, line.requestedTargetLimit);
-        } else if (
-            line.currentCommittedAmount >= line.outstandingPrincipal
-                && line.currentCommittedAmount >= line.minimumViableLine
-        ) {
-            _restartLineTerm(line, line.currentCommittedAmount);
-        } else {
-            line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Runoff;
-            line.activeLimit = line.currentCommittedAmount;
-            line.currentPeriodDrawn = 0;
-
-            emit CreditLineEnteredRunoff(lineId, line.outstandingPrincipal, line.currentCommittedAmount);
-        }
-
-        emit CreditLineRefinancingResolved(lineId, line.status, line.activeLimit, line.currentCommittedAmount);
+        LibEqualScaleAlphaLifecycle.resolveRefinancing(lineId);
     }
 
     function markDelinquent(uint256 lineId) external {
-        LibEqualScaleAlphaStorage.CreditLine storage line = LibEqualScaleAlphaStorage.s().lines[lineId];
-        if (!_delinquencyEligible(line.status)) {
-            revert InvalidProposalTerms("line not eligible for delinquency");
-        }
-
-        _accrueInterest(line);
-
-        uint40 currentTimestamp = uint40(block.timestamp);
-        if (currentTimestamp <= line.nextDueAt + line.gracePeriodSecs) {
-            revert DelinquencyTooEarly(lineId, line.nextDueAt, line.gracePeriodSecs, currentTimestamp);
-        }
-
-        uint256 currentMinimumDue = _requiredMinimumDue(line);
-        if (currentMinimumDue == 0 || line.paidSinceLastDue >= currentMinimumDue) {
-            revert InvalidProposalTerms("current minimum due satisfied");
-        }
-
-        line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Delinquent;
-        line.delinquentSince = currentTimestamp;
-        unchecked {
-            ++line.missedPayments;
-        }
-
-        emit CreditLineMarkedDelinquent(lineId, currentTimestamp, currentMinimumDue, line.nextDueAt);
+        LibEqualScaleAlphaLifecycle.markDelinquent(lineId);
     }
 
     function chargeOffLine(uint256 lineId) external {
-        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
-        LibEqualScaleAlphaStorage.CreditLine storage line = store.lines[lineId];
-        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Delinquent) {
-            revert InvalidWriteDownState(lineId, line.status);
-        }
-
-        uint40 chargeOffThresholdSecs = _chargeOffThresholdSecs(store);
-        uint40 currentTimestamp = uint40(block.timestamp);
-        if (currentTimestamp < line.delinquentSince + chargeOffThresholdSecs) {
-            revert ChargeOffTooEarly(lineId, line.delinquentSince, chargeOffThresholdSecs, currentTimestamp);
-        }
-
-        _accrueInterest(line);
-
-        uint256 totalExposedPrincipal = _totalExposedPrincipal(store, lineId);
-        uint256 recoveryApplied = _recoverBorrowerCollateral(lineId, line, totalExposedPrincipal);
-        if (recoveryApplied != 0) {
-            _allocateRecovery(store, lineId, recoveryApplied);
-        }
-
-        uint256 principalWrittenDown = _totalExposedPrincipal(store, lineId);
-        if (principalWrittenDown != 0) {
-            _allocateWriteDown(store, lineId, principalWrittenDown);
-        }
-
-        line.status = LibEqualScaleAlphaStorage.CreditLineStatus.ChargedOff;
-        emit CreditLineChargedOff(lineId, recoveryApplied, principalWrittenDown);
-
-        _finalizeChargedOffLine(store, lineId, line, principalWrittenDown != 0);
+        LibEqualScaleAlphaLifecycle.chargeOffLine(lineId);
     }
 
     function closeLine(uint256 lineId) external {
-        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
-        LibEqualScaleAlphaStorage.CreditLine storage line = store.lines[lineId];
-        if (
-            line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Active
-                && line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Frozen
-        ) {
-            revert InvalidProposalTerms("line not closable during current status");
-        }
-
-        _requireBorrowerPositionOwner(line.borrowerPositionId);
-        _accrueInterest(line);
-        if (line.outstandingPrincipal != 0 || line.accruedInterest != 0) {
-            revert InvalidProposalTerms("line has outstanding obligation");
-        }
-
-        _finalizeRepaidLine(store, lineId, line, line.status);
+        LibEqualScaleAlphaLifecycle.closeLine(lineId);
     }
 
     function _createLineProposal(

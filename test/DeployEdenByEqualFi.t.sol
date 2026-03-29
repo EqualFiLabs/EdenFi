@@ -16,6 +16,9 @@ import {PositionAgentConfigFacet} from "src/agent-wallet/erc6551/PositionAgentCo
 import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFacet.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
 import {PositionAgentRegistryFacet} from "src/agent-wallet/erc6551/PositionAgentRegistryFacet.sol";
+import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
+import {EqualScaleAlphaAdminFacet} from "src/equalscale/EqualScaleAlphaAdminFacet.sol";
+import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.sol";
 import {PositionAgent_ConfigLocked} from "src/libraries/PositionAgentErrors.sol";
 import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
 import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
@@ -40,6 +43,8 @@ contract MockERC20Deploy is ERC20 {
 }
 
 contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
+    uint256 internal constant EIP170_RUNTIME_CODE_SIZE_LIMIT = 24_576;
+
     struct EdenDeploymentState {
         uint256 steveBasketId;
         address steveToken;
@@ -83,7 +88,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _assertEqAddress(positionNft.diamond(), diamond, "position nft diamond");
 
         address[] memory facetAddresses = IDiamondLoupe(diamond).facetAddresses();
-        _assertEq(facetAddresses.length, 20, "facet count");
+        _assertEq(facetAddresses.length, 23, "facet count");
 
         _assertTrue(
             IDiamondLoupe(diamond).facetAddress(PositionManagementFacet.mintPosition.selector) != address(0),
@@ -123,6 +128,18 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             "position agent registry facet cut"
         );
         _assertTrue(
+            IDiamondLoupe(diamond).facetAddress(EqualScaleAlphaFacet.registerBorrowerProfile.selector) != address(0),
+            "equalscale alpha facet cut"
+        );
+        _assertTrue(
+            IDiamondLoupe(diamond).facetAddress(EqualScaleAlphaAdminFacet.freezeLine.selector) != address(0),
+            "equalscale alpha admin facet cut"
+        );
+        _assertTrue(
+            IDiamondLoupe(diamond).facetAddress(EqualScaleAlphaViewFacet.getBorrowerProfile.selector) != address(0),
+            "equalscale alpha view facet cut"
+        );
+        _assertTrue(
             IDiamondLoupe(diamond).facetAddress(EdenBasketFacet.createBasket.selector) != address(0),
             "eden basket facet cut"
         );
@@ -138,6 +155,44 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             IDiamondLoupe(diamond).facetAddress(EdenAdminFacet.setProtocolURI.selector) != address(0),
             "eden admin facet cut"
         );
+    }
+
+    function test_DeployLaunch_WiresEqualScaleAlphaSelectorGroupsIntoLiveDiamond() public {
+        LaunchDeployment memory deployment = deployLaunch(
+            address(this),
+            address(this),
+            treasury,
+            address(entryPoint),
+            address(erc6551Registry),
+            address(identityRegistry)
+        );
+
+        IDiamondLoupe loupe = IDiamondLoupe(deployment.diamond);
+
+        _assertSelectorGroupInstalled(loupe, _selectorsEqualScaleAlpha());
+        _assertSelectorGroupInstalled(loupe, _selectorsEqualScaleAlphaAdmin());
+        _assertSelectorGroupInstalled(loupe, _selectorsEqualScaleAlphaView());
+    }
+
+    function test_DeployLaunch_KeepsEqualScaleAlphaFacetsWithinEip170RuntimeLimit() public {
+        LaunchDeployment memory deployment = deployLaunch(
+            address(this),
+            address(this),
+            treasury,
+            address(entryPoint),
+            address(erc6551Registry),
+            address(identityRegistry)
+        );
+
+        IDiamondLoupe loupe = IDiamondLoupe(deployment.diamond);
+
+        address alphaFacet = _assertSelectorGroupInstalled(loupe, _selectorsEqualScaleAlpha());
+        address alphaAdminFacet = _assertSelectorGroupInstalled(loupe, _selectorsEqualScaleAlphaAdmin());
+        address alphaViewFacet = _assertSelectorGroupInstalled(loupe, _selectorsEqualScaleAlphaView());
+
+        _assertCodeSizeLe(alphaFacet, EIP170_RUNTIME_CODE_SIZE_LIMIT, "alpha facet too large");
+        _assertCodeSizeLe(alphaAdminFacet, EIP170_RUNTIME_CODE_SIZE_LIMIT, "alpha admin facet too large");
+        _assertCodeSizeLe(alphaViewFacet, EIP170_RUNTIME_CODE_SIZE_LIMIT, "alpha view facet too large");
     }
 
     function test_DeployLaunch_HandsOffGovernanceToFixedDelayTimelock() public {
@@ -382,6 +437,36 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
 
     function _assertGt(uint256 left, uint256 right, string memory message) internal pure {
         require(left > right, message);
+    }
+
+    function _assertSelectorGroupInstalled(IDiamondLoupe loupe, bytes4[] memory expectedSelectors)
+        internal
+        view
+        returns (address facet)
+    {
+        facet = loupe.facetAddress(expectedSelectors[0]);
+        _assertTrue(facet != address(0), "selector group missing");
+
+        bytes4[] memory actualSelectors = loupe.facetFunctionSelectors(facet);
+        _assertEq(actualSelectors.length, expectedSelectors.length, "selector group length");
+
+        for (uint256 i = 0; i < expectedSelectors.length; i++) {
+            _assertEqAddress(loupe.facetAddress(expectedSelectors[i]), facet, "selector routed to wrong facet");
+            _assertTrue(_containsSelector(actualSelectors, expectedSelectors[i]), "selector missing from facet");
+        }
+    }
+
+    function _assertCodeSizeLe(address account, uint256 limit, string memory message) internal view {
+        _assertTrue(account.code.length <= limit, message);
+    }
+
+    function _containsSelector(bytes4[] memory selectors, bytes4 target) internal pure returns (bool) {
+        for (uint256 i = 0; i < selectors.length; i++) {
+            if (selectors[i] == target) {
+                return true;
+            }
+        }
+        return false;
     }
 
     function test_DeployLaunch_BootstrapsWalletConfig_AndLocksAfterFirstTBA() public {

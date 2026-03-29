@@ -1266,7 +1266,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         facet.draw(lineId, 1);
 
         vm.prank(alice);
-        facet.repay(lineId, 50e18);
+        facet.repayLine(lineId, 50e18);
 
         LibEqualScaleAlphaStorage.CreditLine memory frozenLine = facet.line(lineId);
         require(
@@ -1350,7 +1350,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         emit CreditPaymentMade(lineId, expectedInterest, 0, expectedInterest, 300e18, 0, facet.line(lineId).nextDueAt);
 
         vm.prank(alice);
-        facet.repay(lineId, expectedInterest);
+        facet.repayLine(lineId, expectedInterest);
 
         LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
         require(line.outstandingPrincipal == 300e18, "principal should remain after interest-only payment");
@@ -1383,7 +1383,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         );
 
         vm.prank(alice);
-        facet.repay(lineId, repayAmount);
+        facet.repayLine(lineId, repayAmount);
 
         LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
         (uint256 debtPrincipal, uint40 debtStartTime, uint256 debtIndexSnapshot) =
@@ -1460,7 +1460,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         _mintAndApprove(alice, repayAmount);
 
         vm.prank(alice);
-        facet.repay(lineId, repayAmount);
+        facet.repayLine(lineId, repayAmount);
 
         LibEqualScaleAlphaStorage.Commitment memory first = facet.commitment(lineId, lenderPositionOne);
         LibEqualScaleAlphaStorage.Commitment memory second = facet.commitment(lineId, lenderPositionTwo);
@@ -1489,14 +1489,14 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         _mintAndApprove(alice, 50e18);
 
         vm.prank(alice);
-        facet.repay(delinquentLineId, 40e18);
+        facet.repayLine(delinquentLineId, 40e18);
         require(
             facet.line(delinquentLineId).status == LibEqualScaleAlphaStorage.CreditLineStatus.Delinquent,
             "insufficient payment should not cure delinquency"
         );
 
         vm.prank(alice);
-        facet.repay(delinquentLineId, 10e18);
+        facet.repayLine(delinquentLineId, 10e18);
 
         LibEqualScaleAlphaStorage.CreditLine memory delinquentLine = facet.line(delinquentLineId);
         require(delinquentLine.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "delinquent line not cured");
@@ -1514,7 +1514,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         _mintAndApprove(alice, 200e18);
 
         vm.prank(alice);
-        facet.repay(runoffLineId, 200e18);
+        facet.repayLine(runoffLineId, 200e18);
 
         LibEqualScaleAlphaStorage.CreditLine memory runoffLine = facet.line(runoffLineId);
         require(runoffLine.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "runoff line not cured");
@@ -1952,7 +1952,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         uint40 cureTimestamp = uint40(block.timestamp);
 
         vm.prank(alice);
-        facet.repay(lineId, 100e18);
+        facet.repayLine(lineId, 100e18);
 
         LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
         require(line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "runoff cure should reactivate");
@@ -2078,7 +2078,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(telemetry.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "telemetry status mismatch");
     }
 
-    function test_previewRepay_currentMinimumDueAndRefinanceStatus_surfaceLiveState() external {
+    function test_previewLineRepay_currentMinimumDueAndRefinanceStatus_surfaceLiveState() external {
         uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
 
         vm.prank(alice);
@@ -2087,7 +2087,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         uint256 elapsed = PAYMENT_INTERVAL_SECS / 2;
         vm.warp(block.timestamp + elapsed);
 
-        EqualScaleAlphaViewFacet.RepayPreview memory repayPreview = facet.previewRepay(lineId, 120e18);
+        EqualScaleAlphaViewFacet.RepayPreview memory repayPreview = facet.previewLineRepay(lineId, 120e18);
         uint256 expectedInterest = _expectedInterest(300e18, elapsed);
 
         require(repayPreview.requestedAmount == 120e18, "repay request mismatch");

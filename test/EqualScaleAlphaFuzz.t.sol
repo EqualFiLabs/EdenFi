@@ -379,13 +379,13 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
         assertLe(line.currentPeriodDrawn, line.maxDrawPerPeriod);
 
         EqualScaleAlphaViewFacet.RepayPreview memory repayPreview =
-            EqualScaleAlphaViewFacet(diamond).previewRepay(lineId, type(uint256).max);
+            EqualScaleAlphaViewFacet(diamond).previewLineRepay(lineId, type(uint256).max);
         uint256 repayAmount = repayPreview.effectiveAmount == 0 ? 0 : _boundUint(repaySeed, 1, repayPreview.effectiveAmount);
         if (repayAmount != 0) {
             alt.mint(alice, repayAmount);
             vm.startPrank(alice);
             alt.approve(diamond, repayAmount);
-            EqualScaleAlphaFacet(diamond).repay(lineId, repayAmount);
+            EqualScaleAlphaFacet(diamond).repayLine(lineId, repayAmount);
             vm.stopPrank();
         }
 
@@ -450,12 +450,12 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
 
         vm.warp(block.timestamp + _boundUint(firstWarpSeed, 1 days, 15 days));
         EqualScaleAlphaViewFacet.RepayPreview memory firstPreview =
-            EqualScaleAlphaViewFacet(diamond).previewRepay(lineId, type(uint256).max);
+            EqualScaleAlphaViewFacet(diamond).previewLineRepay(lineId, type(uint256).max);
         uint256 firstRepayAmount = _boundUint(firstRepaySeed, 1, firstPreview.effectiveAmount);
         alt.mint(alice, firstRepayAmount);
         vm.startPrank(alice);
         alt.approve(diamond, firstRepayAmount);
-        EqualScaleAlphaFacet(diamond).repay(lineId, firstRepayAmount);
+        EqualScaleAlphaFacet(diamond).repayLine(lineId, firstRepayAmount);
         vm.stopPrank();
 
         LibEqualScaleAlphaStorage.CreditLine memory line = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
@@ -464,13 +464,13 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
 
         vm.warp(block.timestamp + _boundUint(secondWarpSeed, 1 days, 15 days));
         EqualScaleAlphaViewFacet.RepayPreview memory secondPreview =
-            EqualScaleAlphaViewFacet(diamond).previewRepay(lineId, type(uint256).max);
+            EqualScaleAlphaViewFacet(diamond).previewLineRepay(lineId, type(uint256).max);
         if (secondPreview.effectiveAmount != 0) {
             uint256 secondRepayAmount = _boundUint(secondRepaySeed, 1, secondPreview.effectiveAmount);
             alt.mint(alice, secondRepayAmount);
             vm.startPrank(alice);
             alt.approve(diamond, secondRepayAmount);
-            EqualScaleAlphaFacet(diamond).repay(lineId, secondRepayAmount);
+            EqualScaleAlphaFacet(diamond).repayLine(lineId, secondRepayAmount);
             vm.stopPrank();
         }
 
@@ -496,12 +496,12 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
 
         LibEqualScaleAlphaStorage.CreditLine memory lineBefore = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
         EqualScaleAlphaViewFacet.RepayPreview memory preview =
-            EqualScaleAlphaViewFacet(diamond).previewRepay(lineId, type(uint256).max);
+            EqualScaleAlphaViewFacet(diamond).previewLineRepay(lineId, type(uint256).max);
 
         alt.mint(alice, preview.currentMinimumDue);
         vm.startPrank(alice);
         alt.approve(diamond, preview.currentMinimumDue);
-        EqualScaleAlphaFacet(diamond).repay(lineId, preview.currentMinimumDue);
+        EqualScaleAlphaFacet(diamond).repayLine(lineId, preview.currentMinimumDue);
         vm.stopPrank();
 
         LibEqualScaleAlphaStorage.CreditLine memory lineAfter = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
@@ -532,7 +532,7 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
         alt.mint(alice, repayAmount);
         vm.startPrank(alice);
         alt.approve(diamond, repayAmount);
-        EqualScaleAlphaFacet(diamond).repay(lineId, repayAmount);
+        EqualScaleAlphaFacet(diamond).repayLine(lineId, repayAmount);
         vm.stopPrank();
 
         LibEqualScaleAlphaStorage.Commitment[] memory commitments =

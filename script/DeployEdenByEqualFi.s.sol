@@ -23,6 +23,9 @@ import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFa
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
 import {PositionAgentRegistryFacet} from "src/agent-wallet/erc6551/PositionAgentRegistryFacet.sol";
 import {PositionMSCAImpl} from "src/agent-wallet/erc6900/PositionMSCAImpl.sol";
+import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
+import {EqualScaleAlphaAdminFacet} from "src/equalscale/EqualScaleAlphaAdminFacet.sol";
+import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.sol";
 import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
 import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
 import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
@@ -44,7 +47,7 @@ interface IPoolManagementFacetInitConfig {
 }
 
 contract DeployEdenByEqualFi is Script {
-    uint256 internal constant LAUNCH_FACET_COUNT = 17;
+    uint256 internal constant LAUNCH_FACET_COUNT = 20;
     uint256 internal constant CUT_BATCH_SIZE = 3;
 
     struct BaseDeployment {
@@ -213,6 +216,18 @@ contract DeployEdenByEqualFi is Script {
         {
             PositionAgentRegistryFacet facet = new PositionAgentRegistryFacet();
             cuts[i++] = _cut(address(facet), _selectorsPositionAgentRegistry());
+        }
+        {
+            EqualScaleAlphaFacet facet = new EqualScaleAlphaFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualScaleAlpha());
+        }
+        {
+            EqualScaleAlphaAdminFacet facet = new EqualScaleAlphaAdminFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualScaleAlphaAdmin());
+        }
+        {
+            EqualScaleAlphaViewFacet facet = new EqualScaleAlphaViewFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualScaleAlphaView());
         }
         {
             EdenAdminFacet facet = new EdenAdminFacet();
@@ -397,6 +412,52 @@ contract DeployEdenByEqualFi is Script {
         s[2] = PositionAgentRegistryFacet.unlinkExternalAgentRegistration.selector;
         s[3] = PositionAgentRegistryFacet.revokeExternalAgentRegistration.selector;
         s[4] = PositionAgentRegistryFacet.getIdentityRegistry.selector;
+    }
+
+    function _selectorsEqualScaleAlpha() internal pure virtual returns (bytes4[] memory s) {
+        s = new bytes4[](19);
+        s[0] = EqualScaleAlphaFacet.registerBorrowerProfile.selector;
+        s[1] = EqualScaleAlphaFacet.updateBorrowerProfile.selector;
+        s[2] = EqualScaleAlphaFacet.createLineProposal.selector;
+        s[3] = EqualScaleAlphaFacet.updateLineProposal.selector;
+        s[4] = EqualScaleAlphaFacet.cancelLineProposal.selector;
+        s[5] = EqualScaleAlphaFacet.commitSolo.selector;
+        s[6] = EqualScaleAlphaFacet.transitionToPooledOpen.selector;
+        s[7] = EqualScaleAlphaFacet.commitPooled.selector;
+        s[8] = EqualScaleAlphaFacet.cancelCommitment.selector;
+        s[9] = EqualScaleAlphaFacet.activateLine.selector;
+        s[10] = EqualScaleAlphaFacet.draw.selector;
+        s[11] = EqualScaleAlphaFacet.repayLine.selector;
+        s[12] = EqualScaleAlphaFacet.enterRefinancing.selector;
+        s[13] = EqualScaleAlphaFacet.rollCommitment.selector;
+        s[14] = EqualScaleAlphaFacet.exitCommitment.selector;
+        s[15] = EqualScaleAlphaFacet.resolveRefinancing.selector;
+        s[16] = EqualScaleAlphaFacet.markDelinquent.selector;
+        s[17] = EqualScaleAlphaFacet.chargeOffLine.selector;
+        s[18] = EqualScaleAlphaFacet.closeLine.selector;
+    }
+
+    function _selectorsEqualScaleAlphaAdmin() internal pure virtual returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = EqualScaleAlphaAdminFacet.freezeLine.selector;
+        s[1] = EqualScaleAlphaAdminFacet.unfreezeLine.selector;
+        s[2] = EqualScaleAlphaAdminFacet.setChargeOffThreshold.selector;
+    }
+
+    function _selectorsEqualScaleAlphaView() internal pure virtual returns (bytes4[] memory s) {
+        s = new bytes4[](12);
+        s[0] = EqualScaleAlphaViewFacet.getBorrowerProfile.selector;
+        s[1] = EqualScaleAlphaViewFacet.getCreditLine.selector;
+        s[2] = EqualScaleAlphaViewFacet.getBorrowerLineIds.selector;
+        s[3] = EqualScaleAlphaViewFacet.getLineCommitments.selector;
+        s[4] = EqualScaleAlphaViewFacet.getLenderPositionCommitments.selector;
+        s[5] = EqualScaleAlphaViewFacet.previewDraw.selector;
+        s[6] = EqualScaleAlphaViewFacet.previewLineRepay.selector;
+        s[7] = EqualScaleAlphaViewFacet.isLineDrawEligible.selector;
+        s[8] = EqualScaleAlphaViewFacet.currentMinimumDue.selector;
+        s[9] = EqualScaleAlphaViewFacet.getTreasuryTelemetry.selector;
+        s[10] = EqualScaleAlphaViewFacet.getRefinanceStatus.selector;
+        s[11] = EqualScaleAlphaViewFacet.getLineLossSummary.selector;
     }
 
     function _selectorsEdenBasketWallet() internal pure returns (bytes4[] memory s) {
