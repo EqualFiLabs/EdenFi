@@ -546,6 +546,25 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         _finalizeChargedOffLine(store, lineId, line, principalWrittenDown != 0);
     }
 
+    function closeLine(uint256 lineId) external {
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
+        LibEqualScaleAlphaStorage.CreditLine storage line = store.lines[lineId];
+        if (
+            line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Active
+                && line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Frozen
+        ) {
+            revert InvalidProposalTerms("line not closable during current status");
+        }
+
+        _requireBorrowerPositionOwner(line.borrowerPositionId);
+        _accrueInterest(line);
+        if (line.outstandingPrincipal != 0 || line.accruedInterest != 0) {
+            revert InvalidProposalTerms("line has outstanding obligation");
+        }
+
+        _finalizeRepaidLine(store, lineId, line, line.status);
+    }
+
     function _createLineProposal(
         uint256 borrowerPositionId,
         bytes32 borrowerPositionKey,
@@ -1294,6 +1313,42 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         LibEqualScaleAlphaStorage.CreditLine storage line,
         bool closedWithLoss
     ) internal {
+        _finalizeClosedLine(
+            store, lineId, line, LibEqualScaleAlphaStorage.CreditLineStatus.ChargedOff, closedWithLoss, false
+        );
+    }
+
+    function _finalizeRepaidLine(
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store,
+        uint256 lineId,
+        LibEqualScaleAlphaStorage.CreditLine storage line,
+        LibEqualScaleAlphaStorage.CreditLineStatus previousStatus
+    ) internal {
+        if (line.collateralMode == LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted && line.borrowerCollateralPoolId != 0)
+        {
+            uint256 collateralModuleId = _borrowerCollateralModuleId(lineId);
+            uint256 encumbered = LibModuleEncumbrance.getEncumberedForModule(
+                line.borrowerPositionKey, line.borrowerCollateralPoolId, collateralModuleId
+            );
+            if (encumbered != 0) {
+                _settlePosition(line.borrowerCollateralPoolId, line.borrowerPositionKey);
+                LibModuleEncumbrance.unencumber(
+                    line.borrowerPositionKey, line.borrowerCollateralPoolId, collateralModuleId, encumbered
+                );
+            }
+        }
+
+        _finalizeClosedLine(store, lineId, line, previousStatus, false, true);
+    }
+
+    function _finalizeClosedLine(
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store,
+        uint256 lineId,
+        LibEqualScaleAlphaStorage.CreditLine storage line,
+        LibEqualScaleAlphaStorage.CreditLineStatus previousStatus,
+        bool closedWithLoss,
+        bool releaseCollateral
+    ) internal {
         uint256[] storage lenderPositionIds = store.lineCommitmentPositionIds[lineId];
         uint256 commitmentModuleId = _settlementCommitmentModuleId(lineId);
         uint256 len = lenderPositionIds.length;
@@ -1321,6 +1376,18 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
             }
         }
 
+        if (!releaseCollateral && line.collateralMode == LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted) {
+            uint256 collateralModuleId = _borrowerCollateralModuleId(lineId);
+            uint256 collateralEncumbered = LibModuleEncumbrance.getEncumberedForModule(
+                line.borrowerPositionKey, line.borrowerCollateralPoolId, collateralModuleId
+            );
+            if (collateralEncumbered != 0) {
+                LibModuleEncumbrance.unencumber(
+                    line.borrowerPositionKey, line.borrowerCollateralPoolId, collateralModuleId, collateralEncumbered
+                );
+            }
+        }
+
         line.activeLimit = 0;
         line.currentCommittedAmount = 0;
         line.outstandingPrincipal = 0;
@@ -1331,7 +1398,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         line.delinquentSince = 0;
         line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Closed;
 
-        emit CreditLineClosed(lineId, LibEqualScaleAlphaStorage.CreditLineStatus.ChargedOff, closedWithLoss);
+        emit CreditLineClosed(lineId, previousStatus, closedWithLoss);
     }
 
     function _statusMutationReason(uint256 lineId, LibEqualScaleAlphaStorage.CreditLineStatus status)
