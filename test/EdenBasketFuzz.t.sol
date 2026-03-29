@@ -3,7 +3,9 @@ pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
+import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
+import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
+import {EdenBasketWalletFacet} from "src/eden/EdenBasketWalletFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
@@ -24,14 +26,14 @@ contract EdenBasketFuzzTest is EdenLaunchFixture {
         eve.approve(diamond, units * 3);
         uint256[] memory maxInputs = new uint256[](1);
         maxInputs[0] = units * 2;
-        EdenBasketFacet(diamond).mintBasket(basketId, units, bob, maxInputs);
+        EdenBasketWalletFacet(diamond).mintBasket(basketId, units, bob, maxInputs);
         assertEq(ERC20(basketToken).balanceOf(bob), units);
-        EdenBasketFacet(diamond).burnBasket(basketId, units, bob);
+        EdenBasketWalletFacet(diamond).burnBasket(basketId, units, bob);
         vm.stopPrank();
 
         assertEq(ERC20(basketToken).balanceOf(bob), 0);
         assertEq(EdenViewFacet(diamond).getBasketSummary(basketId).totalUnits, 0);
-        assertGt(EdenBasketFacet(diamond).getBasketFeePot(basketId, address(eve)), 0);
+        assertGt(EdenBasketDataFacet(diamond).getBasketFeePot(basketId, address(eve)), 0);
     }
 
     function testFuzz_EdenBasketPositionMintBurnRoundTrip(uint96 depositSeed, uint96 mintSeed) public {
@@ -56,14 +58,14 @@ contract EdenBasketFuzzTest is EdenLaunchFixture {
             _createBasket(_singleAssetParams("Position Basket", "PBASK", address(alt), "ipfs://pb", 0, 1000, 1000));
 
         vm.prank(alice);
-        EdenBasketFacet(diamond).mintBasketFromPosition(positionId, basketId, mintUnits);
+        EdenBasketPositionFacet(diamond).mintBasketFromPosition(positionId, basketId, mintUnits);
 
         EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
         assertEq(portfolio.baskets.length, 1);
         assertEq(portfolio.baskets[0].units, mintUnits);
 
         vm.prank(alice);
-        EdenBasketFacet(diamond).burnBasketFromPosition(positionId, basketId, mintUnits);
+        EdenBasketPositionFacet(diamond).burnBasketFromPosition(positionId, basketId, mintUnits);
 
         portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
         if (portfolio.baskets.length > 0) {
@@ -87,7 +89,7 @@ contract EdenBasketFuzzTest is EdenLaunchFixture {
         vm.expectRevert(
             abi.encodeWithSelector(LibCurrency.LibCurrency_InsufficientReceived.selector, (units * 9) / 10, units)
         );
-        EdenBasketFacet(diamond).mintBasket(basketId, units, bob, maxInputs);
+        EdenBasketWalletFacet(diamond).mintBasket(basketId, units, bob, maxInputs);
         vm.stopPrank();
     }
 }

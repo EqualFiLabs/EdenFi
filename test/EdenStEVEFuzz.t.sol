@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-import {EdenStEVEFacet} from "src/eden/EdenStEVEFacet.sol";
+import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
@@ -32,13 +32,13 @@ contract EdenStEVEFuzzTest is EdenLaunchFixture {
 
         if (withdrawUnits > 0) {
             vm.prank(bob);
-            EdenStEVEFacet(diamond).withdrawStEVEFromPosition(positionId, withdrawUnits, withdrawUnits);
+            EdenStEVEActionFacet(diamond).withdrawStEVEFromPosition(positionId, withdrawUnits, withdrawUnits);
         }
 
         uint256 expectedEligible = depositUnits - withdrawUnits;
         EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
-        assertEq(EdenStEVEFacet(diamond).eligibleSupply(), expectedEligible);
-        assertEq(EdenStEVEFacet(diamond).eligiblePrincipalOfPosition(positionId), expectedEligible);
+        assertEq(EdenStEVEActionFacet(diamond).eligibleSupply(), expectedEligible);
+        assertEq(EdenStEVEActionFacet(diamond).eligiblePrincipalOfPosition(positionId), expectedEligible);
         assertEq(portfolio.rewards.eligiblePrincipal, expectedEligible);
         assertEq(ERC20(steveToken).balanceOf(bob), walletUnits - depositUnits + withdrawUnits);
     }

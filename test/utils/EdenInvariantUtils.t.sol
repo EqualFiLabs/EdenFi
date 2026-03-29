@@ -17,10 +17,12 @@ import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.
 import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
-import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
+import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
+import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
+import {EdenBasketWalletFacet} from "src/eden/EdenBasketWalletFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
-import {EdenStEVEFacet} from "src/eden/EdenStEVEFacet.sol";
+import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibEdenRewardStorage} from "src/libraries/LibEdenRewardStorage.sol";
@@ -203,9 +205,9 @@ contract EdenInvariantHandler {
         feeIndexId = cfg.feeIndexId;
         feeIndexToken = cfg.feeIndexToken;
 
-        stevePoolId = EdenBasketFacet(cfg.diamond).getBasketPoolId(cfg.steveBasketId);
-        altBasketPoolId = EdenBasketFacet(cfg.diamond).getBasketPoolId(cfg.altBasketId);
-        feeBasketPoolId = EdenBasketFacet(cfg.diamond).getBasketPoolId(cfg.feeBasketId);
+        stevePoolId = EdenBasketDataFacet(cfg.diamond).getBasketPoolId(cfg.steveBasketId);
+        altBasketPoolId = EdenBasketDataFacet(cfg.diamond).getBasketPoolId(cfg.altBasketId);
+        feeBasketPoolId = EdenBasketDataFacet(cfg.diamond).getBasketPoolId(cfg.feeBasketId);
         feeIndexPoolId = EqualIndexAdminFacetV3(cfg.diamond).getIndexPoolId(cfg.feeIndexId);
 
         for (uint256 i = 0; i < actors_.length; i++) {
@@ -309,7 +311,7 @@ contract EdenInvariantHandler {
         alt.approve(diamond, required);
         uint256[] memory maxInputs = new uint256[](1);
         maxInputs[0] = required;
-        EdenBasketFacet(diamond).mintBasket(feeBasketId, units, actor, maxInputs);
+        EdenBasketWalletFacet(diamond).mintBasket(feeBasketId, units, actor, maxInputs);
         vm.stopPrank();
         _syncRewardIndex();
     }
@@ -323,7 +325,7 @@ contract EdenInvariantHandler {
         if (units == 0) return;
 
         vm.prank(actor);
-        EdenBasketFacet(diamond).burnBasket(feeBasketId, units, actor);
+        EdenBasketWalletFacet(diamond).burnBasket(feeBasketId, units, actor);
         _syncRewardIndex();
     }
 
@@ -345,7 +347,7 @@ contract EdenInvariantHandler {
 
         address owner = positionNft.ownerOf(positionId);
         vm.prank(owner);
-        EdenBasketFacet(diamond).burnBasketFromPosition(positionId, feeBasketId, units);
+        EdenBasketPositionFacet(diamond).burnBasketFromPosition(positionId, feeBasketId, units);
         _syncRewardIndex();
     }
 
@@ -358,7 +360,7 @@ contract EdenInvariantHandler {
         eve.approve(diamond, units);
         uint256[] memory maxInputs = new uint256[](1);
         maxInputs[0] = units;
-        EdenBasketFacet(diamond).mintBasket(steveBasketId, units, actor, maxInputs);
+        EdenBasketWalletFacet(diamond).mintBasket(steveBasketId, units, actor, maxInputs);
         vm.stopPrank();
         _syncRewardIndex();
     }
@@ -385,7 +387,7 @@ contract EdenInvariantHandler {
 
         address owner = positionNft.ownerOf(positionId);
         vm.prank(owner);
-        EdenStEVEFacet(diamond).withdrawStEVEFromPosition(positionId, amount, 0);
+        EdenStEVEActionFacet(diamond).withdrawStEVEFromPosition(positionId, amount, 0);
         _syncRewardIndex();
     }
 
@@ -674,7 +676,7 @@ contract EdenInvariantHandler {
 
         address owner = positionNft.ownerOf(positionId);
         vm.prank(owner);
-        EdenBasketFacet(diamond).mintBasketFromPosition(positionId, altBasketId, units);
+        EdenBasketPositionFacet(diamond).mintBasketFromPosition(positionId, altBasketId, units);
         _markJoined(positionId, altBasketPoolId);
         _syncRewardIndex();
     }
@@ -689,7 +691,7 @@ contract EdenInvariantHandler {
 
         address owner = positionNft.ownerOf(positionId);
         vm.prank(owner);
-        EdenBasketFacet(diamond).mintBasketFromPosition(positionId, feeBasketId, units);
+        EdenBasketPositionFacet(diamond).mintBasketFromPosition(positionId, feeBasketId, units);
         _markJoined(positionId, feeBasketPoolId);
         _syncRewardIndex();
     }
@@ -716,7 +718,7 @@ contract EdenInvariantHandler {
         eve.approve(diamond, amount);
         uint256[] memory maxInputs = new uint256[](1);
         maxInputs[0] = amount;
-        EdenBasketFacet(diamond).mintBasket(steveBasketId, amount, owner, maxInputs);
+        EdenBasketWalletFacet(diamond).mintBasket(steveBasketId, amount, owner, maxInputs);
         vm.stopPrank();
         _syncRewardIndex();
     }
@@ -725,7 +727,7 @@ contract EdenInvariantHandler {
         address owner = positionNft.ownerOf(positionId);
         vm.startPrank(owner);
         ERC20(steveToken).approve(diamond, amount);
-        EdenStEVEFacet(diamond).depositStEVEToPosition(positionId, amount, amount);
+        EdenStEVEActionFacet(diamond).depositStEVEToPosition(positionId, amount, amount);
         vm.stopPrank();
         _markJoined(positionId, stevePoolId);
         _syncRewardIndex();
@@ -754,10 +756,10 @@ contract EdenInvariantHandler {
     }
 
     function _quoteSingleAssetBasketMint(uint256 basketId, uint256 units) internal view returns (uint256 required) {
-        EdenBasketFacet.BasketView memory basket = EdenBasketFacet(diamond).getBasket(basketId);
+        EdenBasketDataFacet.BasketView memory basket = EdenBasketDataFacet(diamond).getBasket(basketId);
         uint256 totalSupply = basket.totalUnits;
-        uint256 vaultBalance = EdenBasketFacet(diamond).getBasketVaultBalance(basketId, basket.assets[0]);
-        uint256 feePot = EdenBasketFacet(diamond).getBasketFeePot(basketId, basket.assets[0]);
+        uint256 vaultBalance = EdenBasketDataFacet(diamond).getBasketVaultBalance(basketId, basket.assets[0]);
+        uint256 feePot = EdenBasketDataFacet(diamond).getBasketFeePot(basketId, basket.assets[0]);
 
         uint256 baseDeposit;
         uint256 potBuyIn;

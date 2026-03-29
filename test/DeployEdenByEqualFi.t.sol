@@ -24,8 +24,9 @@ import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.
 import {PositionAgent_ConfigLocked} from "src/libraries/PositionAgentErrors.sol";
 import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
 import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
-import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
-import {EdenStEVEFacet} from "src/eden/EdenStEVEFacet.sol";
+import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
+import {EdenBasketWalletFacet} from "src/eden/EdenBasketWalletFacet.sol";
+import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
@@ -150,8 +151,8 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             "equalscale alpha view facet cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(EdenBasketFacet.createBasket.selector) != address(0),
-            "eden basket facet cut"
+            IDiamondLoupe(diamond).facetAddress(EdenBasketWalletFacet.createBasket.selector) != address(0),
+            "eden basket wallet facet cut"
         );
         _assertTrue(
             IDiamondLoupe(diamond).facetAddress(EdenViewFacet.getPositionTokenURI.selector) != address(0),
@@ -274,8 +275,8 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         alt.approve(diamond, 200e18);
         uint256[] memory maxAltInputs = new uint256[](1);
         maxAltInputs[0] = 50e18;
-        EdenBasketFacet(diamond).mintBasket(state.altBasketId, 50e18, bob, maxAltInputs);
-        EdenBasketFacet(diamond).burnBasket(state.altBasketId, 50e18, bob);
+        EdenBasketWalletFacet(diamond).mintBasket(state.altBasketId, 50e18, bob, maxAltInputs);
+        EdenBasketWalletFacet(diamond).burnBasket(state.altBasketId, 50e18, bob);
         vm.stopPrank();
         _assertEq(ERC20(state.altBasketToken).balanceOf(bob), 0, "wallet basket burned");
 
@@ -301,15 +302,15 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
 
         uint256[] memory maxSteveInputs = new uint256[](1);
         maxSteveInputs[0] = 100e18;
-        EdenBasketFacet(diamond).mintBasket(state.steveBasketId, 100e18, alice, maxSteveInputs);
+        EdenBasketWalletFacet(diamond).mintBasket(state.steveBasketId, 100e18, alice, maxSteveInputs);
 
         uint256 stevePositionId = PositionManagementFacet(diamond).mintPosition(1);
         ERC20(state.steveToken).approve(diamond, 100e18);
-        EdenStEVEFacet(diamond).depositStEVEToPosition(stevePositionId, 100e18, 100e18);
+        EdenStEVEActionFacet(diamond).depositStEVEToPosition(stevePositionId, 100e18, 100e18);
 
         uint256 altPositionId = PositionManagementFacet(diamond).mintPosition(2);
         PositionManagementFacet(diamond).depositToPosition(altPositionId, 2, 200e18, 200e18);
-        EdenBasketFacet(diamond).mintBasketFromPosition(altPositionId, state.altBasketId, 100e18);
+        EdenBasketPositionFacet(diamond).mintBasketFromPosition(altPositionId, state.altBasketId, 100e18);
         vm.stopPrank();
 
         EdenViewFacet.ActionCheck memory borrowCheck =
@@ -358,9 +359,11 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         pools.initPoolWithActionFees(2, address(alt), cfg, actionFees);
 
         (state.steveBasketId, state.steveToken) =
-            EdenStEVEFacet(diamond).createStEVE(_stEveParams(address(eve)));
+            EdenStEVEActionFacet(diamond).createStEVE(_stEveParams(address(eve)));
         (state.altBasketId, state.altBasketToken) =
-            EdenBasketFacet(diamond).createBasket(_singleAssetParams("ALT Basket", "ALTB", address(alt), "ipfs://alt"));
+            EdenBasketWalletFacet(diamond).createBasket(
+                _singleAssetParams("ALT Basket", "ALTB", address(alt), "ipfs://alt")
+            );
 
         EdenRewardFacet(diamond).configureRewards(address(eve), 1e18, true);
         EdenLendingFacet(diamond).configureLending(state.altBasketId, 1 days, 14 days);

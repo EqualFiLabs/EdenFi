@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
-import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
+import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {PositionAgentRegistryFacet} from "src/agent-wallet/erc6551/PositionAgentRegistryFacet.sol";
@@ -55,7 +55,7 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         vm.startPrank(alice);
         alt.approve(diamond, 200e18);
         PositionManagementFacet(diamond).depositToPosition(aliceAltPositionId, 2, 100e18, 100e18);
-        EdenBasketFacet(diamond).mintBasketFromPosition(aliceAltPositionId, altBasketId, 40e18);
+        EdenBasketPositionFacet(diamond).mintBasketFromPosition(aliceAltPositionId, altBasketId, 40e18);
         vm.stopPrank();
 
         eve.approve(diamond, 500e18);
@@ -291,7 +291,7 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         vm.startPrank(alice);
         alt.approve(diamond, 200e18);
         PositionManagementFacet(diamond).depositToPosition(tierPositionId, 2, 120e18, 120e18);
-        EdenBasketFacet(diamond).mintBasketFromPosition(tierPositionId, altBasketId, 40e18);
+        EdenBasketPositionFacet(diamond).mintBasketFromPosition(tierPositionId, altBasketId, 40e18);
         vm.stopPrank();
 
         uint256[] memory mins = new uint256[](1);

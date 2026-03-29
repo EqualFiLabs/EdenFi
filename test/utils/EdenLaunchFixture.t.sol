@@ -14,8 +14,9 @@ import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
 import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
-import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
-import {EdenStEVEFacet} from "src/eden/EdenStEVEFacet.sol";
+import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
+import {EdenBasketWalletFacet} from "src/eden/EdenBasketWalletFacet.sol";
+import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
@@ -167,17 +168,17 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
         returns (uint256 basketId, address basketToken)
     {
         basketId = EdenViewFacet(diamond).basketCount();
-        _timelockCall(diamond, abi.encodeWithSelector(EdenBasketFacet.createBasket.selector, params));
-        basketToken = EdenBasketFacet(diamond).getBasket(basketId).token;
+        _timelockCall(diamond, abi.encodeWithSelector(EdenBasketWalletFacet.createBasket.selector, params));
+        basketToken = EdenBasketDataFacet(diamond).getBasket(basketId).token;
     }
 
     function _createStEVE(EdenBasketBase.CreateBasketParams memory params)
         internal
         returns (uint256 basketId, address basketToken)
     {
-        _timelockCall(diamond, abi.encodeWithSelector(EdenStEVEFacet.createStEVE.selector, params));
-        basketId = EdenStEVEFacet(diamond).steveBasketId();
-        basketToken = EdenBasketFacet(diamond).getBasket(basketId).token;
+        _timelockCall(diamond, abi.encodeWithSelector(EdenStEVEActionFacet.createStEVE.selector, params));
+        basketId = EdenStEVEActionFacet(diamond).steveBasketId();
+        basketToken = EdenBasketDataFacet(diamond).getBasket(basketId).token;
     }
 
     function _createIndex(EqualIndexBaseV3.CreateIndexParams memory params)
@@ -315,14 +316,14 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
         maxInputs[0] = units;
         vm.startPrank(user);
         asset.approve(diamond, units);
-        EdenBasketFacet(diamond).mintBasket(basketId, units, user, maxInputs);
+        EdenBasketWalletFacet(diamond).mintBasket(basketId, units, user, maxInputs);
         vm.stopPrank();
     }
 
     function _depositWalletStEVEToPosition(address user, uint256 positionId, uint256 amount) internal {
         vm.startPrank(user);
         BasketToken(steveToken).approve(diamond, amount);
-        EdenStEVEFacet(diamond).depositStEVEToPosition(positionId, amount, amount);
+        EdenStEVEActionFacet(diamond).depositStEVEToPosition(positionId, amount, amount);
         vm.stopPrank();
     }
 

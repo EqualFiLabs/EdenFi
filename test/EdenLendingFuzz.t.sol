@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
+import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 
@@ -30,7 +30,7 @@ contract EdenLendingFuzzTest is EdenLaunchFixture {
         vm.startPrank(alice);
         alt.approve(diamond, depositAmount);
         PositionManagementFacet(diamond).depositToPosition(positionId, 2, depositAmount, depositAmount);
-        EdenBasketFacet(diamond).mintBasketFromPosition(positionId, altBasketId, mintUnits);
+        EdenBasketPositionFacet(diamond).mintBasketFromPosition(positionId, altBasketId, mintUnits);
         vm.stopPrank();
 
         EdenLendingFacet.BorrowPreview memory borrowPreview =
@@ -80,7 +80,7 @@ contract EdenLendingFuzzTest is EdenLaunchFixture {
         vm.startPrank(alice);
         alt.approve(diamond, depositAmount);
         PositionManagementFacet(diamond).depositToPosition(positionId, 2, depositAmount, depositAmount);
-        EdenBasketFacet(diamond).mintBasketFromPosition(positionId, altBasketId, mintUnits);
+        EdenBasketPositionFacet(diamond).mintBasketFromPosition(positionId, altBasketId, mintUnits);
         uint256 loanId = EdenLendingFacet(diamond).borrow(positionId, altBasketId, collateralUnits, duration);
         vm.stopPrank();
 

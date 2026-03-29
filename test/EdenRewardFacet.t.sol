@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
-import {EdenStEVEFacet} from "src/eden/EdenStEVEFacet.sol";
+import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
 import {InvalidParameterRange} from "src/libraries/Errors.sol";
@@ -33,7 +33,7 @@ contract EdenRewardFacetTest is EdenLaunchFixture {
         EdenRewardFacet(diamond).fundRewards(1_000e18, 1_000e18);
         vm.warp(block.timestamp + 10);
 
-        assertEq(EdenStEVEFacet(diamond).eligibleSupply(), 10e18);
+        assertEq(EdenStEVEActionFacet(diamond).eligibleSupply(), 10e18);
         assertGt(EdenRewardFacet(diamond).previewClaimRewards(alicePositionId), 0);
         assertEq(EdenRewardFacet(diamond).previewClaimRewards(bobPositionId), 0);
     }
