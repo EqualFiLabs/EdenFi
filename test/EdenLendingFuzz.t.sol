@@ -2,10 +2,10 @@
 pragma solidity ^0.8.20;
 
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
+import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
-import {ILegacyEdenPositionFacet} from "test/utils/LegacyEdenPositionFacet.sol";
 
 contract EdenLendingFuzzTest is EdenLaunchFixture {
     function setUp() public override {
@@ -30,17 +30,17 @@ contract EdenLendingFuzzTest is EdenLaunchFixture {
         vm.startPrank(alice);
         alt.approve(diamond, depositAmount);
         PositionManagementFacet(diamond).depositToPosition(positionId, 2, depositAmount, depositAmount);
-        ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(positionId, altBasketId, mintUnits);
+        EdenBasketPositionFacet(diamond).mintStEVEFromPosition(positionId, mintUnits);
         vm.stopPrank();
 
         EdenLendingFacet.BorrowPreview memory borrowPreview =
-            EdenLendingFacet(diamond).previewBorrow(positionId, altBasketId, collateralUnits, duration);
+            EdenLendingFacet(diamond).previewBorrow(positionId, collateralUnits, duration);
         assertEq(borrowPreview.collateralUnits, collateralUnits);
         assertEq(borrowPreview.maturity, block.timestamp + duration);
         assertTrue(borrowPreview.invariantSatisfied);
 
         vm.prank(alice);
-        uint256 loanId = EdenLendingFacet(diamond).borrow(positionId, altBasketId, collateralUnits, duration);
+        uint256 loanId = EdenLendingFacet(diamond).borrow(positionId, collateralUnits, duration);
 
         EdenLendingFacet.RepayPreview memory repayPreview = EdenLendingFacet(diamond).previewRepay(positionId, loanId);
         assertEq(repayPreview.principals.length, borrowPreview.principals.length);
@@ -52,7 +52,7 @@ contract EdenLendingFuzzTest is EdenLaunchFixture {
         EdenLendingFacet(diamond).repay(positionId, loanId);
         vm.stopPrank();
 
-        assertEq(EdenLendingFacet(diamond).getLockedCollateralUnits(altBasketId), 0);
+        assertEq(EdenLendingFacet(diamond).getLockedCollateralUnits(), 0);
         assertTrue(!EdenLendingFacet(diamond).getLoanView(loanId).active);
     }
 
@@ -80,8 +80,8 @@ contract EdenLendingFuzzTest is EdenLaunchFixture {
         vm.startPrank(alice);
         alt.approve(diamond, depositAmount);
         PositionManagementFacet(diamond).depositToPosition(positionId, 2, depositAmount, depositAmount);
-        ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(positionId, altBasketId, mintUnits);
-        uint256 loanId = EdenLendingFacet(diamond).borrow(positionId, altBasketId, collateralUnits, duration);
+        EdenBasketPositionFacet(diamond).mintStEVEFromPosition(positionId, mintUnits);
+        uint256 loanId = EdenLendingFacet(diamond).borrow(positionId, collateralUnits, duration);
         vm.stopPrank();
 
         EdenLendingFacet.ExtendPreview memory extendPreview =
@@ -96,6 +96,6 @@ contract EdenLendingFuzzTest is EdenLaunchFixture {
 
         EdenLendingFacet.LoanView memory recovered = EdenLendingFacet(diamond).getLoanView(loanId);
         assertTrue(!recovered.active);
-        assertEq(EdenLendingFacet(diamond).getLockedCollateralUnits(altBasketId), 0);
+        assertEq(EdenLendingFacet(diamond).getLockedCollateralUnits(), 0);
     }
 }

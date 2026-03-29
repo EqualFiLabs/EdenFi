@@ -34,7 +34,7 @@ contract EdenAdminFacetTest is EdenLaunchFixture {
     );
     event PoolFeeShareUpdated(uint16 oldBps, uint16 newBps);
     event RewardConfigUpdated(address indexed rewardToken, uint256 rewardRatePerSecond, bool enabled);
-    event LendingConfigUpdated(uint256 indexed basketId, uint40 minDuration, uint40 maxDuration, uint16 ltvBps);
+    event LendingConfigUpdated(uint256 indexed productId, uint40 minDuration, uint40 maxDuration, uint16 ltvBps);
 
     function setUp() public override {
         super.setUp();
@@ -107,14 +107,14 @@ contract EdenAdminFacetTest is EdenLaunchFixture {
         EdenRewardFacet(diamond).configureRewards(address(eve), 10e18, true);
 
         vm.expectRevert(bytes("LibAccess: not timelock"));
-        EdenLendingFacet(diamond).configureLending(productId, 1 days, 14 days);
+        EdenLendingFacet(diamond).configureLending(1 days, 14 days);
 
         vm.recordLogs();
         _configureRewards(address(eve), 10e18, true);
         _assertIndexedEventEmitted(keccak256("RewardConfigUpdated(address,uint256,bool)"), bytes32(uint256(uint160(address(eve)))));
 
         vm.recordLogs();
-        _configureLending(productId, 1 days, 14 days);
+        _configureLending(1 days, 14 days);
         _assertIndexedEventEmitted(keccak256("LendingConfigUpdated(uint256,uint40,uint40,uint16)"), bytes32(productId));
 
         EdenViewFacet.ProductConfigView memory config = EdenViewFacet(diamond).getProductConfig();

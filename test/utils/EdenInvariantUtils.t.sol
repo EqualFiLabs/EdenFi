@@ -481,12 +481,12 @@ contract EdenInvariantHandler {
         _mintAltBasketFromPositionInternal(positionId, mintUnits);
 
         EdenLendingFacet.BorrowPreview memory preview =
-            EdenLendingFacet(diamond).previewBorrow(positionId, altBasketId, collateralUnits, duration);
+            EdenLendingFacet(diamond).previewBorrow(positionId, collateralUnits, duration);
         if (!preview.invariantSatisfied || preview.collateralUnits == 0) return;
 
         address owner = positionNft.ownerOf(positionId);
         vm.prank(owner);
-        uint256 loanId = EdenLendingFacet(diamond).borrow(positionId, altBasketId, preview.collateralUnits, duration);
+        uint256 loanId = EdenLendingFacet(diamond).borrow(positionId, preview.collateralUnits, duration);
         trackedLoans.push(loanId);
         _markJoined(positionId, altBasketPoolId);
         _syncRewardIndex();

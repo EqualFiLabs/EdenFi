@@ -17,7 +17,6 @@ library LibEdenLendingStorage {
 
     struct Loan {
         bytes32 borrowerPositionKey;
-        uint256 basketId;
         uint256 collateralUnits;
         uint16 ltvBps;
         uint40 maturity;
@@ -25,10 +24,10 @@ library LibEdenLendingStorage {
 
     struct LendingStorage {
         uint256 nextLoanId;
-        mapping(uint256 => LendingConfig) lendingConfigs;
-        mapping(uint256 => BorrowFeeTier[]) borrowFeeTiers;
-        mapping(uint256 => uint256) lockedCollateralUnits;
-        mapping(uint256 => mapping(address => uint256)) outstandingPrincipal;
+        LendingConfig lendingConfig;
+        BorrowFeeTier[] borrowFeeTiers;
+        uint256 lockedCollateralUnits;
+        mapping(address => uint256) outstandingPrincipal;
         mapping(uint256 => Loan) loans;
         mapping(bytes32 => uint256[]) borrowerLoanIds;
         mapping(uint256 => bool) loanClosed;

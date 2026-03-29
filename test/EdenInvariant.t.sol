@@ -211,7 +211,7 @@ contract EdenByEqualFiInvariantTest is StdInvariant, EdenLaunchFixture {
             EdenLendingFacet.LoanView memory loanView = EdenLendingFacet(diamond).getLoanView(loanId);
             bool closed = loanView.closedAt != 0 || loanView.closeReason != 0;
 
-            require(loanView.basketId == altBasketId, "loan basket mismatch");
+            require(loanView.productId == altBasketId, "loan product mismatch");
 
             if (!closed) {
                 require(loanView.closeReason == 0, "open loan close reason mismatch");
@@ -235,11 +235,11 @@ contract EdenByEqualFiInvariantTest is StdInvariant, EdenLaunchFixture {
         }
 
         require(
-            EdenLendingFacet(diamond).getLockedCollateralUnits(altBasketId) == openCollateral,
+            EdenLendingFacet(diamond).getLockedCollateralUnits() == openCollateral,
             "locked collateral mismatch"
         );
         require(
-            EdenLendingFacet(diamond).getOutstandingPrincipal(altBasketId, address(alt)) == openOutstanding,
+            EdenLendingFacet(diamond).getOutstandingPrincipal(address(alt)) == openOutstanding,
             "outstanding principal mismatch"
         );
         require(moduleEncumbered >= openCollateral, "module encumbrance below locked collateral");

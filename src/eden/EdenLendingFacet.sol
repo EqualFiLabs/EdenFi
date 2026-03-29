@@ -26,23 +26,23 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
     error LoanNotFound(uint256 loanId);
     error LoanExpired(uint256 loanId, uint40 maturity);
     error LoanNotExpired(uint256 loanId, uint40 maturity);
-    error BelowMinimumTier(uint256 basketId, uint256 collateralUnits);
+    error BelowMinimumTier(uint256 collateralUnits);
     error PositionMismatch(bytes32 expected, bytes32 actual);
 
     event LendingConfigUpdated(
-        uint256 indexed basketId,
+        uint256 indexed productId,
         uint40 minDuration,
         uint40 maxDuration,
         uint16 ltvBps
     );
     event BorrowFeeTiersUpdated(
-        uint256 indexed basketId,
+        uint256 indexed productId,
         uint256[] minCollateralUnits,
         uint256[] flatFeeNative
     );
     event LoanCreated(
         uint256 indexed loanId,
-        uint256 indexed basketId,
+        uint256 indexed productId,
         bytes32 indexed borrowerPositionKey,
         uint256 collateralUnits,
         address[] assets,
@@ -62,31 +62,29 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
 
     function borrow(
         uint256 positionId,
-        uint256 basketId,
         uint256 collateralUnits,
         uint40 duration
-    ) external payable nonReentrant basketExists(basketId) returns (uint256 loanId) {
+    ) external payable nonReentrant basketExists(LibEdenBasketStorage.PRODUCT_ID) returns (uint256 loanId) {
         if (collateralUnits == 0 || collateralUnits % UNIT_SCALE != 0) revert InvalidUnits();
 
         LibPositionHelpers.requireOwnership(positionId);
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
         LibEdenLendingStorage.LendingStorage storage lending = LibEdenLendingStorage.s();
-        uint256 nativeFee = _checkBorrowRequest(basketId, positionKey, collateralUnits, duration);
+        uint256 nativeFee = _checkBorrowRequest(positionKey, collateralUnits, duration);
         _requireNativeFee(nativeFee);
 
         LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         (address[] memory assets, uint256[] memory principals) =
             _deriveLoanPrincipals(basket, collateralUnits, LibEdenLendingStorage.DEFAULT_LTV_BPS);
-        _enforceBorrowInvariantForNewLoan(basketId, collateralUnits, assets, principals);
+        _enforceBorrowInvariantForNewLoan(collateralUnits, assets, principals);
 
         uint40 maturity = uint40(block.timestamp + duration);
-        lending.lockedCollateralUnits[basketId] += collateralUnits;
+        lending.lockedCollateralUnits += collateralUnits;
 
         loanId = lending.nextLoanId;
         lending.nextLoanId = loanId + 1;
         lending.loans[loanId] = LibEdenLendingStorage.Loan({
             borrowerPositionKey: positionKey,
-            basketId: basketId,
             collateralUnits: collateralUnits,
             ltvBps: LibEdenLendingStorage.DEFAULT_LTV_BPS,
             maturity: maturity
@@ -97,12 +95,12 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
         LibPoolMembership._ensurePoolMembership(positionKey, basket.poolId, true);
         LibModuleEncumbrance.encumber(positionKey, basket.poolId, _loanModuleId(loanId), collateralUnits);
 
-        _executeBorrowPayouts(basketId, assets, principals, msg.sender);
+        _executeBorrowPayouts(assets, principals, msg.sender);
         _forwardNativeFee(nativeFee);
 
         emit LoanCreated(
             loanId,
-            basketId,
+            LibEdenBasketStorage.PRODUCT_ID,
             positionKey,
             collateralUnits,
             assets,
@@ -133,10 +131,10 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
             uint256 principal = principals[i];
             uint256 received = LibCurrency.pullAtLeast(asset, msg.sender, principal, principal);
             store.accounting.vaultBalances[asset] += received;
-            lending.outstandingPrincipal[loan.basketId][asset] -= principal;
+            lending.outstandingPrincipal[asset] -= principal;
         }
 
-        lending.lockedCollateralUnits[loan.basketId] -= loan.collateralUnits;
+        lending.lockedCollateralUnits -= loan.collateralUnits;
         LibModuleEncumbrance.unencumber(positionKey, basket.poolId, _loanModuleId(loanId), loan.collateralUnits);
 
         lending.loanClosed[loanId] = true;
@@ -178,21 +176,21 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
         LibPoolMembership._ensurePoolMembership(loan.borrowerPositionKey, basket.poolId, true);
         LibActiveCreditIndex.settle(basket.poolId, loan.borrowerPositionKey);
         LibFeeIndex.settle(basket.poolId, loan.borrowerPositionKey);
-        _settleRecoveredStEVE(loan.borrowerPositionKey, loan.basketId, loan.collateralUnits);
+        _settleRecoveredStEVE(loan.borrowerPositionKey, loan.collateralUnits);
 
         uint256 currentPrincipal = basketPool.userPrincipal[loan.borrowerPositionKey];
         if (loan.collateralUnits > currentPrincipal) {
             revert InsufficientPrincipal(loan.collateralUnits, currentPrincipal);
         }
 
-        lending.lockedCollateralUnits[loan.basketId] -= loan.collateralUnits;
+        lending.lockedCollateralUnits -= loan.collateralUnits;
         LibModuleEncumbrance.unencumber(
             loan.borrowerPositionKey, basket.poolId, _loanModuleId(loanId), loan.collateralUnits
         );
 
         uint256 len = assets.length;
         for (uint256 i = 0; i < len; i++) {
-            lending.outstandingPrincipal[loan.basketId][assets[i]] -= principals[i];
+            lending.outstandingPrincipal[assets[i]] -= principals[i];
         }
 
         uint256 newPrincipal = currentPrincipal - loan.collateralUnits;
@@ -208,9 +206,7 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
         basket.totalUnits -= loan.collateralUnits;
         BasketToken(basket.token).burnIndexUnits(address(this), loan.collateralUnits);
 
-        _enforcePostRecoveryInvariant(
-            loan.basketId, basket, lending.lockedCollateralUnits[loan.basketId], basket.totalUnits
-        );
+        _enforcePostRecoveryInvariant(basket, lending.lockedCollateralUnits, basket.totalUnits);
 
         lending.loanClosed[loanId] = true;
         lending.loanClosedAt[loanId] = block.timestamp;
@@ -219,10 +215,10 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
         emit LoanRecovered(loanId, loan.borrowerPositionKey, loan.collateralUnits, assets, principals);
     }
 
-    function configureLending(uint256 basketId, uint40 minDuration, uint40 maxDuration)
+    function configureLending(uint40 minDuration, uint40 maxDuration)
         external
         nonReentrant
-        basketExists(basketId)
+        basketExists(LibEdenBasketStorage.PRODUCT_ID)
     {
         LibCurrency.assertZeroMsgValue();
         LibAccess.enforceTimelockOrOwnerIfUnset();
@@ -230,25 +226,24 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
             revert InvalidDuration(0, minDuration, maxDuration);
         }
 
-        LibEdenLendingStorage.s().lendingConfigs[basketId] =
+        LibEdenLendingStorage.s().lendingConfig =
             LibEdenLendingStorage.LendingConfig({minDuration: minDuration, maxDuration: maxDuration});
         emit LendingConfigUpdated(
-            basketId, minDuration, maxDuration, LibEdenLendingStorage.DEFAULT_LTV_BPS
+            LibEdenBasketStorage.PRODUCT_ID, minDuration, maxDuration, LibEdenLendingStorage.DEFAULT_LTV_BPS
         );
     }
 
     function configureBorrowFeeTiers(
-        uint256 basketId,
         uint256[] calldata minCollateralUnits,
         uint256[] calldata flatFeeNative
-    ) external nonReentrant basketExists(basketId) {
+    ) external nonReentrant basketExists(LibEdenBasketStorage.PRODUCT_ID) {
         LibCurrency.assertZeroMsgValue();
         LibAccess.enforceTimelockOrOwnerIfUnset();
 
         uint256 len = minCollateralUnits.length;
         if (len == 0 || len != flatFeeNative.length) revert InvalidArrayLength();
 
-        LibEdenLendingStorage.BorrowFeeTier[] storage tiers = LibEdenLendingStorage.s().borrowFeeTiers[basketId];
+        LibEdenLendingStorage.BorrowFeeTier[] storage tiers = LibEdenLendingStorage.s().borrowFeeTiers;
         while (tiers.length > 0) {
             tiers.pop();
         }
@@ -266,7 +261,7 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
             previousMin = currentMin;
         }
 
-        emit BorrowFeeTiersUpdated(basketId, minCollateralUnits, flatFeeNative);
+        emit BorrowFeeTiersUpdated(LibEdenBasketStorage.PRODUCT_ID, minCollateralUnits, flatFeeNative);
     }
 
     function loanCount() external view returns (uint256) {
@@ -325,10 +320,10 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
         return _activeLoanIdsByBorrowerPaginated(positionId, start, limit);
     }
 
-    function previewBorrow(uint256 positionId, uint256 basketId, uint256 collateralUnits, uint40 duration)
+    function previewBorrow(uint256 positionId, uint256 collateralUnits, uint40 duration)
         external
         view
-        basketExists(basketId)
+        basketExists(LibEdenBasketStorage.PRODUCT_ID)
         returns (BorrowPreview memory preview)
     {
         if (collateralUnits == 0 || collateralUnits % UNIT_SCALE != 0) revert InvalidUnits();
@@ -336,27 +331,24 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
         LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         LibEdenLendingStorage.LendingStorage storage lending = LibEdenLendingStorage.s();
-        _validateDuration(lending.lendingConfigs[basketId], duration);
+        _validateDuration(lending.lendingConfig, duration);
 
         (address[] memory assets, uint256[] memory principals) =
             _deriveLoanPrincipals(basket, collateralUnits, LibEdenLendingStorage.DEFAULT_LTV_BPS);
         uint256 availableCollateral = _availableCollateral(positionKey, basket.poolId);
-        uint256 resultingLockedCollateral = lending.lockedCollateralUnits[basketId] + collateralUnits;
+        uint256 resultingLockedCollateral = lending.lockedCollateralUnits + collateralUnits;
 
-        preview.basketId = basketId;
+        preview.productId = LibEdenBasketStorage.PRODUCT_ID;
         preview.collateralUnits = collateralUnits;
         preview.duration = duration;
         preview.assets = assets;
         preview.principals = principals;
-        preview.feeNative =
-            _selectBorrowFeeTier(lending.borrowFeeTiers[basketId], basketId, collateralUnits).flatFeeNative;
+        preview.feeNative = _selectBorrowFeeTier(lending.borrowFeeTiers, collateralUnits).flatFeeNative;
         preview.maturity = uint40(block.timestamp + duration);
         preview.availableCollateral = availableCollateral;
         preview.resultingLockedCollateral = resultingLockedCollateral;
         preview.invariantSatisfied = collateralUnits <= availableCollateral
-            && _redeemabilityInvariantSatisfied(
-                basketId, basket, assets, principals, resultingLockedCollateral, basket.totalUnits
-            );
+            && _redeemabilityInvariantSatisfied(basket, assets, principals, resultingLockedCollateral, basket.totalUnits);
     }
 
     function previewRepay(uint256 positionId, uint256 loanId) external view returns (RepayPreview memory preview) {
@@ -394,11 +386,11 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
         });
     }
 
-    function getOutstandingPrincipal(uint256 basketId, address asset) external view basketExists(basketId) returns (uint256) {
-        return LibEdenLendingStorage.s().outstandingPrincipal[basketId][asset];
+    function getOutstandingPrincipal(address asset) external view returns (uint256) {
+        return LibEdenLendingStorage.s().outstandingPrincipal[asset];
     }
 
-    function getLockedCollateralUnits(uint256 basketId) external view basketExists(basketId) returns (uint256) {
-        return LibEdenLendingStorage.s().lockedCollateralUnits[basketId];
+    function getLockedCollateralUnits() external view returns (uint256) {
+        return LibEdenLendingStorage.s().lockedCollateralUnits;
     }
 }

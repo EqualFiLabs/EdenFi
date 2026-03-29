@@ -329,11 +329,11 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         vm.stopPrank();
 
         EdenViewFacet.ActionCheck memory borrowCheck =
-            EdenViewFacet(diamond).canBorrow(altPositionId, state.altBasketId, 30e18, 7 days);
+            EdenViewFacet(diamond).canBorrow(altPositionId, 30e18, 7 days);
         _assertTrue(borrowCheck.ok, "borrow check");
 
         vm.prank(alice);
-        uint256 loanId = EdenLendingFacet(diamond).borrow(altPositionId, state.altBasketId, 30e18, 7 days);
+        uint256 loanId = EdenLendingFacet(diamond).borrow(altPositionId, 30e18, 7 days);
         _assertEq(EdenLendingFacet(diamond).loanCount(), 1, "loan created");
 
         vm.prank(alice);
@@ -378,13 +378,13 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             .createBasket(_singleAssetParams("ALT Basket", "ALTB", address(alt), "ipfs://alt"));
 
         EdenRewardFacet(diamond).configureRewards(address(eve), 1e18, true);
-        EdenLendingFacet(diamond).configureLending(state.altBasketId, 1 days, 14 days);
+        EdenLendingFacet(diamond).configureLending(1 days, 14 days);
 
         uint256[] memory mins = new uint256[](1);
         mins[0] = 1e18;
         uint256[] memory fees = new uint256[](1);
         fees[0] = 0;
-        EdenLendingFacet(diamond).configureBorrowFeeTiers(state.altBasketId, mins, fees);
+        EdenLendingFacet(diamond).configureBorrowFeeTiers(mins, fees);
     }
 
     function _timelockCall(FixedDelayTimelockController controller, address target, bytes memory data) internal {

@@ -121,8 +121,19 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
         _initPoolWithActionFees(3, address(fot), _poolConfig(), _actionFees());
     }
 
-    function _bootstrapEdenProduct() internal pure {
-        revert("legacy EDEN bootstrap removed");
+    function _bootstrapEdenProduct() internal {
+        _bootstrapCorePools();
+        (steveBasketId, steveToken) = _createStEVE(_stEveParams(address(alt)));
+        altBasketId = steveBasketId;
+        altBasketToken = steveToken;
+
+        uint256[] memory mins = new uint256[](1);
+        mins[0] = 1e18;
+        uint256[] memory fees = new uint256[](1);
+        fees[0] = 0;
+
+        _configureLending(1 days, 14 days);
+        _configureBorrowFeeTiers(mins, fees);
     }
 
     function _timelockCall(address target, bytes memory data) internal returns (bytes memory result) {
@@ -194,23 +205,16 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
         );
     }
 
-    function _configureLending(uint256 basketId, uint40 minDuration, uint40 maxDuration) internal {
+    function _configureLending(uint40 minDuration, uint40 maxDuration) internal {
         _timelockCall(
-            diamond,
-            abi.encodeWithSelector(EdenLendingFacet.configureLending.selector, basketId, minDuration, maxDuration)
+            diamond, abi.encodeWithSelector(EdenLendingFacet.configureLending.selector, minDuration, maxDuration)
         );
     }
 
-    function _configureBorrowFeeTiers(
-        uint256 basketId,
-        uint256[] memory minCollateralUnits,
-        uint256[] memory flatFeeNative
-    ) internal {
+    function _configureBorrowFeeTiers(uint256[] memory minCollateralUnits, uint256[] memory flatFeeNative) internal {
         _timelockCall(
             diamond,
-            abi.encodeWithSelector(
-                EdenLendingFacet.configureBorrowFeeTiers.selector, basketId, minCollateralUnits, flatFeeNative
-            )
+            abi.encodeWithSelector(EdenLendingFacet.configureBorrowFeeTiers.selector, minCollateralUnits, flatFeeNative)
         );
     }
 

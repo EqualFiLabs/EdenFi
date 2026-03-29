@@ -10,6 +10,6 @@ interface IEdenLendingErrors {
     error LoanNotFound(uint256 loanId);
     error LoanExpired(uint256 loanId, uint40 maturity);
     error LoanNotExpired(uint256 loanId, uint40 maturity);
-    error BelowMinimumTier(uint256 basketId, uint256 collateralUnits);
+    error BelowMinimumTier(uint256 collateralUnits);
     error PositionMismatch(bytes32 expected, bytes32 actual);
 }

@@ -22,7 +22,7 @@ abstract contract EdenLendingLogic is EdenBasketBase {
     struct LoanView {
         uint256 loanId;
         bytes32 borrowerPositionKey;
-        uint256 basketId;
+        uint256 productId;
         uint256 collateralUnits;
         uint16 ltvBps;
         uint40 maturity;
@@ -37,7 +37,7 @@ abstract contract EdenLendingLogic is EdenBasketBase {
     }
 
     struct BorrowPreview {
-        uint256 basketId;
+        uint256 productId;
         uint256 collateralUnits;
         uint40 duration;
         address[] assets;
@@ -71,15 +71,14 @@ abstract contract EdenLendingLogic is EdenBasketBase {
         LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         (address[] memory assets, uint256[] memory principals) =
             _deriveLoanPrincipals(basket, loan.collateralUnits, loan.ltvBps);
-        (bool hasTier, uint256 extensionFeeNative) =
-            _findBorrowFeeTier(lending.borrowFeeTiers[loan.basketId], loan.collateralUnits);
+        (bool hasTier, uint256 extensionFeeNative) = _findBorrowFeeTier(lending.borrowFeeTiers, loan.collateralUnits);
 
         bool closed = lending.loanClosed[loanId];
         bool expired = block.timestamp > loan.maturity;
         loanView = LoanView({
             loanId: loanId,
             borrowerPositionKey: loan.borrowerPositionKey,
-            basketId: loan.basketId,
+            productId: LibEdenBasketStorage.PRODUCT_ID,
             collateralUnits: loan.collateralUnits,
             ltvBps: loan.ltvBps,
             maturity: loan.maturity,
@@ -175,38 +174,35 @@ abstract contract EdenLendingLogic is EdenBasketBase {
     }
 
     function _checkBorrowRequest(
-        uint256 basketId,
         bytes32 positionKey,
         uint256 collateralUnits,
         uint40 duration
     ) internal view returns (uint256 nativeFee) {
         LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
-        if (basket.paused) revert IndexPaused(basketId);
+        if (basket.paused) revert IndexPaused(LibEdenBasketStorage.PRODUCT_ID);
 
         LibEdenLendingStorage.LendingStorage storage lending = LibEdenLendingStorage.s();
-        _validateDuration(lending.lendingConfigs[basketId], duration);
+        _validateDuration(lending.lendingConfig, duration);
 
         uint256 availableCollateral = _availableCollateral(positionKey, basket.poolId);
         if (collateralUnits > availableCollateral) {
             revert InsufficientPrincipal(collateralUnits, availableCollateral);
         }
 
-        nativeFee = _selectBorrowFeeTier(lending.borrowFeeTiers[basketId], basketId, collateralUnits).flatFeeNative;
+        nativeFee = _selectBorrowFeeTier(lending.borrowFeeTiers, collateralUnits).flatFeeNative;
     }
 
     function _enforceBorrowInvariantForNewLoan(
-        uint256 basketId,
         uint256 collateralUnits,
         address[] memory assets,
         uint256[] memory principals
     ) internal view {
         LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         _enforceRedeemabilityInvariant(
-            basketId,
             basket,
             assets,
             principals,
-            LibEdenLendingStorage.s().lockedCollateralUnits[basketId] + collateralUnits,
+            LibEdenLendingStorage.s().lockedCollateralUnits + collateralUnits,
             basket.totalUnits
         );
     }
@@ -235,7 +231,7 @@ abstract contract EdenLendingLogic is EdenBasketBase {
         }
         if (block.timestamp > loan.maturity) revert IEdenLendingErrors.LoanExpired(loanId, loan.maturity);
 
-        LibEdenLendingStorage.LendingConfig memory config = lending.lendingConfigs[loan.basketId];
+        LibEdenLendingStorage.LendingConfig memory config = lending.lendingConfig;
         if (addedDuration == 0 || config.maxDuration == 0) {
             revert IEdenLendingErrors.InvalidDuration(addedDuration, config.minDuration, config.maxDuration);
         }
@@ -247,13 +243,10 @@ abstract contract EdenLendingLogic is EdenBasketBase {
         }
 
         newMaturity = uint40(extendedMaturity);
-        feeNative =
-            _selectBorrowFeeTier(lending.borrowFeeTiers[loan.basketId], loan.basketId, loan.collateralUnits)
-                .flatFeeNative;
+        feeNative = _selectBorrowFeeTier(lending.borrowFeeTiers, loan.collateralUnits).flatFeeNative;
     }
 
     function _executeBorrowPayouts(
-        uint256 basketId,
         address[] memory assets,
         uint256[] memory principals,
         address recipient
@@ -266,18 +259,17 @@ abstract contract EdenLendingLogic is EdenBasketBase {
             address asset = assets[i];
             uint256 principal = principals[i];
             store.accounting.vaultBalances[asset] -= principal;
-            lending.outstandingPrincipal[basketId][asset] += principal;
+            lending.outstandingPrincipal[asset] += principal;
             LibCurrency.transfer(asset, recipient, principal);
         }
     }
 
     function _selectBorrowFeeTier(
         LibEdenLendingStorage.BorrowFeeTier[] storage tiers,
-        uint256 basketId,
         uint256 collateralUnits
     ) internal view returns (LibEdenLendingStorage.BorrowFeeTier memory tier) {
         uint256 len = tiers.length;
-        if (len == 0) revert IEdenLendingErrors.BelowMinimumTier(basketId, collateralUnits);
+        if (len == 0) revert IEdenLendingErrors.BelowMinimumTier(collateralUnits);
 
         bool found;
         for (uint256 i = 0; i < len; i++) {
@@ -289,7 +281,7 @@ abstract contract EdenLendingLogic is EdenBasketBase {
             }
         }
 
-        if (!found) revert IEdenLendingErrors.BelowMinimumTier(basketId, collateralUnits);
+        if (!found) revert IEdenLendingErrors.BelowMinimumTier(collateralUnits);
     }
 
     function _findBorrowFeeTier(
@@ -348,7 +340,6 @@ abstract contract EdenLendingLogic is EdenBasketBase {
     }
 
     function _redeemabilityInvariantSatisfied(
-        uint256,
         LibEdenBasketStorage.ProductConfig storage basket,
         address[] memory assets,
         uint256[] memory principals,
@@ -372,7 +363,6 @@ abstract contract EdenLendingLogic is EdenBasketBase {
     }
 
     function _enforceRedeemabilityInvariant(
-        uint256,
         LibEdenBasketStorage.ProductConfig storage basket,
         address[] memory assets,
         uint256[] memory principals,
@@ -398,7 +388,6 @@ abstract contract EdenLendingLogic is EdenBasketBase {
     }
 
     function _enforcePostRecoveryInvariant(
-        uint256,
         LibEdenBasketStorage.ProductConfig storage basket,
         uint256 lockedCollateralUnits,
         uint256 totalUnits
@@ -417,9 +406,9 @@ abstract contract EdenLendingLogic is EdenBasketBase {
         }
     }
 
-    function _settleRecoveredStEVE(bytes32 positionKey, uint256 basketId, uint256 amount) internal {
+    function _settleRecoveredStEVE(bytes32 positionKey, uint256 amount) internal {
         LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
-        if (!steve.configured || basketId != steve.basketId) return;
+        if (!steve.configured) return;
 
         uint256 eligible = steve.eligiblePrincipal[positionKey];
         if (amount > eligible) revert InsufficientPrincipal(amount, eligible);

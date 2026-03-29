@@ -409,13 +409,13 @@ contract EdenViewFacet is EdenLendingLogic {
         return _ok();
     }
 
-    function canBorrow(uint256 positionId, uint256 basketId, uint256 collateralUnits, uint40 duration)
+    function canBorrow(uint256 positionId, uint256 collateralUnits, uint40 duration)
         external
         view
         returns (ActionCheck memory)
     {
-        if (!_isKnownBasketId(basketId)) {
-            return _fail(ACTION_UNKNOWN_BASKET, "unknown basket");
+        if (!LibEdenBasketStorage.s().productInitialized) {
+            return _fail(ACTION_UNKNOWN_BASKET, "product not configured");
         }
         if (collateralUnits == 0 || collateralUnits % UNIT_SCALE != 0) {
             return _fail(ACTION_INVALID_UNITS, "invalid collateral units");
@@ -423,11 +423,11 @@ contract EdenViewFacet is EdenLendingLogic {
 
         LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         if (basket.paused) {
-            return _fail(ACTION_BASKET_PAUSED, "basket paused");
+            return _fail(ACTION_BASKET_PAUSED, "product paused");
         }
 
         LibEdenLendingStorage.LendingStorage storage lending = LibEdenLendingStorage.s();
-        LibEdenLendingStorage.LendingConfig memory config = lending.lendingConfigs[basketId];
+        LibEdenLendingStorage.LendingConfig memory config = lending.lendingConfig;
         if (duration == 0 || config.minDuration == 0 || duration < config.minDuration || duration > config.maxDuration)
         {
             return _fail(ACTION_INVALID_DURATION, "invalid duration");
@@ -439,17 +439,15 @@ contract EdenViewFacet is EdenLendingLogic {
             return _fail(ACTION_INSUFFICIENT_COLLATERAL, "insufficient available collateral");
         }
 
-        if (!_hasBorrowFeeTier(lending.borrowFeeTiers[basketId], collateralUnits)) {
+        if (!_hasBorrowFeeTier(lending.borrowFeeTiers, collateralUnits)) {
             return _fail(ACTION_BELOW_MINIMUM_TIER, "below minimum fee tier");
         }
 
         (address[] memory assets, uint256[] memory principals) =
             _deriveLoanPrincipals(basket, collateralUnits, LibEdenLendingStorage.DEFAULT_LTV_BPS);
-        uint256 newLockedCollateral = lending.lockedCollateralUnits[basketId] + collateralUnits;
-        if (!_redeemabilityInvariantSatisfied(
-                basketId, basket, assets, principals, newLockedCollateral, basket.totalUnits
-            )) {
-            return _fail(ACTION_INSUFFICIENT_BALANCE, "basket vault invariant would fail");
+        uint256 newLockedCollateral = lending.lockedCollateralUnits + collateralUnits;
+        if (!_redeemabilityInvariantSatisfied(basket, assets, principals, newLockedCollateral, basket.totalUnits)) {
+            return _fail(ACTION_INSUFFICIENT_BALANCE, "product vault invariant would fail");
         }
 
         return _ok();
@@ -484,7 +482,7 @@ contract EdenViewFacet is EdenLendingLogic {
             return _fail(ACTION_LOAN_EXPIRED, "loan expired");
         }
 
-        LibEdenLendingStorage.LendingConfig memory config = lending.lendingConfigs[loan.basketId];
+        LibEdenLendingStorage.LendingConfig memory config = lending.lendingConfig;
         if (addedDuration == 0 || config.maxDuration == 0) {
             return _fail(ACTION_INVALID_DURATION, "invalid duration");
         }
