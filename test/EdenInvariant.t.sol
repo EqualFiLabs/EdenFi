@@ -9,7 +9,6 @@ import {OwnershipFacet} from "src/core/OwnershipFacet.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
 import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
-import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
@@ -170,13 +169,11 @@ contract EdenByEqualFiInvariantTest is StdInvariant, EdenLaunchFixture {
     }
 
     function invariant_BasketAndIndexAccountingMatchesPositionHoldings() public view {
-        _assertProductSupplyMatchesPrincipal(
-            altBasketId, altBasketToken, EdenBasketDataFacet(diamond).getBasketPoolId(altBasketId)
+        _assertProductSupplyMatchesPrincipal(altBasketId, altBasketToken, EdenViewFacet(diamond).getProductPoolId());
+        _assertProductSupplyMatchesPrincipal(feeBasketId, feeBasketToken, EdenViewFacet(diamond).getProductPoolId());
+        _assertIndexSupplyMatchesPrincipal(
+            feeIndexId, feeIndexToken, EqualIndexAdminFacetV3(diamond).getIndexPoolId(feeIndexId)
         );
-        _assertProductSupplyMatchesPrincipal(
-            feeBasketId, feeBasketToken, EdenBasketDataFacet(diamond).getBasketPoolId(feeBasketId)
-        );
-        _assertIndexSupplyMatchesPrincipal(feeIndexId, feeIndexToken, EqualIndexAdminFacetV3(diamond).getIndexPoolId(feeIndexId));
 
         uint256 indexEncumbranceTotal = _sumIndexEncumbrance(1);
         assertEq(inspector.poolSnapshot(1).indexEncumberedTotal, indexEncumbranceTotal);
@@ -195,9 +192,7 @@ contract EdenByEqualFiInvariantTest is StdInvariant, EdenLaunchFixture {
             sumEligible += eligible;
             sumClaimable += EdenRewardFacet(diamond).previewClaimRewards(tokenId);
 
-            assertLe(
-                eligible, inspector.userPrincipal(EdenBasketDataFacet(diamond).getBasketPoolId(steveBasketId), positionKey)
-            );
+            assertLe(eligible, inspector.userPrincipal(EdenViewFacet(diamond).getProductPoolId(), positionKey));
         }
 
         assertEq(sumEligible, inspector.eligibleSupply());
@@ -233,7 +228,7 @@ contract EdenByEqualFiInvariantTest is StdInvariant, EdenLaunchFixture {
         }
 
         uint256 trackedCount = handler.positionCount();
-        uint256 basketPoolId = EdenBasketDataFacet(diamond).getBasketPoolId(altBasketId);
+        uint256 basketPoolId = EdenViewFacet(diamond).getProductPoolId();
         for (uint256 i = 0; i < trackedCount; i++) {
             bytes32 positionKey = positionNft.getPositionKey(handler.positionAt(i));
             moduleEncumbered += inspector.moduleEncumbrance(positionKey, basketPoolId);
@@ -262,26 +257,16 @@ contract EdenByEqualFiInvariantTest is StdInvariant, EdenLaunchFixture {
 
     function test_InvariantSeedAccountingSanity() public view {
         _assertNamedProductSupplyMatchesPrincipal(
-            "alt",
-            altBasketId,
-            altBasketToken,
-            EdenBasketDataFacet(diamond).getBasketPoolId(altBasketId)
+            "alt", altBasketId, altBasketToken, EdenViewFacet(diamond).getProductPoolId()
         );
         _assertNamedProductSupplyMatchesPrincipal(
-            "fee-basket",
-            feeBasketId,
-            feeBasketToken,
-            EdenBasketDataFacet(diamond).getBasketPoolId(feeBasketId)
+            "fee-basket", feeBasketId, feeBasketToken, EdenViewFacet(diamond).getProductPoolId()
         );
         _assertNamedIndexSupplyMatchesPrincipal(
-            "fee-index",
-            feeIndexId,
-            feeIndexToken,
-            EqualIndexAdminFacetV3(diamond).getIndexPoolId(feeIndexId)
+            "fee-index", feeIndexId, feeIndexToken, EqualIndexAdminFacetV3(diamond).getIndexPoolId(feeIndexId)
         );
         require(
-            inspector.poolSnapshot(1).indexEncumberedTotal == _sumIndexEncumbrance(1),
-            "seed index encumbrance mismatch"
+            inspector.poolSnapshot(1).indexEncumberedTotal == _sumIndexEncumbrance(1), "seed index encumbrance mismatch"
         );
     }
 
@@ -313,7 +298,8 @@ contract EdenByEqualFiInvariantTest is StdInvariant, EdenLaunchFixture {
     }
 
     function _assertProductSupplyMatchesPrincipal(uint256 basketId, address token, uint256 poolId) internal view {
-        EdenBasketDataFacet.BasketView memory basket = EdenBasketDataFacet(diamond).getBasket(basketId);
+        basketId;
+        EdenViewFacet.ProductConfigView memory basket = EdenViewFacet(diamond).getProductConfig();
         require(basket.totalUnits == ERC20(token).totalSupply(), "product total supply mismatch");
         require(ERC20(token).balanceOf(diamond) >= _sumPrincipal(poolId), "product principal mismatch");
     }
@@ -324,11 +310,10 @@ contract EdenByEqualFiInvariantTest is StdInvariant, EdenLaunchFixture {
         address token,
         uint256 poolId
     ) internal view {
-        EdenBasketDataFacet.BasketView memory basket = EdenBasketDataFacet(diamond).getBasket(basketId);
+        basketId;
+        EdenViewFacet.ProductConfigView memory basket = EdenViewFacet(diamond).getProductConfig();
         require(basket.totalUnits == ERC20(token).totalSupply(), string.concat(name, " total supply mismatch"));
-        require(
-            ERC20(token).balanceOf(diamond) >= _sumPrincipal(poolId), string.concat(name, " principal mismatch")
-        );
+        require(ERC20(token).balanceOf(diamond) >= _sumPrincipal(poolId), string.concat(name, " principal mismatch"));
     }
 
     function _assertIndexSupplyMatchesPrincipal(uint256 indexId, address token, uint256 poolId) internal view {
@@ -337,17 +322,13 @@ contract EdenByEqualFiInvariantTest is StdInvariant, EdenLaunchFixture {
         require(ERC20(token).balanceOf(diamond) >= _sumPrincipal(poolId), "index principal mismatch");
     }
 
-    function _assertNamedIndexSupplyMatchesPrincipal(
-        string memory name,
-        uint256 indexId,
-        address token,
-        uint256 poolId
-    ) internal view {
+    function _assertNamedIndexSupplyMatchesPrincipal(string memory name, uint256 indexId, address token, uint256 poolId)
+        internal
+        view
+    {
         EqualIndexBaseV3.IndexView memory idx = EqualIndexAdminFacetV3(diamond).getIndex(indexId);
         require(idx.totalUnits == ERC20(token).totalSupply(), string.concat(name, " total supply mismatch"));
-        require(
-            ERC20(token).balanceOf(diamond) >= _sumPrincipal(poolId), string.concat(name, " principal mismatch")
-        );
+        require(ERC20(token).balanceOf(diamond) >= _sumPrincipal(poolId), string.concat(name, " principal mismatch"));
     }
 
     function _sumPrincipal(uint256 pid) internal view returns (uint256 total) {

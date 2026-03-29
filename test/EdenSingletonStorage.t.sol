@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
 import {EdenStEVEWalletFacet} from "src/eden/EdenStEVEWalletFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
@@ -18,30 +17,25 @@ contract EdenSingletonStorageTest is EdenLaunchFixture {
     }
 
     function test_SingletonProductStorage_BacksWalletAccounting() public {
-        assertEq(EdenViewFacet(diamond).basketCount(), 1);
-
-        uint256[] memory basketIds = EdenViewFacet(diamond).getBasketIds(0, 10);
-        assertEq(basketIds.length, 1);
-        assertEq(basketIds[0], steveBasketId);
-
-        EdenViewFacet.BasketSummary memory beforeMint = EdenViewFacet(diamond).getBasketSummary(steveBasketId);
+        EdenViewFacet.ProductConfigView memory beforeMint = EdenViewFacet(diamond).getProductConfig();
+        assertEq(beforeMint.productId, steveBasketId);
         assertEq(beforeMint.totalUnits, 0);
         assertEq(beforeMint.name, "stEVE");
-        assertTrue(beforeMint.isStEVE);
+        assertTrue(beforeMint.steveConfigured);
 
         _mintWalletBasket(alice, steveBasketId, eve, 10e18);
 
-        EdenViewFacet.BasketSummary memory afterMint = EdenViewFacet(diamond).getBasketSummary(steveBasketId);
+        EdenViewFacet.ProductConfigView memory afterMint = EdenViewFacet(diamond).getProductConfig();
         assertEq(afterMint.totalUnits, 10e18);
-        assertEq(EdenBasketDataFacet(diamond).getBasketVaultBalance(steveBasketId, address(eve)), 10e18);
-        assertEq(EdenBasketDataFacet(diamond).getBasketFeePot(steveBasketId, address(eve)), 0);
+        assertEq(EdenViewFacet(diamond).getProductVaultBalance(address(eve)), 10e18);
+        assertEq(EdenViewFacet(diamond).getProductFeePot(address(eve)), 0);
 
         vm.prank(alice);
         EdenStEVEWalletFacet(diamond).burnStEVE(10e18, alice);
 
-        EdenViewFacet.BasketSummary memory afterBurn = EdenViewFacet(diamond).getBasketSummary(steveBasketId);
+        EdenViewFacet.ProductConfigView memory afterBurn = EdenViewFacet(diamond).getProductConfig();
         assertEq(afterBurn.totalUnits, 0);
-        assertEq(EdenBasketDataFacet(diamond).getBasketVaultBalance(steveBasketId, address(eve)), 0);
+        assertEq(EdenViewFacet(diamond).getProductVaultBalance(address(eve)), 0);
     }
 
     function test_RevertWhen_ConfiguringSecondEdenProduct() public {

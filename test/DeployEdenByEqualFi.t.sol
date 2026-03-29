@@ -93,15 +93,14 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _assertEqAddress(positionNft.diamond(), diamond, "position nft diamond");
 
         address[] memory facetAddresses = IDiamondLoupe(diamond).facetAddresses();
-        _assertEq(facetAddresses.length, 24, "facet count");
+        _assertEq(facetAddresses.length, 23, "facet count");
 
         _assertTrue(
             IDiamondLoupe(diamond).facetAddress(PositionManagementFacet.mintPosition.selector) != address(0),
             "position facet cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(FlashLoanFacet.flashLoan.selector) != address(0),
-            "pool flash facet cut"
+            IDiamondLoupe(diamond).facetAddress(FlashLoanFacet.flashLoan.selector) != address(0), "pool flash facet cut"
         );
         _assertTrue(
             IDiamondLoupe(diamond).facetAddress(EqualIndexAdminFacetV3.createIndex.selector) != address(0),
@@ -227,8 +226,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             address(identityRegistry)
         );
         address launchedDiamond = deployment.diamond;
-        FixedDelayTimelockController controller =
-            FixedDelayTimelockController(payable(deployment.timelockController));
+        FixedDelayTimelockController controller = FixedDelayTimelockController(payable(deployment.timelockController));
 
         _assertEqAddress(OwnershipFacet(launchedDiamond).owner(), address(controller), "owner handed to controller");
         _assertEq(controller.getMinDelay(), 7 days, "controller delay");
@@ -261,8 +259,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             address(erc6551Registry),
             address(identityRegistry)
         );
-        FixedDelayTimelockController controller =
-            FixedDelayTimelockController(payable(deployment.timelockController));
+        FixedDelayTimelockController controller = FixedDelayTimelockController(payable(deployment.timelockController));
 
         bytes memory data = abi.encodeWithSelector(FixedDelayTimelockController.updateDelay.selector, 1 days);
         bytes32 salt = keccak256("invalid-delay");
@@ -369,12 +366,9 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         pools.initPoolWithActionFees(1, address(eve), cfg, actionFees);
         pools.initPoolWithActionFees(2, address(alt), cfg, actionFees);
 
-        (state.steveBasketId, state.steveToken) =
-            EdenStEVEActionFacet(diamond).createStEVE(_stEveParams(address(eve)));
-        (state.altBasketId, state.altBasketToken) =
-            ILegacyEdenWalletFacet(diamond).createBasket(
-                _singleAssetParams("ALT Basket", "ALTB", address(alt), "ipfs://alt")
-            );
+        (state.steveBasketId, state.steveToken) = EdenStEVEActionFacet(diamond).createStEVE(_stEveParams(address(eve)));
+        (state.altBasketId, state.altBasketToken) = ILegacyEdenWalletFacet(diamond)
+            .createBasket(_singleAssetParams("ALT Basket", "ALTB", address(alt), "ipfs://alt"));
 
         EdenRewardFacet(diamond).configureRewards(address(eve), 1e18, true);
         EdenLendingFacet(diamond).configureLending(state.altBasketId, 1 days, 14 days);
@@ -393,12 +387,11 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         controller.execute(target, 0, data, bytes32(0), salt);
     }
 
-    function _singleAssetParams(
-        string memory name_,
-        string memory symbol_,
-        address asset,
-        string memory uri_
-    ) internal pure returns (EdenBasketBase.CreateBasketParams memory p) {
+    function _singleAssetParams(string memory name_, string memory symbol_, address asset, string memory uri_)
+        internal
+        pure
+        returns (EdenBasketBase.CreateBasketParams memory p)
+    {
         p.name = name_;
         p.symbol = symbol_;
         p.uri = uri_;
@@ -511,8 +504,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
 
         Types.PoolConfig memory cfg = _poolConfig();
         Types.ActionFeeSet memory actionFees;
-        FixedDelayTimelockController controller =
-            FixedDelayTimelockController(payable(deployment.timelockController));
+        FixedDelayTimelockController controller = FixedDelayTimelockController(payable(deployment.timelockController));
         _timelockCall(
             controller,
             deployment.diamond,
@@ -521,7 +513,9 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _timelockCall(
             controller,
             deployment.diamond,
-            abi.encodeWithSelector(PoolManagementFacet.initPoolWithActionFees.selector, 1, address(eve), cfg, actionFees)
+            abi.encodeWithSelector(
+                PoolManagementFacet.initPoolWithActionFees.selector, 1, address(eve), cfg, actionFees
+            )
         );
 
         vm.prank(alice);
@@ -553,17 +547,14 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         );
 
         Types.PoolConfig memory cfg = _poolConfig();
-        FixedDelayTimelockController controller =
-            FixedDelayTimelockController(payable(deployment.timelockController));
+        FixedDelayTimelockController controller = FixedDelayTimelockController(payable(deployment.timelockController));
         _timelockCall(
             controller,
             deployment.diamond,
             abi.encodeWithSelector(PoolManagementFacet.setDefaultPoolConfig.selector, cfg)
         );
         _timelockCall(
-            controller,
-            deployment.diamond,
-            abi.encodeWithSelector(bytes4(keccak256("initPool(address)")), address(eve))
+            controller, deployment.diamond, abi.encodeWithSelector(bytes4(keccak256("initPool(address)")), address(eve))
         );
 
         vm.prank(alice);
@@ -584,9 +575,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _assertEq(PositionAgentViewFacet(deployment.diamond).getAgentId(tokenId), agentId, "agent id recorded");
         _assertTrue(PositionAgentViewFacet(deployment.diamond).isAgentRegistered(tokenId), "agent registered");
         _assertTrue(PositionAgentViewFacet(deployment.diamond).isCanonicalAgentLink(tokenId), "canonical link");
-        _assertTrue(
-            PositionAgentViewFacet(deployment.diamond).isRegistrationComplete(tokenId), "registration complete"
-        );
+        _assertTrue(PositionAgentViewFacet(deployment.diamond).isRegistrationComplete(tokenId), "registration complete");
 
         EdenViewFacet.PositionAgentWalletView memory agentView =
             EdenViewFacet(deployment.diamond).getPositionAgentView(tokenId);
@@ -601,7 +590,8 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _assertEqAddress(agentView.externalAuthorizer, address(0), "agent view authorizer");
         _assertTrue(agentView.registrationComplete, "agent view complete");
 
-        EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(deployment.diamond).getPositionPortfolio(tokenId);
+        EdenViewFacet.PositionPortfolio memory portfolio =
+            EdenViewFacet(deployment.diamond).getPositionPortfolio(tokenId);
         _assertEqAddress(portfolio.owner, alice, "portfolio owner");
         _assertEqAddress(portfolio.agent.tbaAddress, deployedTba, "portfolio tba");
         _assertEq(portfolio.agent.agentId, agentId, "portfolio agent id");
@@ -635,17 +625,14 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         );
 
         Types.PoolConfig memory cfg = _poolConfig();
-        FixedDelayTimelockController controller =
-            FixedDelayTimelockController(payable(deployment.timelockController));
+        FixedDelayTimelockController controller = FixedDelayTimelockController(payable(deployment.timelockController));
         _timelockCall(
             controller,
             deployment.diamond,
             abi.encodeWithSelector(PoolManagementFacet.setDefaultPoolConfig.selector, cfg)
         );
         _timelockCall(
-            controller,
-            deployment.diamond,
-            abi.encodeWithSelector(bytes4(keccak256("initPool(address)")), address(eve))
+            controller, deployment.diamond, abi.encodeWithSelector(bytes4(keccak256("initPool(address)")), address(eve))
         );
 
         vm.prank(alice);
@@ -666,21 +653,13 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         uint256 externalAgentId = 202;
         uint256 deadline = block.timestamp + 1 days;
         identityRegistry.setOwner(externalAgentId, externalOwner);
-        bytes32 digest = _externalLinkDigest(
-            deployment.diamond,
-            externalTokenId,
-            externalAgentId,
-            bob,
-            externalTba,
-            0,
-            deadline
-        );
+        bytes32 digest =
+            _externalLinkDigest(deployment.diamond, externalTokenId, externalAgentId, bob, externalTba, 0, deadline);
         bytes memory signature = _signDigest(externalOwnerPk, digest);
 
         vm.prank(bob);
-        PositionAgentRegistryFacet(deployment.diamond).linkExternalAgentRegistration(
-            externalTokenId, externalAgentId, deadline, signature
-        );
+        PositionAgentRegistryFacet(deployment.diamond)
+            .linkExternalAgentRegistration(externalTokenId, externalAgentId, deadline, signature);
 
         _assertTrue(
             PositionAgentViewFacet(deployment.diamond).isCanonicalAgentLink(canonicalTokenId), "canonical path intact"

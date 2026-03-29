@@ -37,32 +37,27 @@ contract EdenViewFacet is EdenLendingLogic {
     uint8 public constant ACTION_BELOW_MINIMUM_TIER = 11;
     uint8 public constant ACTION_REWARDS_DISABLED = 12;
 
-    struct BasketSummary {
-        uint256 basketId;
+    struct ProductConfigView {
+        uint256 productId;
+        address treasury;
+        address timelock;
+        uint256 timelockDelaySeconds;
+        uint16 poolFeeShareBps;
+        string protocolURI;
+        string contractVersion;
+        bool productInitialized;
         string name;
         string symbol;
         string uri;
         address token;
-        uint256 poolId;
-        uint256 totalUnits;
-        uint8 basketType;
+        address creator;
+        uint64 createdAt;
+        uint8 productType;
         bool paused;
-        bool isStEVE;
         address[] assets;
         uint256[] bundleAmounts;
-        uint16[] mintFeeBps;
-        uint16[] burnFeeBps;
-        uint16 flashFeeBps;
-    }
-
-    struct ProductConfigView {
-        address treasury;
-        address timelock;
-        uint256 timelockDelaySeconds;
-        uint256 basketCount;
-        uint16 poolFeeShareBps;
-        string protocolURI;
-        string contractVersion;
+        uint256 poolId;
+        uint256 totalUnits;
         bool steveConfigured;
         uint256 steveBasketId;
         address rewardToken;
@@ -71,21 +66,42 @@ contract EdenViewFacet is EdenLendingLogic {
         bool rewardsEnabled;
     }
 
-    struct PositionBasketView {
-        uint256 basketId;
+    struct ProductFeeConfigView {
+        uint16 poolFeeShareBps;
+        uint16[] mintFeeBps;
+        uint16[] burnFeeBps;
+        uint16 flashFeeBps;
+    }
+
+    struct ProductRewardStateView {
+        bool steveConfigured;
+        uint256 steveBasketId;
+        uint256 eligibleSupply;
+        address rewardToken;
+        uint256 rewardRatePerSecond;
+        uint256 rewardReserve;
+        uint256 globalRewardIndex;
+        bool rewardsEnabled;
+    }
+
+    struct PositionProductView {
+        bool active;
+        uint256 productId;
         uint256 poolId;
         address token;
-        uint8 basketType;
+        uint8 productType;
         uint256 units;
         uint256 encumberedUnits;
         uint256 availableUnits;
         bool paused;
+        bool rewardEligible;
     }
 
     struct PositionRewardView {
         uint256 eligiblePrincipal;
         uint256 accruedRewards;
         uint256 claimableRewards;
+        uint256 rewardCheckpoint;
     }
 
     struct PositionAgentWalletView {
@@ -108,7 +124,7 @@ contract EdenViewFacet is EdenLendingLogic {
         uint256 homePoolId;
         uint8 agentRegistrationMode;
         PositionAgentWalletView agent;
-        PositionBasketView[] baskets;
+        PositionProductView product;
         PositionRewardView rewards;
         LoanView[] loans;
     }
@@ -125,60 +141,34 @@ contract EdenViewFacet is EdenLendingLogic {
         string reason;
     }
 
-    function basketCount() external view returns (uint256) {
-        return LibEdenBasketStorage.s().productInitialized ? 1 : 0;
-    }
-
-    function getBasketIds(uint256 start, uint256 limit) external view returns (uint256[] memory basketIds) {
-        uint256 count = LibEdenBasketStorage.s().productInitialized ? 1 : 0;
-        if (start >= count || limit == 0) return new uint256[](0);
-
-        basketIds = new uint256[](1);
-        basketIds[0] = LibEdenBasketStorage.PRODUCT_ID;
-    }
-
-    function getBasketSummary(uint256 basketId) public view basketExists(basketId) returns (BasketSummary memory summary) {
-        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
-        LibEdenBasketStorage.ProductConfig storage basket = store.product;
-        LibEdenBasketStorage.ProductMetadata storage metadata = store.productMetadata;
-
-        summary.basketId = basketId;
-        summary.name = metadata.name;
-        summary.symbol = metadata.symbol;
-        summary.uri = metadata.uri;
-        summary.token = basket.token;
-        summary.poolId = basket.poolId;
-        summary.totalUnits = basket.totalUnits;
-        summary.basketType = metadata.productType;
-        summary.paused = basket.paused;
-        summary.isStEVE = LibEdenStEVEStorage.s().configured && basketId == LibEdenStEVEStorage.s().basketId;
-        summary.assets = basket.assets;
-        summary.bundleAmounts = basket.bundleAmounts;
-        summary.mintFeeBps = basket.mintFeeBps;
-        summary.burnFeeBps = basket.burnFeeBps;
-        summary.flashFeeBps = basket.flashFeeBps;
-    }
-
-    function getBasketSummaries(uint256 start, uint256 limit) external view returns (BasketSummary[] memory summaries) {
-        uint256 count = LibEdenBasketStorage.s().productInitialized ? 1 : 0;
-        if (start >= count || limit == 0) return new BasketSummary[](0);
-
-        summaries = new BasketSummary[](1);
-        summaries[0] = getBasketSummary(LibEdenBasketStorage.PRODUCT_ID);
-    }
-
     function getProductConfig() external view returns (ProductConfigView memory view_) {
         LibAppStorage.AppStorage storage app = LibAppStorage.s();
+        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
+        LibEdenBasketStorage.ProductConfig storage product = store.product;
+        LibEdenBasketStorage.ProductMetadata storage metadata = store.productMetadata;
         LibEdenRewardStorage.RewardStorage storage rewards = LibEdenRewardStorage.s();
         LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
 
+        view_.productId = LibEdenBasketStorage.PRODUCT_ID;
         view_.treasury = LibAppStorage.treasuryAddress(app);
         view_.timelock = LibAppStorage.timelockAddress(app);
         view_.timelockDelaySeconds = LibEdenAdminStorage.TIMELOCK_DELAY_SECONDS;
-        view_.basketCount = LibEdenBasketStorage.s().productInitialized ? 1 : 0;
+        view_.productInitialized = store.productInitialized;
         view_.poolFeeShareBps = _basketPoolFeeShareBps();
         view_.protocolURI = LibEdenAdminStorage.s().protocolURI;
         view_.contractVersion = LibEdenAdminStorage.s().contractVersion;
+        view_.name = metadata.name;
+        view_.symbol = metadata.symbol;
+        view_.uri = metadata.uri;
+        view_.token = product.token;
+        view_.creator = metadata.creator;
+        view_.createdAt = metadata.createdAt;
+        view_.productType = metadata.productType;
+        view_.paused = product.paused;
+        view_.assets = product.assets;
+        view_.bundleAmounts = product.bundleAmounts;
+        view_.poolId = product.poolId;
+        view_.totalUnits = product.totalUnits;
         view_.steveConfigured = steve.configured;
         view_.steveBasketId = steve.configured ? steve.basketId : 0;
         view_.rewardToken = rewards.config.rewardToken;
@@ -187,10 +177,46 @@ contract EdenViewFacet is EdenLendingLogic {
         view_.rewardsEnabled = rewards.config.enabled;
     }
 
+    function getProductPoolId() external view returns (uint256) {
+        return LibEdenBasketStorage.s().product.poolId;
+    }
+
+    function getProductFeeConfig() external view returns (ProductFeeConfigView memory view_) {
+        LibEdenBasketStorage.ProductConfig storage product = LibEdenBasketStorage.s().product;
+        view_.poolFeeShareBps = _basketPoolFeeShareBps();
+        view_.mintFeeBps = product.mintFeeBps;
+        view_.burnFeeBps = product.burnFeeBps;
+        view_.flashFeeBps = product.flashFeeBps;
+    }
+
+    function getProductRewardState() external view returns (ProductRewardStateView memory view_) {
+        LibEdenRewardStorage.RewardStorage storage rewards = LibEdenRewardStorage.s();
+        LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
+
+        view_.steveConfigured = steve.configured;
+        view_.steveBasketId = steve.configured ? steve.basketId : 0;
+        view_.eligibleSupply = steve.eligibleSupply;
+        view_.rewardToken = rewards.config.rewardToken;
+        view_.rewardRatePerSecond = rewards.config.rewardRatePerSecond;
+        view_.rewardReserve = LibEdenRewards.previewRewardReserve();
+        view_.globalRewardIndex = LibEdenRewards.previewGlobalRewardIndex();
+        view_.rewardsEnabled = rewards.config.enabled;
+    }
+
+    function getProductVaultBalance(address asset) external view returns (uint256) {
+        return LibEdenBasketStorage.s().accounting.vaultBalances[asset];
+    }
+
+    function getProductFeePot(address asset) external view returns (uint256) {
+        return LibEdenBasketStorage.s().accounting.feePots[asset];
+    }
+
     function getPositionTokenURI(uint256 positionId) external view returns (string memory) {
         PositionNFT nft = PositionNFT(LibPositionNFT.s().positionNFTContract);
         PositionAgentWalletView memory agent = _positionAgentWallet(positionId);
-        return string.concat("equalfi://positions/", Strings.toString(positionId), _positionQueryString(nft, positionId, agent));
+        return string.concat(
+            "equalfi://positions/", Strings.toString(positionId), _positionQueryString(nft, positionId, agent)
+        );
     }
 
     function hasOpenOffers(bytes32) external pure returns (bool) {
@@ -229,6 +255,20 @@ contract EdenViewFacet is EdenLendingLogic {
         return _positionAgentWallet(positionId);
     }
 
+    function getPositionProductView(uint256 positionId) public view returns (PositionProductView memory product) {
+        return _positionProduct(LibPositionHelpers.positionKey(positionId));
+    }
+
+    function getPositionRewardView(uint256 positionId) public view returns (PositionRewardView memory rewards_) {
+        bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
+        rewards_ = PositionRewardView({
+            eligiblePrincipal: LibEdenStEVEStorage.s().eligiblePrincipal[positionKey],
+            accruedRewards: LibEdenRewardStorage.s().accruedRewards[positionKey],
+            claimableRewards: LibEdenRewards.previewPositionRewards(positionKey),
+            rewardCheckpoint: LibEdenRewardStorage.s().positionRewardIndex[positionKey]
+        });
+    }
+
     function getPositionPortfolio(uint256 positionId) public view returns (PositionPortfolio memory portfolio) {
         PositionNFT nft = PositionNFT(LibPositionNFT.s().positionNFTContract);
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
@@ -240,12 +280,8 @@ contract EdenViewFacet is EdenLendingLogic {
         portfolio.homePoolId = nft.getPoolId(positionId);
         portfolio.agent = _positionAgentWallet(positionId);
         portfolio.agentRegistrationMode = portfolio.agent.registrationMode;
-        portfolio.baskets = _positionBaskets(positionKey);
-        portfolio.rewards = PositionRewardView({
-            eligiblePrincipal: LibEdenStEVEStorage.s().eligiblePrincipal[positionKey],
-            accruedRewards: LibEdenRewardStorage.s().accruedRewards[positionKey],
-            claimableRewards: LibEdenRewards.previewPositionRewards(positionKey)
-        });
+        portfolio.product = _positionProduct(positionKey);
+        portfolio.rewards = getPositionRewardView(positionId);
         portfolio.loans = new LoanView[](loanIds.length);
         for (uint256 i = 0; i < loanIds.length; i++) {
             portfolio.loans[i] = _getLoanView(loanIds[i]);
@@ -257,10 +293,10 @@ contract EdenViewFacet is EdenLendingLogic {
         agent.agentId = wallet.positionToAgentId[positionId];
         agent.agentRegistered = agent.agentId != 0;
         agent.registrationMode = uint8(wallet.positionRegistrationMode[positionId]);
-        agent.canonicalLink = wallet.positionRegistrationMode[positionId]
-            == LibPositionAgentStorage.AgentRegistrationMode.CanonicalOwned;
-        agent.externalLink = wallet.positionRegistrationMode[positionId]
-            == LibPositionAgentStorage.AgentRegistrationMode.ExternalLinked;
+        agent.canonicalLink =
+            wallet.positionRegistrationMode[positionId] == LibPositionAgentStorage.AgentRegistrationMode.CanonicalOwned;
+        agent.externalLink =
+            wallet.positionRegistrationMode[positionId] == LibPositionAgentStorage.AgentRegistrationMode.ExternalLinked;
         agent.externalAuthorizer = wallet.externalAgentAuthorizer[positionId];
 
         if (
@@ -270,22 +306,23 @@ contract EdenViewFacet is EdenLendingLogic {
             return agent;
         }
 
-        agent.tbaAddress = IERC6551Registry(wallet.erc6551Registry).account(
-            wallet.erc6551Implementation,
-            wallet.tbaSalt,
-            block.chainid,
-            LibPositionNFT.s().positionNFTContract,
-            positionId
-        );
+        agent.tbaAddress = IERC6551Registry(wallet.erc6551Registry)
+            .account(
+                wallet.erc6551Implementation,
+                wallet.tbaSalt,
+                block.chainid,
+                LibPositionNFT.s().positionNFTContract,
+                positionId
+            );
         agent.tbaDeployed = agent.tbaAddress.code.length > 0;
 
-        if (!agent.agentRegistered || wallet.identityRegistry == address(0) || wallet.identityRegistry.code.length == 0) {
+        if (!agent.agentRegistered || wallet.identityRegistry == address(0) || wallet.identityRegistry.code.length == 0)
+        {
             return agent;
         }
 
-        (bool ok, bytes memory data) = wallet.identityRegistry.staticcall(
-            abi.encodeWithSelector(IERC8004IdentityRegistry.ownerOf.selector, agent.agentId)
-        );
+        (bool ok, bytes memory data) = wallet.identityRegistry
+            .staticcall(abi.encodeWithSelector(IERC8004IdentityRegistry.ownerOf.selector, agent.agentId));
         if (!ok || data.length < 32) {
             return agent;
         }
@@ -342,32 +379,32 @@ contract EdenViewFacet is EdenLendingLogic {
         }
     }
 
-    function canMint(uint256 basketId, uint256 units) external view returns (ActionCheck memory) {
-        if (!_isKnownBasketId(basketId)) {
-            return _fail(ACTION_UNKNOWN_BASKET, "unknown basket");
+    function canMintStEVE(uint256 units) external view returns (ActionCheck memory) {
+        if (!LibEdenBasketStorage.s().productInitialized) {
+            return _fail(ACTION_UNKNOWN_BASKET, "product not configured");
         }
         if (units == 0 || units % UNIT_SCALE != 0) {
             return _fail(ACTION_INVALID_UNITS, "invalid units");
         }
         if (LibEdenBasketStorage.s().product.paused) {
-            return _fail(ACTION_BASKET_PAUSED, "basket paused");
+            return _fail(ACTION_BASKET_PAUSED, "product paused");
         }
         return _ok();
     }
 
-    function canBurn(address owner, uint256 basketId, uint256 units) external view returns (ActionCheck memory) {
-        if (!_isKnownBasketId(basketId)) {
-            return _fail(ACTION_UNKNOWN_BASKET, "unknown basket");
+    function canBurnStEVE(address owner, uint256 units) external view returns (ActionCheck memory) {
+        if (!LibEdenBasketStorage.s().productInitialized) {
+            return _fail(ACTION_UNKNOWN_BASKET, "product not configured");
         }
         if (units == 0 || units % UNIT_SCALE != 0) {
             return _fail(ACTION_INVALID_UNITS, "invalid units");
         }
         LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         if (basket.paused) {
-            return _fail(ACTION_BASKET_PAUSED, "basket paused");
+            return _fail(ACTION_BASKET_PAUSED, "product paused");
         }
         if (BasketToken(basket.token).balanceOf(owner) < units) {
-            return _fail(ACTION_INSUFFICIENT_BALANCE, "insufficient basket balance");
+            return _fail(ACTION_INSUFFICIENT_BALANCE, "insufficient stEVE balance");
         }
         return _ok();
     }
@@ -391,9 +428,8 @@ contract EdenViewFacet is EdenLendingLogic {
 
         LibEdenLendingStorage.LendingStorage storage lending = LibEdenLendingStorage.s();
         LibEdenLendingStorage.LendingConfig memory config = lending.lendingConfigs[basketId];
-        if (
-            duration == 0 || config.minDuration == 0 || duration < config.minDuration || duration > config.maxDuration
-        ) {
+        if (duration == 0 || config.minDuration == 0 || duration < config.minDuration || duration > config.maxDuration)
+        {
             return _fail(ACTION_INVALID_DURATION, "invalid duration");
         }
 
@@ -410,11 +446,9 @@ contract EdenViewFacet is EdenLendingLogic {
         (address[] memory assets, uint256[] memory principals) =
             _deriveLoanPrincipals(basket, collateralUnits, LibEdenLendingStorage.DEFAULT_LTV_BPS);
         uint256 newLockedCollateral = lending.lockedCollateralUnits[basketId] + collateralUnits;
-        if (
-            !_redeemabilityInvariantSatisfied(
+        if (!_redeemabilityInvariantSatisfied(
                 basketId, basket, assets, principals, newLockedCollateral, basket.totalUnits
-            )
-        ) {
+            )) {
             return _fail(ACTION_INSUFFICIENT_BALANCE, "basket vault invariant would fail");
         }
 
@@ -474,29 +508,30 @@ contract EdenViewFacet is EdenLendingLogic {
         return _ok();
     }
 
-    function _positionBaskets(bytes32 positionKey) internal view returns (PositionBasketView[] memory baskets) {
+    function _positionProduct(bytes32 positionKey) internal view returns (PositionProductView memory product) {
         LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
         if (!store.productInitialized) {
-            return new PositionBasketView[](0);
+            return product;
         }
 
         LibEdenBasketStorage.ProductConfig storage basket = store.product;
         uint256 principal = LibAppStorage.s().pools[basket.poolId].userPrincipal[positionKey];
         uint256 encumbered = LibEncumbrance.total(positionKey, basket.poolId);
         if (principal == 0 && encumbered == 0) {
-            return new PositionBasketView[](0);
+            return product;
         }
 
-        baskets = new PositionBasketView[](1);
-        baskets[0] = PositionBasketView({
-            basketId: LibEdenBasketStorage.PRODUCT_ID,
+        product = PositionProductView({
+            active: true,
+            productId: LibEdenBasketStorage.PRODUCT_ID,
             poolId: basket.poolId,
             token: basket.token,
-            basketType: store.productMetadata.productType,
+            productType: store.productMetadata.productType,
             units: principal,
             encumberedUnits: encumbered,
             availableUnits: principal > encumbered ? principal - encumbered : 0,
-            paused: basket.paused
+            paused: basket.paused,
+            rewardEligible: LibEdenStEVEStorage.s().eligiblePrincipal[positionKey] != 0
         });
     }
 

@@ -40,6 +40,7 @@ contract EdenStEVEFuzzTest is EdenLaunchFixture {
         assertEq(EdenStEVEActionFacet(diamond).eligibleSupply(), expectedEligible);
         assertEq(EdenStEVEActionFacet(diamond).eligiblePrincipalOfPosition(positionId), expectedEligible);
         assertEq(portfolio.rewards.eligiblePrincipal, expectedEligible);
+        assertEq(portfolio.product.units, expectedEligible);
         assertEq(ERC20(steveToken).balanceOf(bob), walletUnits - depositUnits + withdrawUnits);
     }
 }

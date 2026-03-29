@@ -4,9 +4,9 @@ pragma solidity ^0.8.20;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {IDiamondLoupe} from "src/interfaces/IDiamondLoupe.sol";
-import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
 import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
 import {EdenStEVEWalletFacet} from "src/eden/EdenStEVEWalletFacet.sol";
+import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {InvalidParameterRange} from "src/libraries/Errors.sol";
 
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
@@ -45,7 +45,7 @@ contract EdenStEVEWalletFacetTest is EdenLaunchFixture {
         EdenStEVEWalletFacet(diamond).mintStEVE(10e18, bob, maxInputs);
 
         assertEq(ERC20(steveToken).balanceOf(bob), 10e18);
-        assertEq(EdenBasketDataFacet(diamond).getBasketVaultBalance(steveBasketId, address(eve)), 10e18);
+        assertEq(EdenViewFacet(diamond).getProductVaultBalance(address(eve)), 10e18);
 
         uint256[] memory assetsOut = EdenStEVEWalletFacet(diamond).burnStEVE(10e18, bob);
         vm.stopPrank();
@@ -54,7 +54,7 @@ contract EdenStEVEWalletFacetTest is EdenLaunchFixture {
         assertEq(assetsOut[0], 10e18);
         assertEq(ERC20(steveToken).balanceOf(bob), 0);
         assertEq(eve.balanceOf(bob), 20e18);
-        assertEq(EdenBasketDataFacet(diamond).getBasketVaultBalance(steveBasketId, address(eve)), 0);
+        assertEq(EdenViewFacet(diamond).getProductVaultBalance(address(eve)), 0);
     }
 
     function test_RevertWhen_MintingStEVEBeforeProductConfigured() public {

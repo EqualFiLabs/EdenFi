@@ -42,8 +42,8 @@ contract EdenStEVEActionFacetTest is EdenLaunchFixture {
         assertEq(EdenStEVEActionFacet(diamond).eligibleSupply(), 10e18);
         assertEq(EdenStEVEActionFacet(diamond).eligiblePrincipalOfPosition(positionId), 10e18);
         assertEq(portfolio.rewards.eligiblePrincipal, 10e18);
-        assertEq(portfolio.baskets.length, 1);
-        assertEq(portfolio.baskets[0].units, 10e18);
+        assertTrue(portfolio.product.active);
+        assertEq(portfolio.product.units, 10e18);
         assertEq(ERC20(steveToken).balanceOf(bob), 0);
 
         vm.prank(bob);
@@ -68,9 +68,9 @@ contract EdenStEVEActionFacetTest is EdenLaunchFixture {
         EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
         assertEq(EdenStEVEActionFacet(diamond).eligibleSupply(), 50e18);
         assertEq(EdenStEVEActionFacet(diamond).eligiblePrincipalOfPosition(positionId), 50e18);
-        assertEq(portfolio.baskets.length, 1);
-        assertEq(portfolio.baskets[0].basketId, steveBasketId);
-        assertEq(portfolio.baskets[0].units, 50e18);
+        assertTrue(portfolio.product.active);
+        assertEq(portfolio.product.productId, steveBasketId);
+        assertEq(portfolio.product.units, 50e18);
 
         vm.prank(alice);
         EdenBasketPositionFacet(diamond).burnStEVEFromPosition(positionId, 20e18);
@@ -78,8 +78,8 @@ contract EdenStEVEActionFacetTest is EdenLaunchFixture {
         portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
         assertEq(EdenStEVEActionFacet(diamond).eligibleSupply(), 30e18);
         assertEq(EdenStEVEActionFacet(diamond).eligiblePrincipalOfPosition(positionId), 30e18);
-        assertEq(portfolio.baskets.length, 1);
-        assertEq(portfolio.baskets[0].units, 30e18);
+        assertTrue(portfolio.product.active);
+        assertEq(portfolio.product.units, 30e18);
     }
 
     function test_GenericPositionBasketEntrypoints_AreUnavailable() public {

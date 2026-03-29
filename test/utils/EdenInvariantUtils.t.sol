@@ -17,7 +17,6 @@ import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.
 import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
-import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
@@ -206,9 +205,9 @@ contract EdenInvariantHandler {
         feeIndexId = cfg.feeIndexId;
         feeIndexToken = cfg.feeIndexToken;
 
-        stevePoolId = EdenBasketDataFacet(cfg.diamond).getBasketPoolId(cfg.steveBasketId);
-        altBasketPoolId = EdenBasketDataFacet(cfg.diamond).getBasketPoolId(cfg.altBasketId);
-        feeBasketPoolId = EdenBasketDataFacet(cfg.diamond).getBasketPoolId(cfg.feeBasketId);
+        stevePoolId = EdenViewFacet(cfg.diamond).getProductPoolId();
+        altBasketPoolId = EdenViewFacet(cfg.diamond).getProductPoolId();
+        feeBasketPoolId = EdenViewFacet(cfg.diamond).getProductPoolId();
         feeIndexPoolId = EqualIndexAdminFacetV3(cfg.diamond).getIndexPoolId(cfg.feeIndexId);
 
         for (uint256 i = 0; i < actors_.length; i++) {
@@ -581,22 +580,22 @@ contract EdenInvariantHandler {
             (ok,) = diamond.call(abi.encodeWithSelector(IDiamondCut.diamondCut.selector, cuts, address(0), ""));
         } else if (actionSeed % 6 == 4) {
             vm.prank(actor);
-            (ok,) = address(timelockController).call(
-                abi.encodeWithSelector(FixedDelayTimelockController.updateDelay.selector, 1 days)
-            );
+            (ok,) = address(timelockController)
+                .call(abi.encodeWithSelector(FixedDelayTimelockController.updateDelay.selector, 1 days));
         } else {
             vm.prank(actor);
-            (ok,) = address(timelockController).call(
-                abi.encodeWithSelector(
-                    TimelockController.schedule.selector,
-                    diamond,
-                    uint256(0),
-                    abi.encodeWithSelector(EdenAdminFacet.setContractVersion.selector, "bad"),
-                    bytes32(0),
-                    keccak256("bad-salt"),
-                    7 days
-                )
-            );
+            (ok,) = address(timelockController)
+                .call(
+                    abi.encodeWithSelector(
+                        TimelockController.schedule.selector,
+                        diamond,
+                        uint256(0),
+                        abi.encodeWithSelector(EdenAdminFacet.setContractVersion.selector, "bad"),
+                        bytes32(0),
+                        keccak256("bad-salt"),
+                        7 days
+                    )
+                );
         }
 
         if (ok) {
@@ -757,10 +756,12 @@ contract EdenInvariantHandler {
     }
 
     function _quoteSingleAssetBasketMint(uint256 basketId, uint256 units) internal view returns (uint256 required) {
-        EdenBasketDataFacet.BasketView memory basket = EdenBasketDataFacet(diamond).getBasket(basketId);
+        basketId;
+        EdenViewFacet.ProductConfigView memory basket = EdenViewFacet(diamond).getProductConfig();
+        EdenViewFacet.ProductFeeConfigView memory fees = EdenViewFacet(diamond).getProductFeeConfig();
         uint256 totalSupply = basket.totalUnits;
-        uint256 vaultBalance = EdenBasketDataFacet(diamond).getBasketVaultBalance(basketId, basket.assets[0]);
-        uint256 feePot = EdenBasketDataFacet(diamond).getBasketFeePot(basketId, basket.assets[0]);
+        uint256 vaultBalance = EdenViewFacet(diamond).getProductVaultBalance(basket.assets[0]);
+        uint256 feePot = EdenViewFacet(diamond).getProductFeePot(basket.assets[0]);
 
         uint256 baseDeposit;
         uint256 potBuyIn;
@@ -771,7 +772,7 @@ contract EdenInvariantHandler {
             potBuyIn = Math.mulDiv(feePot, units, totalSupply, Math.Rounding.Ceil);
         }
         uint256 gross = baseDeposit + potBuyIn;
-        uint256 fee = Math.mulDiv(gross, basket.mintFeeBps[0], 10_000, Math.Rounding.Ceil);
+        uint256 fee = Math.mulDiv(gross, fees.mintFeeBps[0], 10_000, Math.Rounding.Ceil);
         return gross + fee;
     }
 

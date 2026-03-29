@@ -14,7 +14,6 @@ import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
 import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
-import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
 import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
 import {EdenStEVEWalletFacet} from "src/eden/EdenStEVEWalletFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
@@ -146,7 +145,9 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
     ) internal {
         _timelockCall(
             diamond,
-            abi.encodeWithSelector(PoolManagementFacet.initPoolWithActionFees.selector, pid, underlying, config, actionFees)
+            abi.encodeWithSelector(
+                PoolManagementFacet.initPoolWithActionFees.selector, pid, underlying, config, actionFees
+            )
         );
     }
 
@@ -167,7 +168,7 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
     {
         _timelockCall(diamond, abi.encodeWithSelector(EdenStEVEActionFacet.createStEVE.selector, params));
         basketId = EdenStEVEActionFacet(diamond).steveBasketId();
-        basketToken = EdenBasketDataFacet(diamond).getBasket(basketId).token;
+        basketToken = EdenViewFacet(diamond).getProductConfig().token;
     }
 
     function _createIndex(EqualIndexBaseV3.CreateIndexParams memory params)
@@ -215,8 +216,7 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
 
     function _setBasketMetadata(uint256 basketId, string memory uri, uint8 basketType) internal {
         _timelockCall(
-            diamond,
-            abi.encodeWithSelector(EdenAdminFacet.setBasketMetadata.selector, basketId, uri, basketType)
+            diamond, abi.encodeWithSelector(EdenAdminFacet.setBasketMetadata.selector, basketId, uri, basketType)
         );
     }
 
@@ -279,9 +279,7 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({
-            facetAddress: address(facet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: selectors
+            facetAddress: address(facet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: selectors
         });
         _timelockCall(diamond, abi.encodeWithSelector(IDiamondCut.diamondCut.selector, cuts, address(0), bytes("")));
 
@@ -289,13 +287,9 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
         routeSelectors[0] = ProtocolTestSupportFacet.routeManagedShareExternal.selector;
         IDiamondCut.FacetCut[] memory routeCut = new IDiamondCut.FacetCut[](1);
         routeCut[0] = IDiamondCut.FacetCut({
-            facetAddress: address(facet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: routeSelectors
+            facetAddress: address(facet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: routeSelectors
         });
-        _timelockCall(
-            diamond, abi.encodeWithSelector(IDiamondCut.diamondCut.selector, routeCut, address(0), bytes(""))
-        );
+        _timelockCall(diamond, abi.encodeWithSelector(IDiamondCut.diamondCut.selector, routeCut, address(0), bytes("")));
 
         testSupport = ProtocolTestSupportFacet(diamond);
     }

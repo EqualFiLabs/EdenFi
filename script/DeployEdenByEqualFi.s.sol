@@ -27,7 +27,6 @@ import {PositionMSCAImpl} from "src/agent-wallet/erc6900/PositionMSCAImpl.sol";
 import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
 import {EqualScaleAlphaAdminFacet} from "src/equalscale/EqualScaleAlphaAdminFacet.sol";
 import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.sol";
-import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
 import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
 import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
 import {EdenStEVEWalletFacet} from "src/eden/EdenStEVEWalletFacet.sol";
@@ -46,7 +45,7 @@ interface IPoolManagementFacetInitConfig {
 }
 
 contract DeployEdenByEqualFi is Script {
-    uint256 internal constant LAUNCH_FACET_COUNT = 21;
+    uint256 internal constant LAUNCH_FACET_COUNT = 20;
     uint256 internal constant CUT_BATCH_SIZE = 3;
 
     struct BaseDeployment {
@@ -93,8 +92,7 @@ contract DeployEdenByEqualFi is Script {
         require(deployer == owner_, "DeployEdenByEqualFi: PRIVATE_KEY must be OWNER");
 
         vm.startBroadcast(deployerPrivateKey);
-        deployment =
-            deployLaunch(owner_, governor_, treasury_, entryPoint_, erc6551Registry_, identityRegistry_);
+        deployment = deployLaunch(owner_, governor_, treasury_, entryPoint_, erc6551Registry_, identityRegistry_);
         vm.stopBroadcast();
 
         console2.log("diamond", deployment.diamond);
@@ -108,10 +106,7 @@ contract DeployEdenByEqualFi is Script {
         console2.log("positionMSCAImplementation", deployment.positionMSCAImplementation);
     }
 
-    function deployBase(address owner_, address treasury_)
-        public
-        returns (BaseDeployment memory deployment)
-    {
+    function deployBase(address owner_, address treasury_) public returns (BaseDeployment memory deployment) {
         DiamondCutFacet cut = new DiamondCutFacet();
         DiamondLoupeFacet loupe = new DiamondLoupeFacet();
         OwnershipFacet own = new OwnershipFacet();
@@ -125,11 +120,12 @@ contract DeployEdenByEqualFi is Script {
         PositionNFT nftContract = new PositionNFT();
         DiamondInit initializer = new DiamondInit();
 
-        IDiamondCut(address(diamond)).diamondCut(
-            new IDiamondCut.FacetCut[](0),
-            address(initializer),
-            abi.encodeWithSelector(DiamondInit.init.selector, address(0), treasury_, address(nftContract))
-        );
+        IDiamondCut(address(diamond))
+            .diamondCut(
+                new IDiamondCut.FacetCut[](0),
+                address(initializer),
+                abi.encodeWithSelector(DiamondInit.init.selector, address(0), treasury_, address(nftContract))
+            );
 
         deployment = BaseDeployment({diamond: address(diamond), positionNFT: address(nftContract)});
     }
@@ -141,10 +137,7 @@ contract DeployEdenByEqualFi is Script {
         address entryPoint_,
         address erc6551Registry_,
         address identityRegistry_
-    )
-        public
-        returns (LaunchDeployment memory deployment)
-    {
+    ) public returns (LaunchDeployment memory deployment) {
         BaseDeployment memory base = deployBase(owner_, treasury_);
         _installLaunchFacets(base.diamond);
 
@@ -253,10 +246,6 @@ contract DeployEdenByEqualFi is Script {
             cuts[i++] = _cut(address(facet), _selectorsEdenStEVE());
         }
         {
-            EdenBasketDataFacet facet = new EdenBasketDataFacet();
-            cuts[i++] = _cut(address(facet), _selectorsEdenBasketData());
-        }
-        {
             EdenBasketPositionFacet facet = new EdenBasketPositionFacet();
             cuts[i++] = _cut(address(facet), _selectorsEdenStEVEPosition());
         }
@@ -291,9 +280,7 @@ contract DeployEdenByEqualFi is Script {
 
     function _cut(address facet, bytes4[] memory selectors) internal pure returns (IDiamondCut.FacetCut memory) {
         return IDiamondCut.FacetCut({
-            facetAddress: facet,
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: selectors
+            facetAddress: facet, action: IDiamondCut.FacetCutAction.Add, functionSelectors: selectors
         });
     }
 
@@ -482,15 +469,6 @@ contract DeployEdenByEqualFi is Script {
         s[1] = EdenBasketPositionFacet.burnStEVEFromPosition.selector;
     }
 
-    function _selectorsEdenBasketData() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
-        s[0] = EdenBasketDataFacet.getBasket.selector;
-        s[1] = EdenBasketDataFacet.getBasketMetadata.selector;
-        s[2] = EdenBasketDataFacet.getBasketPoolId.selector;
-        s[3] = EdenBasketDataFacet.getBasketVaultBalance.selector;
-        s[4] = EdenBasketDataFacet.getBasketFeePot.selector;
-    }
-
     function _selectorsEdenStEVE() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](6);
         s[0] = EdenStEVEActionFacet.createStEVE.selector;
@@ -538,26 +516,29 @@ contract DeployEdenByEqualFi is Script {
     }
 
     function _selectorsEdenView() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](19);
-        s[0] = EdenViewFacet.basketCount.selector;
-        s[1] = EdenViewFacet.getBasketIds.selector;
-        s[2] = EdenViewFacet.getBasketSummary.selector;
-        s[3] = EdenViewFacet.getBasketSummaries.selector;
-        s[4] = EdenViewFacet.getProductConfig.selector;
-        s[5] = EdenViewFacet.getPositionTokenURI.selector;
-        s[6] = EdenViewFacet.hasOpenOffers.selector;
-        s[7] = EdenViewFacet.cancelOffersForPosition.selector;
-        s[8] = EdenViewFacet.getUserPositionIds.selector;
-        s[9] = EdenViewFacet.getUserPositionIdsPaginated.selector;
-        s[10] = EdenViewFacet.getPositionPortfolio.selector;
-        s[11] = EdenViewFacet.getPositionAgentView.selector;
-        s[12] = EdenViewFacet.getUserPortfolio.selector;
-        s[13] = EdenViewFacet.canMint.selector;
-        s[14] = EdenViewFacet.canBurn.selector;
-        s[15] = EdenViewFacet.canBorrow.selector;
-        s[16] = EdenViewFacet.canRepay.selector;
-        s[17] = EdenViewFacet.canExtend.selector;
-        s[18] = EdenViewFacet.canClaimRewards.selector;
+        s = new bytes4[](22);
+        s[0] = EdenViewFacet.getProductConfig.selector;
+        s[1] = EdenViewFacet.getProductPoolId.selector;
+        s[2] = EdenViewFacet.getProductFeeConfig.selector;
+        s[3] = EdenViewFacet.getProductRewardState.selector;
+        s[4] = EdenViewFacet.getProductVaultBalance.selector;
+        s[5] = EdenViewFacet.getProductFeePot.selector;
+        s[6] = EdenViewFacet.getPositionTokenURI.selector;
+        s[7] = EdenViewFacet.hasOpenOffers.selector;
+        s[8] = EdenViewFacet.cancelOffersForPosition.selector;
+        s[9] = EdenViewFacet.getUserPositionIds.selector;
+        s[10] = EdenViewFacet.getUserPositionIdsPaginated.selector;
+        s[11] = EdenViewFacet.getPositionPortfolio.selector;
+        s[12] = EdenViewFacet.getPositionProductView.selector;
+        s[13] = EdenViewFacet.getPositionRewardView.selector;
+        s[14] = EdenViewFacet.getPositionAgentView.selector;
+        s[15] = EdenViewFacet.getUserPortfolio.selector;
+        s[16] = EdenViewFacet.canMintStEVE.selector;
+        s[17] = EdenViewFacet.canBurnStEVE.selector;
+        s[18] = EdenViewFacet.canBorrow.selector;
+        s[19] = EdenViewFacet.canRepay.selector;
+        s[20] = EdenViewFacet.canExtend.selector;
+        s[21] = EdenViewFacet.canClaimRewards.selector;
     }
 
     function _selectorsEdenAdmin() internal pure returns (bytes4[] memory s) {

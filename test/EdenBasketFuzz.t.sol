@@ -3,7 +3,6 @@ pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
@@ -32,8 +31,8 @@ contract EdenBasketFuzzTest is EdenLaunchFixture {
         vm.stopPrank();
 
         assertEq(ERC20(basketToken).balanceOf(bob), 0);
-        assertEq(EdenViewFacet(diamond).getBasketSummary(basketId).totalUnits, 0);
-        assertGt(EdenBasketDataFacet(diamond).getBasketFeePot(basketId, address(eve)), 0);
+        assertEq(EdenViewFacet(diamond).getProductConfig().totalUnits, 0);
+        assertGt(EdenViewFacet(diamond).getProductFeePot(address(eve)), 0);
     }
 
     function testFuzz_EdenBasketPositionMintBurnRoundTrip(uint96 depositSeed, uint96 mintSeed) public {
@@ -61,15 +60,15 @@ contract EdenBasketFuzzTest is EdenLaunchFixture {
         ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(positionId, basketId, mintUnits);
 
         EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
-        assertEq(portfolio.baskets.length, 1);
-        assertEq(portfolio.baskets[0].units, mintUnits);
+        assertTrue(portfolio.product.active);
+        assertEq(portfolio.product.units, mintUnits);
 
         vm.prank(alice);
         ILegacyEdenPositionFacet(diamond).burnBasketFromPosition(positionId, basketId, mintUnits);
 
         portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
-        if (portfolio.baskets.length > 0) {
-            assertEq(portfolio.baskets[0].units, 0);
+        if (portfolio.product.active) {
+            assertEq(portfolio.product.units, 0);
         }
     }
 
