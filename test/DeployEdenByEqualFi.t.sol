@@ -37,8 +37,6 @@ import {
     MockERC6551RegistryLaunch,
     MockIdentityRegistryLaunch
 } from "test/utils/PositionAgentBootstrapMocks.sol";
-import {ILegacyEdenPositionFacet} from "test/utils/LegacyEdenPositionFacet.sol";
-import {ILegacyEdenWalletFacet} from "test/utils/LegacyEdenWalletFacet.sol";
 
 contract MockERC20Deploy is ERC20 {
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
@@ -50,14 +48,23 @@ contract MockERC20Deploy is ERC20 {
 
 contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
     uint256 internal constant EIP170_RUNTIME_CODE_SIZE_LIMIT = 24_576;
+    bytes4 internal constant CREATE_BASKET_SELECTOR =
+        bytes4(keccak256("createBasket((string,string,string,address[],uint256[],uint16[],uint16[],uint16,uint8))"));
+    bytes4 internal constant MINT_BASKET_SELECTOR = bytes4(keccak256("mintBasket(uint256,uint256,address,uint256[])"));
+    bytes4 internal constant BURN_BASKET_SELECTOR = bytes4(keccak256("burnBasket(uint256,uint256,address)"));
+    bytes4 internal constant LEGACY_MINT_BASKET_FROM_POSITION_SELECTOR =
+        bytes4(keccak256("mintBasketFromPosition(uint256,uint256,uint256)"));
+    bytes4 internal constant LEGACY_BURN_BASKET_FROM_POSITION_SELECTOR =
+        bytes4(keccak256("burnBasketFromPosition(uint256,uint256,uint256)"));
     bytes4 internal constant LEGACY_SET_BASKET_METADATA_SELECTOR =
         bytes4(keccak256("setBasketMetadata(uint256,string,uint8)"));
+    bytes4 internal constant LEGACY_SET_BASKET_PAUSED_SELECTOR = bytes4(keccak256("setBasketPaused(uint256,bool)"));
+    bytes4 internal constant LEGACY_SET_BASKET_FEES_SELECTOR =
+        bytes4(keccak256("setBasketFees(uint256,uint16[],uint16[],uint16)"));
 
     struct EdenDeploymentState {
         uint256 steveBasketId;
         address steveToken;
-        uint256 altBasketId;
-        address altBasketToken;
     }
 
     address internal treasury = _addr("treasury");
@@ -69,7 +76,6 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
     uint256 internal timelockSaltNonce;
 
     MockERC20Deploy internal eve;
-    MockERC20Deploy internal alt;
     MockEntryPointLaunch internal entryPoint;
     MockERC6551RegistryLaunch internal erc6551Registry;
     MockIdentityRegistryLaunch internal identityRegistry;
@@ -79,7 +85,6 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
 
     function setUp() public {
         eve = new MockERC20Deploy("EVE", "EVE");
-        alt = new MockERC20Deploy("ALT", "ALT");
         entryPoint = new MockEntryPointLaunch();
         erc6551Registry = new MockERC6551RegistryLaunch();
         identityRegistry = new MockIdentityRegistryLaunch();
@@ -90,99 +95,94 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _installLaunchFacets(diamond);
     }
 
-    function test_DeployLaunch_WiresDiamondCoreAndMinimalFacetSet() public view {
+    function test_DeployLaunch_WiresDiamondCoreAndSingletonEdenFacetSet() public view {
         _assertEqAddress(OwnershipFacet(diamond).owner(), address(this), "owner wired");
         _assertEqAddress(positionNft.minter(), diamond, "position nft minter");
         _assertEqAddress(positionNft.diamond(), diamond, "position nft diamond");
 
-        address[] memory facetAddresses = IDiamondLoupe(diamond).facetAddresses();
+        IDiamondLoupe loupe = IDiamondLoupe(diamond);
+        address[] memory facetAddresses = loupe.facetAddresses();
         _assertEq(facetAddresses.length, 23, "facet count");
 
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(PositionManagementFacet.mintPosition.selector) != address(0),
-            "position facet cut"
+            loupe.facetAddress(PositionManagementFacet.mintPosition.selector) != address(0), "position facet cut"
+        );
+        _assertTrue(loupe.facetAddress(FlashLoanFacet.flashLoan.selector) != address(0), "pool flash facet cut");
+        _assertTrue(
+            loupe.facetAddress(EqualIndexAdminFacetV3.createIndex.selector) != address(0), "equalindex facet cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(FlashLoanFacet.flashLoan.selector) != address(0), "pool flash facet cut"
+            loupe.facetAddress(EqualIndexActionsFacetV3.flashLoan.selector) != address(0), "index flash action cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(EqualIndexAdminFacetV3.createIndex.selector) != address(0),
-            "equalindex facet cut"
-        );
-        _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(EqualIndexActionsFacetV3.flashLoan.selector) != address(0),
-            "index flash action cut"
-        );
-        _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(PositionAgentConfigFacet.setERC6551Registry.selector) != address(0),
+            loupe.facetAddress(PositionAgentConfigFacet.setERC6551Registry.selector) != address(0),
             "position agent config facet cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(PositionAgentTBAFacet.deployTBA.selector) != address(0),
-            "position agent tba facet cut"
+            loupe.facetAddress(PositionAgentTBAFacet.deployTBA.selector) != address(0), "position agent tba facet cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(PositionAgentViewFacet.getTBAInterfaceSupport.selector) != address(0),
+            loupe.facetAddress(PositionAgentViewFacet.getTBAInterfaceSupport.selector) != address(0),
             "position agent view facet cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(PositionAgentViewFacet.isCanonicalAgentLink.selector) != address(0),
+            loupe.facetAddress(PositionAgentViewFacet.isCanonicalAgentLink.selector) != address(0),
             "position agent canonical link view cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(PositionAgentViewFacet.isExternalAgentLink.selector) != address(0),
+            loupe.facetAddress(PositionAgentViewFacet.isExternalAgentLink.selector) != address(0),
             "position agent external link view cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(PositionAgentViewFacet.isRegistrationComplete.selector) != address(0),
+            loupe.facetAddress(PositionAgentViewFacet.isRegistrationComplete.selector) != address(0),
             "position agent registration complete view cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(PositionAgentRegistryFacet.recordAgentRegistration.selector)
-                != address(0),
+            loupe.facetAddress(PositionAgentRegistryFacet.recordAgentRegistration.selector) != address(0),
             "position agent registry facet cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(EqualScaleAlphaFacet.registerBorrowerProfile.selector) != address(0),
+            loupe.facetAddress(EqualScaleAlphaFacet.registerBorrowerProfile.selector) != address(0),
             "equalscale alpha facet cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(EqualScaleAlphaAdminFacet.freezeLine.selector) != address(0),
+            loupe.facetAddress(EqualScaleAlphaAdminFacet.freezeLine.selector) != address(0),
             "equalscale alpha admin facet cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(EqualScaleAlphaViewFacet.getBorrowerProfile.selector) != address(0),
+            loupe.facetAddress(EqualScaleAlphaViewFacet.getBorrowerProfile.selector) != address(0),
             "equalscale alpha view facet cut"
         );
-        _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(EdenStEVEWalletFacet.mintStEVE.selector) != address(0),
-            "eden stEVE wallet facet cut"
-        );
-        _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(EdenBasketPositionFacet.mintStEVEFromPosition.selector) != address(0),
-            "eden stEVE position facet cut"
+
+        address[] memory edenFacetAddresses = new address[](EDEN_SINGLETON_FACET_COUNT);
+        edenFacetAddresses[0] = _assertSelectorGroupInstalled(loupe, _selectorsEdenAdmin());
+        edenFacetAddresses[1] = _assertSelectorGroupInstalled(loupe, _selectorsEdenView());
+        edenFacetAddresses[2] = _assertSelectorGroupInstalled(loupe, _selectorsEdenLending());
+        edenFacetAddresses[3] = _assertSelectorGroupInstalled(loupe, _selectorsEdenReward());
+        edenFacetAddresses[4] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVE());
+        edenFacetAddresses[5] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVEPosition());
+        edenFacetAddresses[6] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVEWallet());
+        _assertEq(_countDistinctNonZero(edenFacetAddresses), EDEN_SINGLETON_FACET_COUNT, "eden singleton facet count");
+
+        _assertEqAddress(loupe.facetAddress(CREATE_BASKET_SELECTOR), address(0), "legacy create basket removed");
+        _assertEqAddress(loupe.facetAddress(MINT_BASKET_SELECTOR), address(0), "legacy wallet mint removed");
+        _assertEqAddress(loupe.facetAddress(BURN_BASKET_SELECTOR), address(0), "legacy wallet burn removed");
+        _assertEqAddress(
+            loupe.facetAddress(LEGACY_MINT_BASKET_FROM_POSITION_SELECTOR), address(0), "legacy position mint removed"
         );
         _assertEqAddress(
-            IDiamondLoupe(diamond).facetAddress(ILegacyEdenPositionFacet.mintBasketFromPosition.selector),
-            address(0),
-            "legacy eden position mint removed"
-        );
-        _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(EdenViewFacet.getPositionTokenURI.selector) != address(0),
-            "position metadata hook cut"
-        );
-        _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(EdenViewFacet.getPositionAgentView.selector) != address(0),
-            "position agent aggregate view cut"
-        );
-        _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(EdenAdminFacet.setProductMetadata.selector) != address(0),
-            "eden product admin facet cut"
+            loupe.facetAddress(LEGACY_BURN_BASKET_FROM_POSITION_SELECTOR), address(0), "legacy position burn removed"
         );
         _assertEqAddress(
-            IDiamondLoupe(diamond).facetAddress(LEGACY_SET_BASKET_METADATA_SELECTOR),
+            loupe.facetAddress(LEGACY_SET_BASKET_METADATA_SELECTOR),
             address(0),
-            "legacy eden basket metadata selector removed"
+            "legacy basket metadata selector removed"
+        );
+        _assertEqAddress(
+            loupe.facetAddress(LEGACY_SET_BASKET_PAUSED_SELECTOR), address(0), "legacy basket pause selector removed"
+        );
+        _assertEqAddress(
+            loupe.facetAddress(LEGACY_SET_BASKET_FEES_SELECTOR), address(0), "legacy basket fee selector removed"
         );
     }
 
@@ -236,7 +236,9 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         );
 
         _assertTrue(poolFlashFacet != equalIndexActionsFacet, "pool and index flash lanes stay separate");
-        _assertTrue(equalIndexActionsFacet != equalIndexPositionFacet, "EqualIndex action and position lanes stay explicit");
+        _assertTrue(
+            equalIndexActionsFacet != equalIndexPositionFacet, "EqualIndex action and position lanes stay explicit"
+        );
         _assertTrue(
             loupe.facetAddress(EdenStEVEWalletFacet.mintStEVE.selector) != equalIndexActionsFacet,
             "EDEN wallet selector does not own generic EqualIndex wallet flows"
@@ -327,18 +329,18 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         controller.execute(address(controller), 0, data, bytes32(0), salt);
     }
 
-    function test_DeployLaunch_SupportsWalletFlowsAndAdminReads() public {
+    function test_DeployLaunch_SupportsSingletonWalletFlowsAndAdminReads() public {
         EdenDeploymentState memory state = _bootstrapEdenProduct();
 
-        alt.mint(bob, 200e18);
+        eve.mint(bob, 100e18);
         vm.startPrank(bob);
-        alt.approve(diamond, 200e18);
-        uint256[] memory maxAltInputs = new uint256[](1);
-        maxAltInputs[0] = 50e18;
-        ILegacyEdenWalletFacet(diamond).mintBasket(state.altBasketId, 50e18, bob, maxAltInputs);
-        ILegacyEdenWalletFacet(diamond).burnBasket(state.altBasketId, 50e18, bob);
+        eve.approve(diamond, 100e18);
+        uint256[] memory maxInputs = new uint256[](1);
+        maxInputs[0] = 50e18;
+        EdenStEVEWalletFacet(diamond).mintStEVE(50e18, bob, maxInputs);
+        EdenStEVEWalletFacet(diamond).burnStEVE(50e18, bob);
         vm.stopPrank();
-        _assertEq(ERC20(state.altBasketToken).balanceOf(bob), 0, "wallet basket burned");
+        _assertEq(ERC20(state.steveToken).balanceOf(bob), 0, "wallet stEVE burned");
 
         EdenAdminFacet(diamond).setProtocolURI("ipfs://eden-by-equalfi");
         EdenAdminFacet(diamond).setContractVersion("launch-v1");
@@ -350,39 +352,32 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _assertEqAddress(product.rewardToken, address(eve), "reward token");
     }
 
-    function test_DeployLaunch_SupportsPositionRewardsAndLending() public {
+    function test_DeployLaunch_SupportsSingletonPositionRewardsAndLending() public {
         EdenDeploymentState memory state = _bootstrapEdenProduct();
 
         eve.mint(alice, 500e18);
-        alt.mint(alice, 500e18);
 
         vm.startPrank(alice);
         eve.approve(diamond, 500e18);
-        alt.approve(diamond, 500e18);
 
         uint256[] memory maxSteveInputs = new uint256[](1);
-        maxSteveInputs[0] = 100e18;
-        EdenStEVEWalletFacet(diamond).mintStEVE(100e18, alice, maxSteveInputs);
+        maxSteveInputs[0] = 200e18;
+        EdenStEVEWalletFacet(diamond).mintStEVE(200e18, alice, maxSteveInputs);
 
         uint256 stevePositionId = PositionManagementFacet(diamond).mintPosition(1);
         ERC20(state.steveToken).approve(diamond, 100e18);
         EdenStEVEActionFacet(diamond).depositStEVEToPosition(stevePositionId, 100e18, 100e18);
-
-        uint256 altPositionId = PositionManagementFacet(diamond).mintPosition(2);
-        PositionManagementFacet(diamond).depositToPosition(altPositionId, 2, 200e18, 200e18);
-        ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(altPositionId, state.altBasketId, 100e18);
         vm.stopPrank();
 
-        EdenViewFacet.ActionCheck memory borrowCheck =
-            EdenViewFacet(diamond).canBorrow(altPositionId, 30e18, 7 days);
+        EdenViewFacet.ActionCheck memory borrowCheck = EdenViewFacet(diamond).canBorrow(stevePositionId, 30e18, 7 days);
         _assertTrue(borrowCheck.ok, "borrow check");
 
         vm.prank(alice);
-        uint256 loanId = EdenLendingFacet(diamond).borrow(altPositionId, 30e18, 7 days);
+        uint256 loanId = EdenLendingFacet(diamond).borrow(stevePositionId, 30e18, 7 days);
         _assertEq(EdenLendingFacet(diamond).loanCount(), 1, "loan created");
 
         vm.prank(alice);
-        EdenLendingFacet(diamond).repay(altPositionId, loanId);
+        EdenLendingFacet(diamond).repay(stevePositionId, loanId);
 
         eve.mint(address(this), 500e18);
         eve.approve(diamond, 500e18);
@@ -416,11 +411,8 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         Types.ActionFeeSet memory actionFees;
         pools.setDefaultPoolConfig(cfg);
         pools.initPoolWithActionFees(1, address(eve), cfg, actionFees);
-        pools.initPoolWithActionFees(2, address(alt), cfg, actionFees);
 
         (state.steveBasketId, state.steveToken) = EdenStEVEActionFacet(diamond).createStEVE(_stEveParams(address(eve)));
-        (state.altBasketId, state.altBasketToken) = ILegacyEdenWalletFacet(diamond)
-            .createBasket(_singleAssetParams("ALT Basket", "ALTB", address(alt), "ipfs://alt"));
 
         EdenRewardFacet(diamond).configureRewards(address(eve), 1e18, true);
         EdenLendingFacet(diamond).configureLending(1 days, 14 days);
@@ -536,6 +528,25 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             }
         }
         return false;
+    }
+
+    function _countDistinctNonZero(address[] memory accounts) internal pure returns (uint256 count) {
+        for (uint256 i = 0; i < accounts.length; i++) {
+            address candidate = accounts[i];
+            if (candidate == address(0)) continue;
+
+            bool seen;
+            for (uint256 j = 0; j < i; j++) {
+                if (accounts[j] == candidate) {
+                    seen = true;
+                    break;
+                }
+            }
+
+            if (!seen) {
+                count++;
+            }
+        }
     }
 
     function test_DeployLaunch_BootstrapsWalletConfig_AndLocksAfterFirstTBA() public {

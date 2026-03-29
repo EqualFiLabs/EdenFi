@@ -45,7 +45,9 @@ interface IPoolManagementFacetInitConfig {
 }
 
 contract DeployEdenByEqualFi is Script {
-    uint256 internal constant LAUNCH_FACET_COUNT = 20;
+    uint256 internal constant NON_EDEN_LAUNCH_FACET_COUNT = 13;
+    uint256 internal constant EDEN_SINGLETON_FACET_COUNT = 7;
+    uint256 internal constant LAUNCH_FACET_COUNT = NON_EDEN_LAUNCH_FACET_COUNT + EDEN_SINGLETON_FACET_COUNT;
     uint256 internal constant CUT_BATCH_SIZE = 3;
 
     struct BaseDeployment {
@@ -225,37 +227,46 @@ contract DeployEdenByEqualFi is Script {
             EqualScaleAlphaViewFacet facet = new EqualScaleAlphaViewFacet();
             cuts[i++] = _cut(address(facet), _selectorsEqualScaleAlphaView());
         }
-        {
-            EdenAdminFacet facet = new EdenAdminFacet();
-            cuts[i++] = _cut(address(facet), _selectorsEdenAdmin());
-        }
-        {
-            EdenViewFacet facet = new EdenViewFacet();
-            cuts[i++] = _cut(address(facet), _selectorsEdenView());
-        }
-        {
-            EdenLendingFacet facet = new EdenLendingFacet();
-            cuts[i++] = _cut(address(facet), _selectorsEdenLending());
-        }
-        {
-            EdenRewardFacet facet = new EdenRewardFacet();
-            cuts[i++] = _cut(address(facet), _selectorsEdenReward());
-        }
-        {
-            EdenStEVEActionFacet facet = new EdenStEVEActionFacet();
-            cuts[i++] = _cut(address(facet), _selectorsEdenStEVE());
-        }
-        {
-            EdenBasketPositionFacet facet = new EdenBasketPositionFacet();
-            cuts[i++] = _cut(address(facet), _selectorsEdenStEVEPosition());
-        }
-        {
-            EdenStEVEWalletFacet facet = new EdenStEVEWalletFacet();
-            cuts[i++] = _cut(address(facet), _selectorsEdenStEVEWallet());
-        }
+        i = _appendEdenSingletonProductCuts(cuts, i);
 
         require(i == LAUNCH_FACET_COUNT, "DeployEdenByEqualFi: bad facet count");
         _applyCutsInBatches(diamond, cuts, CUT_BATCH_SIZE);
+    }
+
+    function _appendEdenSingletonProductCuts(IDiamondCut.FacetCut[] memory cuts, uint256 index)
+        internal
+        returns (uint256 nextIndex)
+    {
+        nextIndex = index;
+
+        {
+            EdenAdminFacet facet = new EdenAdminFacet();
+            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenAdmin());
+        }
+        {
+            EdenViewFacet facet = new EdenViewFacet();
+            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenView());
+        }
+        {
+            EdenLendingFacet facet = new EdenLendingFacet();
+            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenLending());
+        }
+        {
+            EdenRewardFacet facet = new EdenRewardFacet();
+            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenReward());
+        }
+        {
+            EdenStEVEActionFacet facet = new EdenStEVEActionFacet();
+            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenStEVE());
+        }
+        {
+            EdenBasketPositionFacet facet = new EdenBasketPositionFacet();
+            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenStEVEPosition());
+        }
+        {
+            EdenStEVEWalletFacet facet = new EdenStEVEWalletFacet();
+            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenStEVEWallet());
+        }
     }
 
     function _applyCutsInBatches(address diamond, IDiamondCut.FacetCut[] memory cuts, uint256 batchSize) internal {
