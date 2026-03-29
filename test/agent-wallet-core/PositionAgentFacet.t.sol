@@ -303,6 +303,7 @@ contract PositionAgentFacetTest {
 
         require(facet.getAgentId(tokenId) == 7, "agent id missing");
         require(facet.isAgentRegistered(tokenId), "registration missing");
+        require(facet.isCanonicalAgentLink(tokenId), "canonical link missing");
         require(facet.getRegisteredAgentId(tokenId) == 7, "storage mapping missing");
 
         vm.prank(owner);
@@ -324,6 +325,7 @@ contract PositionAgentFacetTest {
 
         require(facet.getAgentId(tokenId) == 0, "unexpected agent id");
         require(!facet.isAgentRegistered(tokenId), "unexpected registration");
+        require(!facet.isCanonicalAgentLink(tokenId), "unexpected canonical link");
 
         vm.prank(owner);
         address deployed = facet.deployTBA(tokenId);

@@ -10,6 +10,7 @@ import {IERC6551Executable} from "@agent-wallet-core/interfaces/IERC6551Executab
 import {IERC6551Registry} from "@agent-wallet-core/interfaces/IERC6551Registry.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import {IERC8004IdentityRegistry} from "@agent-wallet-core/adapters/ERC8004IdentityAdapter.sol";
 
 /// @title PositionAgentViewFacet
 /// @notice View functions for ERC-6551 position-agent integration.
@@ -37,19 +38,31 @@ contract PositionAgentViewFacet {
         return LibPositionAgentStorage.s().positionToAgentId[positionTokenId] != 0;
     }
 
+    function isCanonicalAgentLink(uint256 positionTokenId) external view returns (bool) {
+        LibPositionAgentStorage.AgentStorage storage ds = LibPositionAgentStorage.s();
+        uint256 agentId = ds.positionToAgentId[positionTokenId];
+        if (agentId == 0 || ds.identityRegistry == address(0) || ds.identityRegistry.code.length == 0) {
+            return false;
+        }
+
+        address tba = _tbaAddress(ds, positionTokenId);
+        if (tba == address(0)) {
+            return false;
+        }
+
+        (bool ok, bytes memory data) = ds.identityRegistry.staticcall(
+            abi.encodeWithSelector(IERC8004IdentityRegistry.ownerOf.selector, agentId)
+        );
+        if (!ok || data.length < 32) {
+            return false;
+        }
+
+        return abi.decode(data, (address)) == tba;
+    }
+
     function isTBADeployed(uint256 positionTokenId) external view returns (bool) {
         LibPositionAgentStorage.AgentStorage storage ds = LibPositionAgentStorage.s();
-        address registry = ds.erc6551Registry;
-        address implementation = ds.erc6551Implementation;
-        address positionNFT = _positionNFTAddress();
-
-        address tba = IERC6551Registry(registry).account(
-            implementation,
-            ds.tbaSalt,
-            block.chainid,
-            positionNFT,
-            positionTokenId
-        );
+        address tba = _tbaAddress(ds, positionTokenId);
         return tba.code.length > 0;
     }
 
@@ -68,17 +81,7 @@ contract PositionAgentViewFacet {
         returns (bool supportsAccount, bool supportsExecutable, bool supportsERC721Receiver, bool supportsERC1271)
     {
         LibPositionAgentStorage.AgentStorage storage ds = LibPositionAgentStorage.s();
-        address registry = ds.erc6551Registry;
-        address implementation = ds.erc6551Implementation;
-        address positionNFT = _positionNFTAddress();
-
-        address tba = IERC6551Registry(registry).account(
-            implementation,
-            ds.tbaSalt,
-            block.chainid,
-            positionNFT,
-            positionTokenId
-        );
+        address tba = _tbaAddress(ds, positionTokenId);
 
         if (tba.code.length == 0) {
             return (false, false, false, false);
@@ -98,6 +101,25 @@ contract PositionAgentViewFacet {
             return false;
         }
         return abi.decode(data, (bool));
+    }
+
+    function _tbaAddress(LibPositionAgentStorage.AgentStorage storage ds, uint256 positionTokenId)
+        internal
+        view
+        returns (address)
+    {
+        if (ds.erc6551Registry == address(0) || ds.erc6551Implementation == address(0) || ds.erc6551Registry.code.length == 0)
+        {
+            return address(0);
+        }
+
+        return IERC6551Registry(ds.erc6551Registry).account(
+            ds.erc6551Implementation,
+            ds.tbaSalt,
+            block.chainid,
+            _positionNFTAddress(),
+            positionTokenId
+        );
     }
 
     function _positionNFTAddress() internal view virtual returns (address) {

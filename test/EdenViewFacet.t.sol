@@ -6,6 +6,9 @@ import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
+import {PositionAgentRegistryFacet} from "src/agent-wallet/erc6551/PositionAgentRegistryFacet.sol";
+import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFacet.sol";
+import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {UnknownIndex} from "src/libraries/Errors.sol";
@@ -87,6 +90,10 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(alicePositionId);
         assertEq(portfolio.positionId, alicePositionId);
         assertEq(portfolio.owner, alice);
+        assertEq(portfolio.agent.tbaAddress, PositionAgentViewFacet(diamond).getTBAAddress(alicePositionId));
+        assertTrue(!portfolio.agent.tbaDeployed);
+        assertEq(portfolio.agent.agentId, 0);
+        assertTrue(!portfolio.agent.canonicalLink);
         assertEq(portfolio.baskets.length, 1);
         assertEq(portfolio.loans.length, 0);
         assertEq(portfolio.rewards.eligiblePrincipal, 10e18);
@@ -101,6 +108,41 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         assertEq(userPortfolio.positionIds.length, 2);
         assertEq(userPortfolio.positions.length, 2);
         assertEq(userPortfolio.positions[1].loans.length, 1);
+    }
+
+    function test_PositionAgentReads_ExposeTBAAndCanonicalLinkStatus() public {
+        address predicted = PositionAgentTBAFacet(diamond).computeTBAAddress(alicePositionId);
+
+        EdenViewFacet.PositionAgentWalletView memory beforeDeploy =
+            EdenViewFacet(diamond).getPositionAgentView(alicePositionId);
+        assertEq(beforeDeploy.tbaAddress, predicted);
+        assertTrue(!beforeDeploy.tbaDeployed);
+        assertEq(beforeDeploy.agentId, 0);
+        assertTrue(!beforeDeploy.agentRegistered);
+        assertTrue(!beforeDeploy.canonicalLink);
+
+        vm.prank(alice);
+        address deployed = PositionAgentTBAFacet(diamond).deployTBA(alicePositionId);
+        assertEq(deployed, predicted);
+
+        uint256 agentId = 77;
+        identityRegistry.setOwner(agentId, deployed);
+        vm.prank(alice);
+        PositionAgentRegistryFacet(diamond).recordAgentRegistration(alicePositionId, agentId);
+
+        EdenViewFacet.PositionAgentWalletView memory walletView =
+            EdenViewFacet(diamond).getPositionAgentView(alicePositionId);
+        assertEq(walletView.tbaAddress, deployed);
+        assertTrue(walletView.tbaDeployed);
+        assertEq(walletView.agentId, agentId);
+        assertTrue(walletView.agentRegistered);
+        assertTrue(walletView.canonicalLink);
+        assertTrue(PositionAgentViewFacet(diamond).isCanonicalAgentLink(alicePositionId));
+
+        EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(alicePositionId);
+        assertEq(portfolio.agent.tbaAddress, deployed);
+        assertEq(portfolio.agent.agentId, agentId);
+        assertTrue(portfolio.agent.canonicalLink);
     }
 
     function test_ActionChecksReflectState() public {
@@ -243,11 +285,21 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         assertEq(activeLoanIds.length, 0);
     }
 
-    function test_PositionMetadataAndOfferHooks_AreStable() public {
+    function test_PositionMetadataAndOfferHooks_AreStable() public view {
         bytes32 positionKey = positionNft.getPositionKey(alicePositionId);
 
         string memory tokenUri = positionNft.tokenURI(alicePositionId);
-        assertEq(tokenUri, string.concat("equalfi://positions/", Strings.toString(alicePositionId), "?poolId=1"));
+        address predicted = PositionAgentTBAFacet(diamond).computeTBAAddress(alicePositionId);
+        assertEq(
+            tokenUri,
+            string.concat(
+                "equalfi://positions/",
+                Strings.toString(alicePositionId),
+                "?poolId=1&tba=",
+                Strings.toHexString(uint160(predicted), 20),
+                "&tbaDeployed=false&agentId=0&agentCanonical=false"
+            )
+        );
         assertTrue(!EdenViewFacet(diamond).hasOpenOffers(positionKey));
 
         EdenViewFacet(diamond).cancelOffersForPosition(positionKey);

@@ -6,6 +6,8 @@ import {EdenBasketBase} from "./EdenBasketBase.sol";
 import {EdenLendingLogic} from "./EdenLendingLogic.sol";
 import {PositionNFT} from "../nft/PositionNFT.sol";
 import {BasketToken} from "../tokens/BasketToken.sol";
+import {IERC6551Registry} from "@agent-wallet-core/interfaces/IERC6551Registry.sol";
+import {IERC8004IdentityRegistry} from "@agent-wallet-core/adapters/ERC8004IdentityAdapter.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibEdenAdminStorage} from "../libraries/LibEdenAdminStorage.sol";
 import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
@@ -14,6 +16,7 @@ import {LibEdenRewards} from "../libraries/LibEdenRewards.sol";
 import {LibEdenRewardStorage} from "../libraries/LibEdenRewardStorage.sol";
 import {LibEdenStEVEStorage} from "../libraries/LibEdenStEVEStorage.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibPositionAgentStorage} from "../libraries/LibPositionAgentStorage.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
 import {Types} from "../libraries/Types.sol";
@@ -85,11 +88,20 @@ contract EdenViewFacet is EdenLendingLogic {
         uint256 claimableRewards;
     }
 
+    struct PositionAgentWalletView {
+        address tbaAddress;
+        bool tbaDeployed;
+        uint256 agentId;
+        bool agentRegistered;
+        bool canonicalLink;
+    }
+
     struct PositionPortfolio {
         uint256 positionId;
         bytes32 positionKey;
         address owner;
         uint256 homePoolId;
+        PositionAgentWalletView agent;
         PositionBasketView[] baskets;
         PositionRewardView rewards;
         LoanView[] loans;
@@ -179,11 +191,20 @@ contract EdenViewFacet is EdenLendingLogic {
 
     function getPositionTokenURI(uint256 positionId) external view returns (string memory) {
         PositionNFT nft = PositionNFT(LibPositionNFT.s().positionNFTContract);
+        PositionAgentWalletView memory agent = _positionAgentWallet(positionId);
         return string.concat(
             "equalfi://positions/",
             Strings.toString(positionId),
             "?poolId=",
-            Strings.toString(nft.getPoolId(positionId))
+            Strings.toString(nft.getPoolId(positionId)),
+            "&tba=",
+            Strings.toHexString(uint160(agent.tbaAddress), 20),
+            "&tbaDeployed=",
+            _boolString(agent.tbaDeployed),
+            "&agentId=",
+            Strings.toString(agent.agentId),
+            "&agentCanonical=",
+            _boolString(agent.canonicalLink)
         );
     }
 
@@ -219,6 +240,10 @@ contract EdenViewFacet is EdenLendingLogic {
         }
     }
 
+    function getPositionAgentView(uint256 positionId) public view returns (PositionAgentWalletView memory agent) {
+        return _positionAgentWallet(positionId);
+    }
+
     function getPositionPortfolio(uint256 positionId) public view returns (PositionPortfolio memory portfolio) {
         PositionNFT nft = PositionNFT(LibPositionNFT.s().positionNFTContract);
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
@@ -228,6 +253,7 @@ contract EdenViewFacet is EdenLendingLogic {
         portfolio.positionKey = positionKey;
         portfolio.owner = nft.ownerOf(positionId);
         portfolio.homePoolId = nft.getPoolId(positionId);
+        portfolio.agent = _positionAgentWallet(positionId);
         portfolio.baskets = _positionBaskets(positionKey);
         portfolio.rewards = PositionRewardView({
             eligiblePrincipal: LibEdenStEVEStorage.s().eligiblePrincipal[positionKey],
@@ -238,6 +264,41 @@ contract EdenViewFacet is EdenLendingLogic {
         for (uint256 i = 0; i < loanIds.length; i++) {
             portfolio.loans[i] = _getLoanView(loanIds[i]);
         }
+    }
+
+    function _positionAgentWallet(uint256 positionId) internal view returns (PositionAgentWalletView memory agent) {
+        LibPositionAgentStorage.AgentStorage storage wallet = LibPositionAgentStorage.s();
+        agent.agentId = wallet.positionToAgentId[positionId];
+        agent.agentRegistered = agent.agentId != 0;
+
+        if (
+            wallet.erc6551Registry == address(0) || wallet.erc6551Implementation == address(0)
+                || wallet.erc6551Registry.code.length == 0
+        ) {
+            return agent;
+        }
+
+        agent.tbaAddress = IERC6551Registry(wallet.erc6551Registry).account(
+            wallet.erc6551Implementation,
+            wallet.tbaSalt,
+            block.chainid,
+            LibPositionNFT.s().positionNFTContract,
+            positionId
+        );
+        agent.tbaDeployed = agent.tbaAddress.code.length > 0;
+
+        if (!agent.agentRegistered || wallet.identityRegistry == address(0) || wallet.identityRegistry.code.length == 0) {
+            return agent;
+        }
+
+        (bool ok, bytes memory data) = wallet.identityRegistry.staticcall(
+            abi.encodeWithSelector(IERC8004IdentityRegistry.ownerOf.selector, agent.agentId)
+        );
+        if (!ok || data.length < 32) {
+            return agent;
+        }
+
+        agent.canonicalLink = abi.decode(data, (address)) == agent.tbaAddress;
     }
 
     function getUserPortfolio(address user) external view returns (UserPortfolio memory portfolio) {
@@ -442,5 +503,9 @@ contract EdenViewFacet is EdenLendingLogic {
         check.ok = false;
         check.code = code;
         check.reason = reason;
+    }
+
+    function _boolString(bool value) internal pure returns (string memory) {
+        return value ? "true" : "false";
     }
 }

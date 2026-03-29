@@ -103,6 +103,10 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             "position agent view facet cut"
         );
         _assertTrue(
+            IDiamondLoupe(diamond).facetAddress(PositionAgentViewFacet.isCanonicalAgentLink.selector) != address(0),
+            "position agent canonical link view cut"
+        );
+        _assertTrue(
             IDiamondLoupe(diamond).facetAddress(PositionAgentRegistryFacet.recordAgentRegistration.selector)
                 != address(0),
             "position agent registry facet cut"
@@ -114,6 +118,10 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _assertTrue(
             IDiamondLoupe(diamond).facetAddress(EdenViewFacet.getPositionTokenURI.selector) != address(0),
             "position metadata hook cut"
+        );
+        _assertTrue(
+            IDiamondLoupe(diamond).facetAddress(EdenViewFacet.getPositionAgentView.selector) != address(0),
+            "position agent aggregate view cut"
         );
         _assertTrue(
             IDiamondLoupe(diamond).facetAddress(EdenAdminFacet.setProtocolURI.selector) != address(0),

@@ -376,13 +376,14 @@ contract DeployEdenByEqualFi is Script {
     }
 
     function _selectorsPositionAgentView() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = PositionAgentViewFacet.getTBAAddress.selector;
         s[1] = PositionAgentViewFacet.getAgentId.selector;
         s[2] = PositionAgentViewFacet.isAgentRegistered.selector;
         s[3] = PositionAgentViewFacet.isTBADeployed.selector;
         s[4] = PositionAgentViewFacet.getCanonicalRegistries.selector;
         s[5] = PositionAgentViewFacet.getTBAInterfaceSupport.selector;
+        s[6] = PositionAgentViewFacet.isCanonicalAgentLink.selector;
     }
 
     function _selectorsPositionAgentRegistry() internal pure returns (bytes4[] memory s) {
@@ -460,7 +461,7 @@ contract DeployEdenByEqualFi is Script {
     }
 
     function _selectorsEdenView() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](18);
+        s = new bytes4[](19);
         s[0] = EdenViewFacet.basketCount.selector;
         s[1] = EdenViewFacet.getBasketIds.selector;
         s[2] = EdenViewFacet.getBasketSummary.selector;
@@ -472,13 +473,14 @@ contract DeployEdenByEqualFi is Script {
         s[8] = EdenViewFacet.getUserPositionIds.selector;
         s[9] = EdenViewFacet.getUserPositionIdsPaginated.selector;
         s[10] = EdenViewFacet.getPositionPortfolio.selector;
-        s[11] = EdenViewFacet.getUserPortfolio.selector;
-        s[12] = EdenViewFacet.canMint.selector;
-        s[13] = EdenViewFacet.canBurn.selector;
-        s[14] = EdenViewFacet.canBorrow.selector;
-        s[15] = EdenViewFacet.canRepay.selector;
-        s[16] = EdenViewFacet.canExtend.selector;
-        s[17] = EdenViewFacet.canClaimRewards.selector;
+        s[11] = EdenViewFacet.getPositionAgentView.selector;
+        s[12] = EdenViewFacet.getUserPortfolio.selector;
+        s[13] = EdenViewFacet.canMint.selector;
+        s[14] = EdenViewFacet.canBurn.selector;
+        s[15] = EdenViewFacet.canBorrow.selector;
+        s[16] = EdenViewFacet.canRepay.selector;
+        s[17] = EdenViewFacet.canExtend.selector;
+        s[18] = EdenViewFacet.canClaimRewards.selector;
     }
 
     function _selectorsEdenAdmin() internal pure returns (bytes4[] memory s) {
