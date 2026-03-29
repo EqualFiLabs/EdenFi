@@ -49,6 +49,8 @@ contract MockERC20Deploy is ERC20 {
 
 contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
     uint256 internal constant EIP170_RUNTIME_CODE_SIZE_LIMIT = 24_576;
+    bytes4 internal constant LEGACY_SET_BASKET_METADATA_SELECTOR =
+        bytes4(keccak256("setBasketMetadata(uint256,string,uint8)"));
 
     struct EdenDeploymentState {
         uint256 steveBasketId;
@@ -173,8 +175,13 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             "position agent aggregate view cut"
         );
         _assertTrue(
-            IDiamondLoupe(diamond).facetAddress(EdenAdminFacet.setProtocolURI.selector) != address(0),
-            "eden admin facet cut"
+            IDiamondLoupe(diamond).facetAddress(EdenAdminFacet.setProductMetadata.selector) != address(0),
+            "eden product admin facet cut"
+        );
+        _assertEqAddress(
+            IDiamondLoupe(diamond).facetAddress(LEGACY_SET_BASKET_METADATA_SELECTOR),
+            address(0),
+            "legacy eden basket metadata selector removed"
         );
     }
 

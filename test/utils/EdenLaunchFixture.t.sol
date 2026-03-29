@@ -214,10 +214,13 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
         );
     }
 
+    function _setProductMetadata(string memory uri, uint8 productType) internal {
+        _timelockCall(diamond, abi.encodeWithSelector(EdenAdminFacet.setProductMetadata.selector, uri, productType));
+    }
+
     function _setBasketMetadata(uint256 basketId, string memory uri, uint8 basketType) internal {
-        _timelockCall(
-            diamond, abi.encodeWithSelector(EdenAdminFacet.setBasketMetadata.selector, basketId, uri, basketType)
-        );
+        basketId;
+        _setProductMetadata(uri, basketType);
     }
 
     function _setProtocolURI(string memory uri) internal {
@@ -232,8 +235,20 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
         _timelockCall(diamond, abi.encodeWithSelector(EdenAdminFacet.setFacetVersion.selector, facet, version_));
     }
 
+    function _setProductPaused(bool paused) internal {
+        _timelockCall(diamond, abi.encodeWithSelector(EdenAdminFacet.setProductPaused.selector, paused));
+    }
+
     function _setBasketPaused(uint256 basketId, bool paused) internal {
-        _timelockCall(diamond, abi.encodeWithSelector(EdenAdminFacet.setBasketPaused.selector, basketId, paused));
+        basketId;
+        _setProductPaused(paused);
+    }
+
+    function _setProductFees(uint16[] memory mintFeeBps, uint16[] memory burnFeeBps, uint16 flashFeeBps) internal {
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(EdenAdminFacet.setProductFees.selector, mintFeeBps, burnFeeBps, flashFeeBps)
+        );
     }
 
     function _setBasketFees(
@@ -242,10 +257,8 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
         uint16[] memory burnFeeBps,
         uint16 flashFeeBps
     ) internal {
-        _timelockCall(
-            diamond,
-            abi.encodeWithSelector(EdenAdminFacet.setBasketFees.selector, basketId, mintFeeBps, burnFeeBps, flashFeeBps)
-        );
+        basketId;
+        _setProductFees(mintFeeBps, burnFeeBps, flashFeeBps);
     }
 
     function _setPoolFeeShareBps(uint16 poolFeeShareBps) internal {

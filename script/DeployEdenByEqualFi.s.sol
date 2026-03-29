@@ -543,13 +543,13 @@ contract DeployEdenByEqualFi is Script {
 
     function _selectorsEdenAdmin() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](13);
-        s[0] = EdenAdminFacet.setBasketMetadata.selector;
+        s[0] = EdenAdminFacet.setProductMetadata.selector;
         s[1] = EdenAdminFacet.setProtocolURI.selector;
         s[2] = EdenAdminFacet.setContractVersion.selector;
         s[3] = EdenAdminFacet.setFacetVersion.selector;
         s[4] = EdenAdminFacet.setTimelockController.selector;
-        s[5] = EdenAdminFacet.setBasketPaused.selector;
-        s[6] = EdenAdminFacet.setBasketFees.selector;
+        s[5] = EdenAdminFacet.setProductPaused.selector;
+        s[6] = EdenAdminFacet.setProductFees.selector;
         s[7] = EdenAdminFacet.setPoolFeeShareBps.selector;
         s[8] = EdenAdminFacet.protocolURI.selector;
         s[9] = EdenAdminFacet.contractVersion.selector;

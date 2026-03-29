@@ -14,20 +14,20 @@ import "../libraries/Errors.sol";
 
 contract EdenAdminFacet is EdenBasketBase, ReentrancyGuardModifiers {
 
-    event BasketMetadataUpdated(
-        uint256 indexed basketId,
+    event ProductMetadataUpdated(
+        uint256 indexed productId,
         string oldUri,
         string newUri,
-        uint8 oldBasketType,
-        uint8 newBasketType
+        uint8 oldProductType,
+        uint8 newProductType
     );
     event ProtocolURIUpdated(string oldUri, string newUri);
     event ContractVersionUpdated(string oldVersion, string newVersion);
     event FacetVersionUpdated(address indexed facet, string oldVersion, string newVersion);
     event TimelockControllerUpdated(address indexed oldTimelock, address indexed newTimelock);
-    event BasketPausedUpdated(uint256 indexed basketId, bool paused);
-    event BasketFeeConfigUpdated(
-        uint256 indexed basketId,
+    event ProductPausedUpdated(uint256 indexed productId, bool paused);
+    event ProductFeeConfigUpdated(
+        uint256 indexed productId,
         uint16[] mintFeeBps,
         uint16[] burnFeeBps,
         uint16 flashFeeBps
@@ -42,21 +42,21 @@ contract EdenAdminFacet is EdenBasketBase, ReentrancyGuardModifiers {
         string contractVersion;
     }
 
-    function setBasketMetadata(uint256 basketId, string calldata uri, uint8 basketType)
+    function setProductMetadata(string calldata uri, uint8 productType)
         external
         nonReentrant
-        basketExists(basketId)
+        basketExists(LibEdenBasketStorage.PRODUCT_ID)
     {
         LibCurrency.assertZeroMsgValue();
         LibAccess.enforceTimelockOrOwnerIfUnset();
 
         LibEdenBasketStorage.ProductMetadata storage metadata = LibEdenBasketStorage.s().productMetadata;
         string memory oldUri = metadata.uri;
-        uint8 oldBasketType = metadata.productType;
+        uint8 oldProductType = metadata.productType;
         metadata.uri = uri;
-        metadata.productType = basketType;
+        metadata.productType = productType;
 
-        emit BasketMetadataUpdated(basketId, oldUri, uri, oldBasketType, basketType);
+        emit ProductMetadataUpdated(LibEdenBasketStorage.PRODUCT_ID, oldUri, uri, oldProductType, productType);
     }
 
     function setProtocolURI(string calldata uri) external nonReentrant {
@@ -104,39 +104,38 @@ contract EdenAdminFacet is EdenBasketBase, ReentrancyGuardModifiers {
         emit TimelockControllerUpdated(oldTimelock, timelockController);
     }
 
-    function setBasketPaused(uint256 basketId, bool paused) external nonReentrant basketExists(basketId) {
+    function setProductPaused(bool paused) external nonReentrant basketExists(LibEdenBasketStorage.PRODUCT_ID) {
         LibCurrency.assertZeroMsgValue();
         LibAccess.enforceTimelockOrOwnerIfUnset();
 
         LibEdenBasketStorage.s().product.paused = paused;
-        emit BasketPausedUpdated(basketId, paused);
+        emit ProductPausedUpdated(LibEdenBasketStorage.PRODUCT_ID, paused);
     }
 
-    function setBasketFees(
-        uint256 basketId,
-        uint16[] calldata mintFeeBps,
-        uint16[] calldata burnFeeBps,
-        uint16 flashFeeBps
-    ) external nonReentrant basketExists(basketId) {
+    function setProductFees(uint16[] calldata mintFeeBps, uint16[] calldata burnFeeBps, uint16 flashFeeBps)
+        external
+        nonReentrant
+        basketExists(LibEdenBasketStorage.PRODUCT_ID)
+    {
         LibCurrency.assertZeroMsgValue();
         LibAccess.enforceTimelockOrOwnerIfUnset();
 
-        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
-        uint256 len = basket.assets.length;
+        LibEdenBasketStorage.ProductConfig storage product = LibEdenBasketStorage.s().product;
+        uint256 len = product.assets.length;
         if (mintFeeBps.length != len || burnFeeBps.length != len) revert InvalidArrayLength();
         if (flashFeeBps > 1000) revert InvalidParameterRange("flashFeeBps too high");
 
         for (uint256 i = 0; i < len; i++) {
             if (mintFeeBps[i] > 1000 || burnFeeBps[i] > 1000) {
-                revert InvalidParameterRange("basket fee too high");
+                revert InvalidParameterRange("product fee too high");
             }
         }
 
-        basket.mintFeeBps = mintFeeBps;
-        basket.burnFeeBps = burnFeeBps;
-        basket.flashFeeBps = flashFeeBps;
+        product.mintFeeBps = mintFeeBps;
+        product.burnFeeBps = burnFeeBps;
+        product.flashFeeBps = flashFeeBps;
 
-        emit BasketFeeConfigUpdated(basketId, mintFeeBps, burnFeeBps, flashFeeBps);
+        emit ProductFeeConfigUpdated(LibEdenBasketStorage.PRODUCT_ID, mintFeeBps, burnFeeBps, flashFeeBps);
     }
 
     function setPoolFeeShareBps(uint16 poolFeeShareBps) external nonReentrant {
