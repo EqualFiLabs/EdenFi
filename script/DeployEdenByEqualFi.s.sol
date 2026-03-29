@@ -45,9 +45,11 @@ interface IPoolManagementFacetInitConfig {
 }
 
 contract DeployEdenByEqualFi is Script {
+    uint256 internal constant DIAMOND_CORE_FACET_COUNT = 3;
     uint256 internal constant NON_EDEN_LAUNCH_FACET_COUNT = 13;
     uint256 internal constant EDEN_SINGLETON_FACET_COUNT = 7;
     uint256 internal constant LAUNCH_FACET_COUNT = NON_EDEN_LAUNCH_FACET_COUNT + EDEN_SINGLETON_FACET_COUNT;
+    uint256 internal constant TOTAL_FACET_COUNT = DIAMOND_CORE_FACET_COUNT + LAUNCH_FACET_COUNT;
     uint256 internal constant CUT_BATCH_SIZE = 3;
 
     struct BaseDeployment {
@@ -113,7 +115,7 @@ contract DeployEdenByEqualFi is Script {
         DiamondLoupeFacet loupe = new DiamondLoupeFacet();
         OwnershipFacet own = new OwnershipFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](DIAMOND_CORE_FACET_COUNT);
         cuts[0] = _cut(address(cut), _selectorsDiamondCut());
         cuts[1] = _cut(address(loupe), _selectorsDiamondLoupe());
         cuts[2] = _cut(address(own), _selectorsOwnership());

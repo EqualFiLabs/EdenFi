@@ -112,11 +112,11 @@
 - [x] 4. Verify EDEN cleanup does not delete or orphan those selectors/tests
 
 ## Task 12: Rewrite Deployment and Selector Wiring To Match the New Boundary
-- [ ] 1. Update `script/DeployEdenByEqualFi.s.sol`
-- [ ] 2. Remove selector groups for EDEN generic basket surfaces
-- [ ] 3. Remove selector groups for deleted legacy facets
-- [ ] 4. Ensure only intended EDEN singleton-product facets are cut into the diamond
-- [ ] 5. Update loupe and facet-count assertions in deploy tests
+- [x] 1. Update `script/DeployEdenByEqualFi.s.sol`
+- [x] 2. Remove selector groups for EDEN generic basket surfaces
+- [x] 3. Remove selector groups for deleted legacy facets
+- [x] 4. Ensure only intended EDEN singleton-product facets are cut into the diamond
+- [x] 5. Update loupe and facet-count assertions in deploy tests
 
 ## Task 13: Add Regression Tests For the Clean Break
 - [ ] 1. Add tests proving arbitrary EDEN basket creation is impossible

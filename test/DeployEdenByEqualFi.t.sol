@@ -102,7 +102,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
 
         IDiamondLoupe loupe = IDiamondLoupe(diamond);
         address[] memory facetAddresses = loupe.facetAddresses();
-        _assertEq(facetAddresses.length, 23, "facet count");
+        _assertEq(facetAddresses.length, TOTAL_FACET_COUNT, "facet count");
 
         _assertTrue(
             loupe.facetAddress(PositionManagementFacet.mintPosition.selector) != address(0), "position facet cut"
