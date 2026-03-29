@@ -220,6 +220,46 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         );
     }
 
+    function activateLine(uint256 lineId) external {
+        LibEqualScaleAlphaStorage.CreditLine storage line = LibEqualScaleAlphaStorage.s().lines[lineId];
+        if (
+            line.status != LibEqualScaleAlphaStorage.CreditLineStatus.SoloWindow
+                && line.status != LibEqualScaleAlphaStorage.CreditLineStatus.PooledOpen
+        ) {
+            revert InvalidProposalTerms("line not activatable during current status");
+        }
+
+        uint256 acceptedAmount = _acceptedActivationAmount(line);
+        uint40 activatedAt = uint40(block.timestamp);
+
+        if (
+            acceptedAmount < line.requestedTargetLimit
+                && line.status == LibEqualScaleAlphaStorage.CreditLineStatus.PooledOpen
+        ) {
+            _requireBorrowerPositionOwner(line.borrowerPositionId);
+        }
+
+        if (line.collateralMode == LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted) {
+            _encumberBorrowerCollateral(lineId, line);
+        }
+
+        line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Active;
+        line.activeLimit = acceptedAmount;
+        line.currentPeriodDrawn = 0;
+        line.currentPeriodStartedAt = activatedAt;
+        line.interestAccruedAt = activatedAt;
+        line.nextDueAt = activatedAt + line.paymentIntervalSecs;
+        line.termStartedAt = activatedAt;
+        line.termEndAt = activatedAt + line.facilityTermSecs;
+        line.refinanceEndAt = line.termEndAt + line.refinanceWindowSecs;
+        line.delinquentSince = 0;
+        line.missedPayments = 0;
+
+        emit CreditLineActivated(
+            lineId, acceptedAmount, line.collateralMode, line.nextDueAt, line.termEndAt, line.refinanceEndAt
+        );
+    }
+
     function _createLineProposal(
         uint256 borrowerPositionId,
         bytes32 borrowerPositionKey,
@@ -484,6 +524,40 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         revert InvalidCollateralMode(collateralMode, borrowerCollateralPoolId, borrowerCollateralAmount);
     }
 
+    function _acceptedActivationAmount(LibEqualScaleAlphaStorage.CreditLine storage line)
+        internal
+        view
+        returns (uint256 acceptedAmount)
+    {
+        acceptedAmount = line.currentCommittedAmount;
+        if (acceptedAmount >= line.requestedTargetLimit) {
+            return line.requestedTargetLimit;
+        }
+        if (acceptedAmount < line.minimumViableLine) {
+            revert InvalidProposalTerms("commitments below minimum viable line");
+        }
+    }
+
+    function _encumberBorrowerCollateral(uint256 lineId, LibEqualScaleAlphaStorage.CreditLine storage line) internal {
+        bytes32 borrowerPositionKey = line.borrowerPositionKey;
+        uint256 collateralPoolId = line.borrowerCollateralPoolId;
+        _settlePosition(collateralPoolId, borrowerPositionKey);
+
+        Types.PoolData storage collateralPool = LibAppStorage.s().pools[collateralPoolId];
+        if (!collateralPool.initialized) {
+            revert InvalidProposalTerms("borrower collateral pool not initialized");
+        }
+
+        uint256 available = _availablePrincipal(collateralPool, borrowerPositionKey, collateralPoolId);
+        if (available < line.borrowerCollateralAmount) {
+            revert InvalidProposalTerms("insufficient borrower collateral");
+        }
+
+        LibModuleEncumbrance.encumber(
+            borrowerPositionKey, collateralPoolId, _borrowerCollateralModuleId(lineId), line.borrowerCollateralAmount
+        );
+    }
+
     function _statusMutationReason(uint256 lineId, LibEqualScaleAlphaStorage.CreditLineStatus status)
         internal
         pure
@@ -547,9 +621,17 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         return uint256(keccak256(abi.encodePacked("equalscale.alpha.commitment.", lineId)));
     }
 
+    function _borrowerCollateralModuleId(uint256 lineId) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encodePacked("equalscale.alpha.collateral.", lineId)));
+    }
+
     function _settleSettlementPosition(uint256 settlementPoolId, bytes32 lenderPositionKey) internal {
-        LibActiveCreditIndex.settle(settlementPoolId, lenderPositionKey);
-        LibFeeIndex.settle(settlementPoolId, lenderPositionKey);
+        _settlePosition(settlementPoolId, lenderPositionKey);
+    }
+
+    function _settlePosition(uint256 poolId, bytes32 positionKey) internal {
+        LibActiveCreditIndex.settle(poolId, positionKey);
+        LibFeeIndex.settle(poolId, positionKey);
     }
 
     function _positionNft() internal view returns (PositionNFT positionNft) {

@@ -100,11 +100,22 @@ contract EqualScaleAlphaFacetHarness is EqualScaleAlphaFacet, PositionAgentViewF
         return _settlementCommitmentModuleId(lineId);
     }
 
+    function borrowerCollateralModuleId(uint256 lineId) external pure returns (uint256) {
+        return _borrowerCollateralModuleId(lineId);
+    }
+
     function moduleEncumbranceForLine(uint256 lineId, uint256 lenderPositionId) external view returns (uint256) {
         PositionNFT positionNft = _positionNft();
         bytes32 positionKey = positionNft.getPositionKey(lenderPositionId);
         uint256 pid = positionNft.getPoolId(lenderPositionId);
         return LibEncumbrance.getModuleEncumberedForModule(positionKey, pid, _settlementCommitmentModuleId(lineId));
+    }
+
+    function moduleEncumbranceForBorrowerCollateral(uint256 lineId) external view returns (uint256) {
+        LibEqualScaleAlphaStorage.CreditLine storage creditLine = LibEqualScaleAlphaStorage.s().lines[lineId];
+        return LibEncumbrance.getModuleEncumberedForModule(
+            creditLine.borrowerPositionKey, creditLine.borrowerCollateralPoolId, _borrowerCollateralModuleId(lineId)
+        );
     }
 
     function setLineCurrentCommittedAmount(uint256 lineId, uint256 currentCommittedAmount) external {
@@ -819,6 +830,131 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
             commitment.status == LibEqualScaleAlphaStorage.CommitmentStatus.Canceled, "transferred commitment not cancelable"
         );
         require(facet.moduleEncumbranceForLine(lineId, lenderPositionId) == 0, "transferred encumbrance not released");
+    }
+
+    function test_activateLine_fullCommitActivatesUnsecuredLineAndInitializesLiveState() external {
+        uint256 lineId = _createDefaultLine();
+        uint256 lenderPositionId = _seedSettlementPosition(bob, TARGET_LIMIT);
+        uint40 activatedAt = uint40(block.timestamp);
+        uint40 expectedNextDueAt = activatedAt + PAYMENT_INTERVAL_SECS;
+        uint40 expectedTermEndAt = activatedAt + FACILITY_TERM_SECS;
+        uint40 expectedRefinanceEndAt = expectedTermEndAt + REFINANCE_WINDOW_SECS;
+
+        vm.prank(bob);
+        facet.commitSolo(lineId, lenderPositionId);
+
+        vm.expectEmit(true, false, false, true, address(facet));
+        emit CreditLineActivated(
+            lineId,
+            TARGET_LIMIT,
+            LibEqualScaleAlphaStorage.CollateralMode.None,
+            expectedNextDueAt,
+            expectedTermEndAt,
+            expectedRefinanceEndAt
+        );
+
+        vm.prank(carol);
+        facet.activateLine(lineId);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        require(line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "line not active");
+        require(line.activeLimit == TARGET_LIMIT, "active limit mismatch");
+        require(line.currentCommittedAmount == TARGET_LIMIT, "committed amount changed");
+        require(line.currentPeriodDrawn == 0, "current period drawn should reset");
+        require(line.currentPeriodStartedAt == activatedAt, "period start mismatch");
+        require(line.interestAccruedAt == activatedAt, "interest checkpoint mismatch");
+        require(line.nextDueAt == expectedNextDueAt, "next due mismatch");
+        require(line.termStartedAt == activatedAt, "term start mismatch");
+        require(line.termEndAt == expectedTermEndAt, "term end mismatch");
+        require(line.refinanceEndAt == expectedRefinanceEndAt, "refinance end mismatch");
+        require(facet.moduleEncumbranceForLine(lineId, lenderPositionId) == TARGET_LIMIT, "lender encumbrance released");
+        require(facet.moduleEncumbranceForBorrowerCollateral(lineId) == 0, "unexpected borrower collateral");
+    }
+
+    function test_activateLine_borrowerAcceptsResizedBorrowerCollateralizedActivation() external {
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+        bytes32 borrowerPositionKey = positionNft.getPositionKey(borrowerPositionId);
+        uint256 acceptedAmount = 700e18;
+        uint40 activatedAt = uint40(block.timestamp + 3 days + 1);
+        uint40 expectedNextDueAt = activatedAt + PAYMENT_INTERVAL_SECS;
+        uint40 expectedTermEndAt = activatedAt + FACILITY_TERM_SECS;
+        uint40 expectedRefinanceEndAt = expectedTermEndAt + REFINANCE_WINDOW_SECS;
+
+        facet.setPoolInitialized(SETTLEMENT_POOL_ID, true);
+        facet.setPoolInitialized(COLLATERAL_POOL_ID, true);
+        facet.seedPrincipal(COLLATERAL_POOL_ID, borrowerPositionKey, COLLATERAL_AMOUNT);
+
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(borrowerPositionId, _borrowerPostedProposalParams());
+
+        vm.warp(block.timestamp + 3 days + 1);
+        facet.transitionToPooledOpen(lineId);
+
+        uint256 lenderPositionId = _seedSettlementPosition(bob, acceptedAmount);
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionId, acceptedAmount);
+
+        vm.expectEmit(true, false, false, true, address(facet));
+        emit CreditLineActivated(
+            lineId,
+            acceptedAmount,
+            LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted,
+            expectedNextDueAt,
+            expectedTermEndAt,
+            expectedRefinanceEndAt
+        );
+
+        vm.prank(alice);
+        facet.activateLine(lineId);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        require(line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "resized line not active");
+        require(line.activeLimit == acceptedAmount, "resized active limit mismatch");
+        require(line.currentCommittedAmount == acceptedAmount, "committed amount changed");
+        require(line.currentPeriodStartedAt == activatedAt, "resized period start mismatch");
+        require(line.interestAccruedAt == activatedAt, "resized interest checkpoint mismatch");
+        require(line.nextDueAt == expectedNextDueAt, "resized next due mismatch");
+        require(line.termStartedAt == activatedAt, "resized term start mismatch");
+        require(line.termEndAt == expectedTermEndAt, "resized term end mismatch");
+        require(line.refinanceEndAt == expectedRefinanceEndAt, "resized refinance end mismatch");
+        require(
+            facet.moduleEncumbranceForLine(lineId, lenderPositionId) == acceptedAmount, "resized lender encumbrance released"
+        );
+        require(
+            facet.moduleEncumbranceForBorrowerCollateral(lineId) == COLLATERAL_AMOUNT,
+            "borrower collateral not encumbered"
+        );
+    }
+
+    function test_activateLine_revertsWhenCommitmentsRemainBelowMinimumViableLine() external {
+        uint256 lineId = _openLineToPool();
+        uint256 lenderPositionId = _seedSettlementPosition(bob, MINIMUM_VIABLE_LINE - 1);
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionId, MINIMUM_VIABLE_LINE - 1);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IEqualScaleAlphaErrors.InvalidProposalTerms.selector, "commitments below minimum viable line"
+            )
+        );
+        facet.activateLine(lineId);
+    }
+
+    function test_activateLine_revertsWhenNonBorrowerAttemptsResizedActivation() external {
+        uint256 lineId = _openLineToPool();
+        uint256 lenderPositionId = _seedSettlementPosition(bob, 700e18);
+        uint256 borrowerPositionId = facet.line(lineId).borrowerPositionId;
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionId, 700e18);
+
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.BorrowerPositionNotOwned.selector, bob, borrowerPositionId)
+        );
+        facet.activateLine(lineId);
     }
 
     function _registerBorrowerProfileForAlice() internal returns (uint256 positionId) {
