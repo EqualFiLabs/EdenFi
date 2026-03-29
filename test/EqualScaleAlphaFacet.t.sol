@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.20;
 
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
 import {IEqualScaleAlphaErrors} from "src/equalscale/IEqualScaleAlphaErrors.sol";
@@ -11,8 +12,18 @@ import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
 import {LibPositionAgentStorage} from "src/libraries/LibPositionAgentStorage.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
+import {InsufficientPoolLiquidity} from "src/libraries/Errors.sol";
+import {Types} from "src/libraries/Types.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {MockERC6551RegistryLaunch, MockIdentityRegistryLaunch} from "test/utils/PositionAgentBootstrapMocks.sol";
+
+contract EqualScaleAlphaMockERC20 is ERC20 {
+    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) { }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
 
 contract EqualScaleAlphaFacetHarness is EqualScaleAlphaFacet, PositionAgentViewFacet {
     function setPositionNFT(address nft) external {
@@ -90,6 +101,14 @@ contract EqualScaleAlphaFacetHarness is EqualScaleAlphaFacet, PositionAgentViewF
         LibAppStorage.s().pools[pid].initialized = initialized;
     }
 
+    function setPoolUnderlying(uint256 pid, address underlying) external {
+        LibAppStorage.s().pools[pid].underlying = underlying;
+    }
+
+    function setPoolTrackedBalance(uint256 pid, uint256 trackedBalance) external {
+        LibAppStorage.s().pools[pid].trackedBalance = trackedBalance;
+    }
+
     function seedPrincipal(uint256 pid, bytes32 positionKey, uint256 principal) external {
         LibAppStorage.s().pools[pid].userPrincipal[positionKey] = principal;
         LibAppStorage.s().pools[pid].userFeeIndex[positionKey] = LibAppStorage.s().pools[pid].feeIndex;
@@ -128,6 +147,27 @@ contract EqualScaleAlphaFacetHarness is EqualScaleAlphaFacet, PositionAgentViewF
         }
         LibEqualScaleAlphaStorage.s().lines[lineId].status = LibEqualScaleAlphaStorage.CreditLineStatus(statusRaw);
     }
+
+    function sameAssetDebt(uint256 pid, bytes32 positionKey) external view returns (uint256) {
+        return LibAppStorage.s().pools[pid].userSameAssetDebt[positionKey];
+    }
+
+    function debtActiveCreditState(uint256 pid, bytes32 positionKey)
+        external
+        view
+        returns (uint256 principal, uint40 startTime, uint256 indexSnapshot)
+    {
+        Types.ActiveCreditState storage state = LibAppStorage.s().pools[pid].userActiveCreditStateDebt[positionKey];
+        return (state.principal, state.startTime, state.indexSnapshot);
+    }
+
+    function poolTrackedBalance(uint256 pid) external view returns (uint256) {
+        return LibAppStorage.s().pools[pid].trackedBalance;
+    }
+
+    function poolActiveCreditPrincipalTotal(uint256 pid) external view returns (uint256) {
+        return LibAppStorage.s().pools[pid].activeCreditPrincipalTotal;
+    }
 }
 
 contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
@@ -147,6 +187,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
     uint256 internal constant COLLATERAL_AMOUNT = 250e18;
 
     EqualScaleAlphaFacetHarness internal facet;
+    EqualScaleAlphaMockERC20 internal settlementToken;
     PositionNFT internal positionNft;
     MockERC6551RegistryLaunch internal registry;
     MockIdentityRegistryLaunch internal identityRegistry;
@@ -159,6 +200,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     function setUp() public {
         facet = new EqualScaleAlphaFacetHarness();
+        settlementToken = new EqualScaleAlphaMockERC20("Settlement", "SET");
         positionNft = new PositionNFT();
         registry = new MockERC6551RegistryLaunch();
         identityRegistry = new MockIdentityRegistryLaunch();
@@ -166,6 +208,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         positionNft.setMinter(address(this));
         facet.setPositionNFT(address(positionNft));
         facet.setPositionAgentViews(address(registry), address(0x1234), address(identityRegistry));
+        facet.setPoolUnderlying(SETTLEMENT_POOL_ID, address(settlementToken));
     }
 
     function test_registerBorrowerProfile_recordsMetadataAndResolvedAgentId() external {
@@ -957,6 +1000,175 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         facet.activateLine(lineId);
     }
 
+    function test_draw_updatesDebtTransfersToTreasuryAndAllocatesExposureProRata() external {
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+        bytes32 borrowerPositionKey = positionNft.getPositionKey(borrowerPositionId);
+        bytes32 lenderOneKey;
+        bytes32 lenderTwoKey;
+
+        facet.setPoolInitialized(SETTLEMENT_POOL_ID, true);
+        facet.setPoolTrackedBalance(SETTLEMENT_POOL_ID, TARGET_LIMIT);
+        settlementToken.mint(address(facet), TARGET_LIMIT);
+
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(borrowerPositionId, _defaultProposalParamsNone());
+
+        vm.warp(block.timestamp + 3 days + 1);
+        facet.transitionToPooledOpen(lineId);
+
+        uint256 lenderPositionOne = _seedSettlementPosition(bob, 600e18);
+        uint256 lenderPositionTwo = _seedSettlementPosition(carol, 400e18);
+        lenderOneKey = positionNft.getPositionKey(lenderPositionOne);
+        lenderTwoKey = positionNft.getPositionKey(lenderPositionTwo);
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionOne, 600e18);
+        vm.prank(carol);
+        facet.commitPooled(lineId, lenderPositionTwo, 400e18);
+
+        vm.prank(alice);
+        facet.activateLine(lineId);
+
+        vm.expectEmit(true, false, false, true, address(facet));
+        emit CreditDrawn(lineId, 250e18, 250e18, 250e18);
+
+        vm.prank(alice);
+        facet.draw(lineId, 250e18);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        LibEqualScaleAlphaStorage.Commitment memory first = facet.commitment(lineId, lenderPositionOne);
+        LibEqualScaleAlphaStorage.Commitment memory second = facet.commitment(lineId, lenderPositionTwo);
+        (uint256 debtPrincipal, uint40 debtStartTime, uint256 debtIndexSnapshot) =
+            facet.debtActiveCreditState(SETTLEMENT_POOL_ID, borrowerPositionKey);
+
+        require(line.outstandingPrincipal == 250e18, "outstanding principal mismatch");
+        require(line.currentPeriodDrawn == 250e18, "period draw mismatch");
+        require(first.principalExposed == 150e18, "first exposure mismatch");
+        require(second.principalExposed == 100e18, "second exposure mismatch");
+        require(first.lenderPositionKey == lenderOneKey, "first lender key changed");
+        require(second.lenderPositionKey == lenderTwoKey, "second lender key changed");
+        require(facet.sameAssetDebt(SETTLEMENT_POOL_ID, borrowerPositionKey) == 250e18, "same-asset debt mismatch");
+        require(
+            facet.poolActiveCreditPrincipalTotal(SETTLEMENT_POOL_ID) == 250e18, "active credit principal mismatch"
+        );
+        require(debtPrincipal == 250e18, "debt active credit principal mismatch");
+        require(debtStartTime == uint40(block.timestamp), "debt start time mismatch");
+        require(debtIndexSnapshot == 0, "debt index snapshot mismatch");
+        require(facet.poolTrackedBalance(SETTLEMENT_POOL_ID) == TARGET_LIMIT - 250e18, "tracked balance mismatch");
+        require(settlementToken.balanceOf(treasuryWallet) == 250e18, "treasury transfer mismatch");
+    }
+
+    function test_draw_resetsPeriodUsageWhenPaymentIntervalRolls() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.maxDrawPerPeriod = 450e18;
+
+        uint256 lineId = _createActivatedLine(params, 1_000e18, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.draw(lineId, 200e18);
+
+        uint40 firstPeriodStart = facet.line(lineId).currentPeriodStartedAt;
+
+        vm.warp(block.timestamp + PAYMENT_INTERVAL_SECS + 1);
+
+        vm.prank(alice);
+        facet.draw(lineId, 200e18);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        require(line.outstandingPrincipal == 400e18, "outstanding principal after rollover mismatch");
+        require(line.currentPeriodDrawn == 200e18, "period draw should reset on rollover");
+        require(line.currentPeriodStartedAt == uint40(block.timestamp), "period start should roll forward");
+        require(line.currentPeriodStartedAt > firstPeriodStart, "period start should advance");
+    }
+
+    function test_draw_revertsWhenPeriodCapExceeded() external {
+        uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.draw(lineId, MAX_DRAW_PER_PERIOD);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IEqualScaleAlphaErrors.InvalidDrawPacing.selector,
+                1,
+                MAX_DRAW_PER_PERIOD,
+                MAX_DRAW_PER_PERIOD
+            )
+        );
+        facet.draw(lineId, 1);
+    }
+
+    function test_draw_revertsWhenAvailableCapacityExceeded() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+
+        uint256 lineId = _createActivatedLine(params, TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.draw(lineId, 700e18);
+
+        vm.warp(block.timestamp + PAYMENT_INTERVAL_SECS + 1);
+
+        vm.prank(alice);
+        facet.draw(lineId, 300e18);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.InvalidProposalTerms.selector, "draw exceeds available capacity")
+        );
+        facet.draw(lineId, 1);
+    }
+
+    function test_draw_revertsWhenBorrowerDoesNotOwnPosition() external {
+        uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
+        uint256 borrowerPositionId = facet.line(lineId).borrowerPositionId;
+
+        vm.prank(alice);
+        positionNft.transferFrom(alice, bob, borrowerPositionId);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.BorrowerPositionNotOwned.selector, alice, borrowerPositionId)
+        );
+        facet.draw(lineId, 1);
+    }
+
+    function test_draw_revertsWhenSettlementPoolLiquidityIsTooLow() external {
+        uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, 100e18);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(InsufficientPoolLiquidity.selector, 150e18, 100e18));
+        facet.draw(lineId, 150e18);
+    }
+
+    function test_draw_statusGatingAllowsOnlyActive() external {
+        uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.draw(lineId, 1);
+
+        LibEqualScaleAlphaStorage.CreditLineStatus[6] memory blockedStatuses = [
+            LibEqualScaleAlphaStorage.CreditLineStatus.Frozen,
+            LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing,
+            LibEqualScaleAlphaStorage.CreditLineStatus.Runoff,
+            LibEqualScaleAlphaStorage.CreditLineStatus.Delinquent,
+            LibEqualScaleAlphaStorage.CreditLineStatus.ChargedOff,
+            LibEqualScaleAlphaStorage.CreditLineStatus.Closed
+        ];
+
+        for (uint256 i = 0; i < blockedStatuses.length; i++) {
+            uint256 blockedLineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
+            facet.setLineStatus(blockedLineId, uint256(blockedStatuses[i]));
+
+            vm.prank(alice);
+            vm.expectRevert(
+                abi.encodeWithSelector(IEqualScaleAlphaErrors.InvalidProposalTerms.selector, "line not active for draw")
+            );
+            facet.draw(blockedLineId, 1);
+        }
+    }
+
     function _registerBorrowerProfileForAlice() internal returns (uint256 positionId) {
         positionId = positionNft.mint(alice, 7);
         uint256 agentId = 17;
@@ -981,6 +1193,37 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         lineId = _createDefaultLine();
         vm.warp(block.timestamp + 3 days + 1);
         facet.transitionToPooledOpen(lineId);
+    }
+
+    function _createActivatedLine(
+        EqualScaleAlphaFacet.LineProposalParams memory params,
+        uint256 committedAmount,
+        uint256 trackedBalance
+    ) internal returns (uint256 lineId) {
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+
+        facet.setPoolInitialized(params.settlementPoolId, true);
+        facet.setPoolUnderlying(params.settlementPoolId, address(settlementToken));
+        facet.setPoolTrackedBalance(params.settlementPoolId, trackedBalance);
+        settlementToken.mint(address(facet), trackedBalance);
+
+        vm.prank(alice);
+        lineId = facet.createLineProposal(borrowerPositionId, params);
+
+        uint256 lenderPositionId = _seedSettlementPosition(bob, committedAmount);
+
+        if (committedAmount == params.requestedTargetLimit) {
+            vm.prank(bob);
+            facet.commitSolo(lineId, lenderPositionId);
+        } else {
+            vm.warp(block.timestamp + 3 days + 1);
+            facet.transitionToPooledOpen(lineId);
+            vm.prank(bob);
+            facet.commitPooled(lineId, lenderPositionId, committedAmount);
+        }
+
+        vm.prank(alice);
+        facet.activateLine(lineId);
     }
 
     function _seedSettlementPosition(address owner, uint256 principal) internal returns (uint256 positionId) {

@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.20;
 
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IEqualScaleAlphaErrors} from "src/equalscale/IEqualScaleAlphaErrors.sol";
 import {IEqualScaleAlphaEvents} from "src/equalscale/IEqualScaleAlphaEvents.sol";
 import {LibActiveCreditIndex} from "src/libraries/LibActiveCreditIndex.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
+import {LibCurrency} from "src/libraries/LibCurrency.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
 import {LibFeeIndex} from "src/libraries/LibFeeIndex.sol";
 import {LibModuleEncumbrance} from "src/libraries/LibModuleEncumbrance.sol";
+import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
-import {DirectError_InvalidPositionNFT} from "src/libraries/Errors.sol";
+import {DirectError_InvalidPositionNFT, InsufficientPoolLiquidity} from "src/libraries/Errors.sol";
 import {Types} from "src/libraries/Types.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 
@@ -258,6 +261,68 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         emit CreditLineActivated(
             lineId, acceptedAmount, line.collateralMode, line.nextDueAt, line.termEndAt, line.refinanceEndAt
         );
+    }
+
+    function draw(uint256 lineId, uint256 amount) external {
+        if (amount == 0) {
+            revert InvalidProposalTerms("amount == 0");
+        }
+
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
+        LibEqualScaleAlphaStorage.CreditLine storage line = store.lines[lineId];
+        bytes32 borrowerPositionKey = _requireBorrowerPositionOwner(line.borrowerPositionId);
+        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Active) {
+            revert InvalidProposalTerms("line not active for draw");
+        }
+
+        _resetDrawPeriodIfRolled(line);
+
+        uint256 nextPeriodDrawn = line.currentPeriodDrawn + amount;
+        if (nextPeriodDrawn > line.maxDrawPerPeriod) {
+            revert InvalidDrawPacing(amount, line.currentPeriodDrawn, line.maxDrawPerPeriod);
+        }
+
+        uint256 nextOutstandingPrincipal = line.outstandingPrincipal + amount;
+        if (nextOutstandingPrincipal > line.activeLimit) {
+            revert InvalidProposalTerms("draw exceeds available capacity");
+        }
+
+        LibEqualScaleAlphaStorage.BorrowerProfile storage profile = store.borrowerProfiles[borrowerPositionKey];
+        Types.PoolData storage settlementPool = LibAppStorage.s().pools[line.settlementPoolId];
+        if (!settlementPool.initialized) {
+            revert InvalidProposalTerms("settlement pool not initialized");
+        }
+        if (settlementPool.trackedBalance < amount) {
+            revert InsufficientPoolLiquidity(amount, settlementPool.trackedBalance);
+        }
+
+        LibPoolMembership._ensurePoolMembership(borrowerPositionKey, line.settlementPoolId, true);
+        _settleSettlementPosition(line.settlementPoolId, borrowerPositionKey);
+
+        line.outstandingPrincipal = nextOutstandingPrincipal;
+        line.currentPeriodDrawn = nextPeriodDrawn;
+
+        settlementPool.userSameAssetDebt[borrowerPositionKey] += amount;
+        settlementPool.activeCreditPrincipalTotal += amount;
+        LibActiveCreditIndex.applyWeightedIncreaseWithGate(
+            settlementPool,
+            settlementPool.userActiveCreditStateDebt[borrowerPositionKey],
+            amount,
+            line.settlementPoolId,
+            borrowerPositionKey,
+            true
+        );
+        settlementPool.userActiveCreditStateDebt[borrowerPositionKey].indexSnapshot = settlementPool.activeCreditIndex;
+
+        settlementPool.trackedBalance -= amount;
+        if (LibCurrency.isNative(settlementPool.underlying)) {
+            LibAppStorage.s().nativeTrackedTotal -= amount;
+        }
+
+        _allocateDrawExposure(store, lineId, amount);
+        LibCurrency.transfer(settlementPool.underlying, profile.treasuryWallet, amount);
+
+        emit CreditDrawn(lineId, amount, line.outstandingPrincipal, line.currentPeriodDrawn);
     }
 
     function _createLineProposal(
@@ -556,6 +621,60 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         LibModuleEncumbrance.encumber(
             borrowerPositionKey, collateralPoolId, _borrowerCollateralModuleId(lineId), line.borrowerCollateralAmount
         );
+    }
+
+    function _resetDrawPeriodIfRolled(LibEqualScaleAlphaStorage.CreditLine storage line) internal {
+        if (block.timestamp < uint256(line.currentPeriodStartedAt) + line.paymentIntervalSecs) {
+            return;
+        }
+
+        line.currentPeriodStartedAt = uint40(block.timestamp);
+        line.currentPeriodDrawn = 0;
+    }
+
+    function _allocateDrawExposure(
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store,
+        uint256 lineId,
+        uint256 amount
+    ) internal {
+        uint256[] storage lenderPositionIds = store.lineCommitmentPositionIds[lineId];
+        uint256 totalCommitted;
+        uint256 activeCommitmentCount;
+        uint256 len = lenderPositionIds.length;
+
+        for (uint256 i = 0; i < len; i++) {
+            LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionIds[i]];
+            if (
+                commitment.status == LibEqualScaleAlphaStorage.CommitmentStatus.Active && commitment.committedAmount != 0
+            ) {
+                totalCommitted += commitment.committedAmount;
+                activeCommitmentCount++;
+            }
+        }
+
+        if (totalCommitted == 0 || activeCommitmentCount == 0) {
+            revert InvalidProposalTerms("line has no active commitments");
+        }
+
+        uint256 remaining = amount;
+        uint256 seenActiveCommitments;
+        for (uint256 i = 0; i < len; i++) {
+            LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionIds[i]];
+            if (
+                commitment.status != LibEqualScaleAlphaStorage.CommitmentStatus.Active || commitment.committedAmount == 0
+            ) {
+                continue;
+            }
+
+            seenActiveCommitments++;
+            uint256 exposureShare = remaining;
+            if (seenActiveCommitments != activeCommitmentCount) {
+                exposureShare = Math.mulDiv(amount, commitment.committedAmount, totalCommitted);
+                remaining -= exposureShare;
+            }
+
+            commitment.principalExposed += exposureShare;
+        }
     }
 
     function _statusMutationReason(uint256 lineId, LibEqualScaleAlphaStorage.CreditLineStatus status)
