@@ -6,6 +6,11 @@ import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage
 interface IEqualScaleAlphaErrors {
     error BorrowerPositionNotOwned(address caller, uint256 borrowerPositionId);
     error LenderPositionNotOwned(address caller, uint256 lenderPositionId);
+    error BorrowerIdentityNotRegistered(uint256 borrowerPositionId);
+    error BorrowerProfileAlreadyActive(bytes32 borrowerPositionKey);
+    error BorrowerProfileNotActive(bytes32 borrowerPositionKey);
+    error InvalidTreasuryWallet();
+    error InvalidBankrToken();
     error InvalidProposalTerms(string reason);
     error InvalidCollateralMode(
         LibEqualScaleAlphaStorage.CollateralMode collateralMode,
