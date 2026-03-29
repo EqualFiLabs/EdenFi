@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
 import {DeployEdenByEqualFi} from "script/DeployEdenByEqualFi.s.sol";
 import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockController.sol";
@@ -424,5 +425,80 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         vm.warp(block.timestamp + 7 days + 1);
         vm.expectRevert(PositionAgent_ConfigLocked.selector);
         controller.execute(deployment.diamond, 0, data, bytes32(0), salt);
+    }
+
+    function test_DeployLaunch_IntegratesWalletRegistrationIntoLivePositionReads() public {
+        LaunchDeployment memory deployment = deployLaunch(
+            address(this),
+            address(this),
+            treasury,
+            address(entryPoint),
+            address(erc6551Registry),
+            address(identityRegistry)
+        );
+
+        Types.PoolConfig memory cfg = _poolConfig();
+        FixedDelayTimelockController controller =
+            FixedDelayTimelockController(payable(deployment.timelockController));
+        _timelockCall(
+            controller,
+            deployment.diamond,
+            abi.encodeWithSelector(PoolManagementFacet.setDefaultPoolConfig.selector, cfg)
+        );
+        _timelockCall(
+            controller,
+            deployment.diamond,
+            abi.encodeWithSelector(bytes4(keccak256("initPool(address)")), address(eve))
+        );
+
+        vm.prank(alice);
+        uint256 tokenId = PositionManagementFacet(deployment.diamond).mintPosition(1);
+
+        address expectedTba = PositionAgentTBAFacet(deployment.diamond).computeTBAAddress(tokenId);
+        vm.prank(alice);
+        address deployedTba = PositionAgentTBAFacet(deployment.diamond).deployTBA(tokenId);
+
+        _assertEqAddress(deployedTba, expectedTba, "wallet deployed");
+
+        uint256 agentId = 42;
+        identityRegistry.setOwner(agentId, deployedTba);
+
+        vm.prank(alice);
+        PositionAgentRegistryFacet(deployment.diamond).recordAgentRegistration(tokenId, agentId);
+
+        _assertEq(PositionAgentViewFacet(deployment.diamond).getAgentId(tokenId), agentId, "agent id recorded");
+        _assertTrue(PositionAgentViewFacet(deployment.diamond).isAgentRegistered(tokenId), "agent registered");
+        _assertTrue(PositionAgentViewFacet(deployment.diamond).isCanonicalAgentLink(tokenId), "canonical link");
+        _assertTrue(
+            PositionAgentViewFacet(deployment.diamond).isRegistrationComplete(tokenId), "registration complete"
+        );
+
+        EdenViewFacet.PositionAgentWalletView memory agentView =
+            EdenViewFacet(deployment.diamond).getPositionAgentView(tokenId);
+        _assertEqAddress(agentView.tbaAddress, deployedTba, "agent view tba");
+        _assertTrue(agentView.tbaDeployed, "agent view deployed");
+        _assertEq(agentView.agentId, agentId, "agent view id");
+        _assertTrue(agentView.agentRegistered, "agent view registered");
+        _assertTrue(agentView.canonicalLink, "agent view canonical");
+        _assertTrue(agentView.registrationComplete, "agent view complete");
+
+        EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(deployment.diamond).getPositionPortfolio(tokenId);
+        _assertEqAddress(portfolio.owner, alice, "portfolio owner");
+        _assertEqAddress(portfolio.agent.tbaAddress, deployedTba, "portfolio tba");
+        _assertEq(portfolio.agent.agentId, agentId, "portfolio agent id");
+        _assertTrue(portfolio.agent.canonicalLink, "portfolio canonical");
+        _assertTrue(portfolio.agent.registrationComplete, "portfolio complete");
+
+        string memory tokenUri = PositionNFT(deployment.positionNFT).tokenURI(tokenId);
+        string memory expectedUri = string.concat(
+            "equalfi://positions/",
+            Strings.toString(tokenId),
+            "?poolId=1&tba=",
+            Strings.toHexString(uint160(deployedTba), 20),
+            "&tbaDeployed=true&agentId=",
+            Strings.toString(agentId),
+            "&agentCanonical=true&agentComplete=true"
+        );
+        _assertEqBytes32(keccak256(bytes(tokenUri)), keccak256(bytes(expectedUri)), "token uri agent state");
     }
 }
