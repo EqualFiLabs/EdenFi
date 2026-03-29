@@ -193,6 +193,17 @@ contract PositionMSCAImplTest {
         require(IERC6551Account(account).owner() == bob, "tba owner did not follow transfer");
     }
 
+    function test_erc1271AndERC721ReceiverSurfaces_areCallable_onDeployedAccount() external {
+        uint256 tokenId = _mintPosition(alice, 1);
+        address account = _createAccount(tokenId);
+
+        bytes4 signatureResult = IERC1271(account).isValidSignature(keccak256("position-agent-wallet"), "");
+        require(signatureResult == bytes4(0xffffffff), "unexpected 1271 fallback result");
+
+        bytes4 receiverResult = IERC721Receiver(account).onERC721Received(address(this), alice, tokenId, "");
+        require(receiverResult == IERC721Receiver.onERC721Received.selector, "bad receiver selector");
+    }
+
     function test_validationInstallationIsDiscoverable_onERC6551DeployedAccount() external {
         uint256 tokenId = _mintPosition(alice, 1);
         address account = _createAccount(tokenId);
