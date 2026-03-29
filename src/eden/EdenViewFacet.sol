@@ -94,6 +94,7 @@ contract EdenViewFacet is EdenLendingLogic {
         uint256 agentId;
         bool agentRegistered;
         bool canonicalLink;
+        bool registrationComplete;
     }
 
     struct PositionPortfolio {
@@ -204,7 +205,9 @@ contract EdenViewFacet is EdenLendingLogic {
             "&agentId=",
             Strings.toString(agent.agentId),
             "&agentCanonical=",
-            _boolString(agent.canonicalLink)
+            _boolString(agent.canonicalLink),
+            "&agentComplete=",
+            _boolString(agent.registrationComplete)
         );
     }
 
@@ -299,6 +302,7 @@ contract EdenViewFacet is EdenLendingLogic {
         }
 
         agent.canonicalLink = abi.decode(data, (address)) == agent.tbaAddress;
+        agent.registrationComplete = agent.canonicalLink;
     }
 
     function getUserPortfolio(address user) external view returns (UserPortfolio memory portfolio) {

@@ -107,6 +107,10 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             "position agent canonical link view cut"
         );
         _assertTrue(
+            IDiamondLoupe(diamond).facetAddress(PositionAgentViewFacet.isRegistrationComplete.selector) != address(0),
+            "position agent registration complete view cut"
+        );
+        _assertTrue(
             IDiamondLoupe(diamond).facetAddress(PositionAgentRegistryFacet.recordAgentRegistration.selector)
                 != address(0),
             "position agent registry facet cut"

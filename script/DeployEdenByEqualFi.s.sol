@@ -376,7 +376,7 @@ contract DeployEdenByEqualFi is Script {
     }
 
     function _selectorsPositionAgentView() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](8);
         s[0] = PositionAgentViewFacet.getTBAAddress.selector;
         s[1] = PositionAgentViewFacet.getAgentId.selector;
         s[2] = PositionAgentViewFacet.isAgentRegistered.selector;
@@ -384,6 +384,7 @@ contract DeployEdenByEqualFi is Script {
         s[4] = PositionAgentViewFacet.getCanonicalRegistries.selector;
         s[5] = PositionAgentViewFacet.getTBAInterfaceSupport.selector;
         s[6] = PositionAgentViewFacet.isCanonicalAgentLink.selector;
+        s[7] = PositionAgentViewFacet.isRegistrationComplete.selector;
     }
 
     function _selectorsPositionAgentRegistry() internal pure returns (bytes4[] memory s) {

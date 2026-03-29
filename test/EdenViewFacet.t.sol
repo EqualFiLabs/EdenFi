@@ -94,6 +94,7 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         assertTrue(!portfolio.agent.tbaDeployed);
         assertEq(portfolio.agent.agentId, 0);
         assertTrue(!portfolio.agent.canonicalLink);
+        assertTrue(!portfolio.agent.registrationComplete);
         assertEq(portfolio.baskets.length, 1);
         assertEq(portfolio.loans.length, 0);
         assertEq(portfolio.rewards.eligiblePrincipal, 10e18);
@@ -120,10 +121,12 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         assertEq(beforeDeploy.agentId, 0);
         assertTrue(!beforeDeploy.agentRegistered);
         assertTrue(!beforeDeploy.canonicalLink);
+        assertTrue(!beforeDeploy.registrationComplete);
 
         vm.prank(alice);
         address deployed = PositionAgentTBAFacet(diamond).deployTBA(alicePositionId);
         assertEq(deployed, predicted);
+        assertTrue(!PositionAgentViewFacet(diamond).isRegistrationComplete(alicePositionId));
 
         uint256 agentId = 77;
         identityRegistry.setOwner(agentId, deployed);
@@ -137,12 +140,15 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         assertEq(walletView.agentId, agentId);
         assertTrue(walletView.agentRegistered);
         assertTrue(walletView.canonicalLink);
+        assertTrue(walletView.registrationComplete);
         assertTrue(PositionAgentViewFacet(diamond).isCanonicalAgentLink(alicePositionId));
+        assertTrue(PositionAgentViewFacet(diamond).isRegistrationComplete(alicePositionId));
 
         EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(alicePositionId);
         assertEq(portfolio.agent.tbaAddress, deployed);
         assertEq(portfolio.agent.agentId, agentId);
         assertTrue(portfolio.agent.canonicalLink);
+        assertTrue(portfolio.agent.registrationComplete);
     }
 
     function test_ActionChecksReflectState() public {
@@ -297,7 +303,7 @@ contract EdenViewFacetTest is EdenLaunchFixture {
                 Strings.toString(alicePositionId),
                 "?poolId=1&tba=",
                 Strings.toHexString(uint160(predicted), 20),
-                "&tbaDeployed=false&agentId=0&agentCanonical=false"
+                "&tbaDeployed=false&agentId=0&agentCanonical=false&agentComplete=false"
             )
         );
         assertTrue(!EdenViewFacet(diamond).hasOpenOffers(positionKey));

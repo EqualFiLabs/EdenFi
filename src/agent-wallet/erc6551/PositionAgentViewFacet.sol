@@ -39,25 +39,12 @@ contract PositionAgentViewFacet {
     }
 
     function isCanonicalAgentLink(uint256 positionTokenId) external view returns (bool) {
+        return _isCanonicalAgentLink(LibPositionAgentStorage.s(), positionTokenId);
+    }
+
+    function isRegistrationComplete(uint256 positionTokenId) external view returns (bool) {
         LibPositionAgentStorage.AgentStorage storage ds = LibPositionAgentStorage.s();
-        uint256 agentId = ds.positionToAgentId[positionTokenId];
-        if (agentId == 0 || ds.identityRegistry == address(0) || ds.identityRegistry.code.length == 0) {
-            return false;
-        }
-
-        address tba = _tbaAddress(ds, positionTokenId);
-        if (tba == address(0)) {
-            return false;
-        }
-
-        (bool ok, bytes memory data) = ds.identityRegistry.staticcall(
-            abi.encodeWithSelector(IERC8004IdentityRegistry.ownerOf.selector, agentId)
-        );
-        if (!ok || data.length < 32) {
-            return false;
-        }
-
-        return abi.decode(data, (address)) == tba;
+        return ds.positionToAgentId[positionTokenId] != 0 && _isCanonicalAgentLink(ds, positionTokenId);
     }
 
     function isTBADeployed(uint256 positionTokenId) external view returns (bool) {
@@ -101,6 +88,31 @@ contract PositionAgentViewFacet {
             return false;
         }
         return abi.decode(data, (bool));
+    }
+
+    function _isCanonicalAgentLink(LibPositionAgentStorage.AgentStorage storage ds, uint256 positionTokenId)
+        internal
+        view
+        returns (bool)
+    {
+        uint256 agentId = ds.positionToAgentId[positionTokenId];
+        if (agentId == 0 || ds.identityRegistry == address(0) || ds.identityRegistry.code.length == 0) {
+            return false;
+        }
+
+        address tba = _tbaAddress(ds, positionTokenId);
+        if (tba == address(0)) {
+            return false;
+        }
+
+        (bool ok, bytes memory data) = ds.identityRegistry.staticcall(
+            abi.encodeWithSelector(IERC8004IdentityRegistry.ownerOf.selector, agentId)
+        );
+        if (!ok || data.length < 32) {
+            return false;
+        }
+
+        return abi.decode(data, (address)) == tba;
     }
 
     function _tbaAddress(LibPositionAgentStorage.AgentStorage storage ds, uint256 positionTokenId)
