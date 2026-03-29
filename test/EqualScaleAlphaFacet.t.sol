@@ -5,6 +5,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {EqualScaleAlphaAdminFacet} from "src/equalscale/EqualScaleAlphaAdminFacet.sol";
 import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
+import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.sol";
 import {IEqualScaleAlphaErrors} from "src/equalscale/IEqualScaleAlphaErrors.sol";
 import {IEqualScaleAlphaEvents} from "src/equalscale/IEqualScaleAlphaEvents.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
@@ -27,7 +28,12 @@ contract EqualScaleAlphaMockERC20 is ERC20 {
     }
 }
 
-contract EqualScaleAlphaFacetHarness is EqualScaleAlphaFacet, EqualScaleAlphaAdminFacet, PositionAgentViewFacet {
+contract EqualScaleAlphaFacetHarness is
+    EqualScaleAlphaFacet,
+    EqualScaleAlphaAdminFacet,
+    EqualScaleAlphaViewFacet,
+    PositionAgentViewFacet
+{
     function setPositionNFT(address nft) external {
         LibPositionNFT.PositionNFTStorage storage ds = LibPositionNFT.s();
         ds.positionNFTContract = nft;
@@ -1956,6 +1962,202 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(line.currentPeriodStartedAt == cureTimestamp, "runoff cure period mismatch");
         require(line.termStartedAt == cureTimestamp, "runoff cure term mismatch");
         require(line.nextDueAt == cureTimestamp + PAYMENT_INTERVAL_SECS, "runoff cure due mismatch");
+    }
+
+    function test_getBorrowerProfile_mergesStoredMetadataAndLiveIdentityState() external {
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+        bytes32 borrowerPositionKey = positionNft.getPositionKey(borrowerPositionId);
+
+        EqualScaleAlphaViewFacet.BorrowerProfileView memory profileView = facet.getBorrowerProfile(borrowerPositionId);
+
+        require(profileView.borrowerPositionKey == borrowerPositionKey, "borrower key mismatch");
+        require(profileView.borrowerPositionId == borrowerPositionId, "borrower position mismatch");
+        require(profileView.owner == alice, "borrower owner mismatch");
+        require(profileView.treasuryWallet == treasuryWallet, "treasury wallet mismatch");
+        require(profileView.bankrToken == bankrToken, "bankr token mismatch");
+        require(profileView.metadataHash == keccak256("profile"), "metadata hash mismatch");
+        require(profileView.active, "profile should be active");
+        require(profileView.agentId == 17, "agent id mismatch");
+        require(profileView.registrationMode == REGISTRATION_MODE_CANONICAL_OWNED, "registration mode mismatch");
+        require(profileView.tbaAddress == facet.getTBAAddress(borrowerPositionId), "tba address mismatch");
+        require(profileView.externalAuthorizer == address(0), "external authorizer mismatch");
+        require(profileView.canonicalLink, "canonical link mismatch");
+        require(!profileView.externalLink, "external link mismatch");
+        require(profileView.registrationComplete, "registration should be complete");
+
+        identityRegistry.setOwner(17, bob);
+
+        profileView = facet.getBorrowerProfile(borrowerPositionId);
+        require(!profileView.registrationComplete, "identity should stay live");
+        require(profileView.treasuryWallet == treasuryWallet, "stored treasury wallet should remain unchanged");
+    }
+
+    function test_lineAndCommitmentViews_roundTripStoredStateAndLookups() external {
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+        facet.setPoolInitialized(SETTLEMENT_POOL_ID, true);
+
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(borrowerPositionId, _defaultProposalParamsNone());
+
+        vm.warp(block.timestamp + 3 days + 1);
+        facet.transitionToPooledOpen(lineId);
+
+        uint256 lenderPositionOne = _seedSettlementPosition(bob, 400e18);
+        uint256 lenderPositionTwo = _seedSettlementPosition(carol, 600e18);
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionOne, 400e18);
+        vm.prank(carol);
+        facet.commitPooled(lineId, lenderPositionTwo, 600e18);
+
+        LibEqualScaleAlphaStorage.CreditLine memory storedLine = facet.line(lineId);
+        LibEqualScaleAlphaStorage.CreditLine memory viewedLine = facet.getCreditLine(lineId);
+        require(keccak256(abi.encode(viewedLine)) == keccak256(abi.encode(storedLine)), "credit line mismatch");
+
+        uint256[] memory borrowerLineIds = facet.getBorrowerLineIds(borrowerPositionId);
+        require(borrowerLineIds.length == 1, "borrower line count mismatch");
+        require(borrowerLineIds[0] == lineId, "borrower line id mismatch");
+
+        LibEqualScaleAlphaStorage.Commitment[] memory commitments = facet.getLineCommitments(lineId);
+        require(commitments.length == 2, "line commitment count mismatch");
+        require(
+            keccak256(abi.encode(commitments[0])) == keccak256(abi.encode(facet.commitment(lineId, lenderPositionOne))),
+            "first commitment mismatch"
+        );
+        require(
+            keccak256(abi.encode(commitments[1])) == keccak256(abi.encode(facet.commitment(lineId, lenderPositionTwo))),
+            "second commitment mismatch"
+        );
+
+        EqualScaleAlphaViewFacet.LenderPositionCommitmentView[] memory lenderCommitments =
+            facet.getLenderPositionCommitments(lenderPositionOne);
+        require(lenderCommitments.length == 1, "lender commitment count mismatch");
+        require(lenderCommitments[0].lineId == lineId, "lender line id mismatch");
+        require(
+            keccak256(abi.encode(lenderCommitments[0].commitment))
+                == keccak256(abi.encode(facet.commitment(lineId, lenderPositionOne))),
+            "lender commitment payload mismatch"
+        );
+    }
+
+    function test_previewDraw_andTreasuryTelemetry_surfaceCurrentState() external {
+        uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.draw(lineId, 200e18);
+
+        uint256 elapsed = 15 days;
+        vm.warp(block.timestamp + elapsed);
+
+        EqualScaleAlphaViewFacet.DrawPreview memory drawPreview = facet.previewDraw(lineId, 100e18);
+        uint256 expectedInterest = _expectedInterest(200e18, elapsed);
+
+        require(drawPreview.requestedAmount == 100e18, "draw request mismatch");
+        require(drawPreview.maxDrawableAmount == 100e18, "max drawable mismatch");
+        require(drawPreview.availableLineCapacity == 800e18, "available capacity mismatch");
+        require(drawPreview.remainingPeriodCapacity == 100e18, "remaining period capacity mismatch");
+        require(drawPreview.poolLiquidity == 800e18, "pool liquidity mismatch");
+        require(drawPreview.currentPeriodDrawn == 200e18, "current period drawn mismatch");
+        require(drawPreview.nextCurrentPeriodDrawn == 300e18, "next current period drawn mismatch");
+        require(drawPreview.projectedOutstandingPrincipal == 300e18, "projected principal mismatch");
+        require(drawPreview.eligible, "draw preview should be eligible");
+        require(!drawPreview.drawsFrozen, "draws should not be frozen");
+        require(drawPreview.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "draw status mismatch");
+        require(facet.isLineDrawEligible(lineId, 100e18), "draw eligibility mismatch");
+        require(!facet.isLineDrawEligible(lineId, 101e18), "draw ineligibility mismatch");
+
+        LibEqualScaleAlphaStorage.TreasuryTelemetryView memory telemetry = facet.getTreasuryTelemetry(lineId);
+        require(telemetry.treasuryBalance == 200e18, "treasury balance mismatch");
+        require(telemetry.outstandingPrincipal == 200e18, "telemetry principal mismatch");
+        require(telemetry.accruedInterest == expectedInterest, "telemetry interest mismatch");
+        require(telemetry.nextDueAmount == MINIMUM_PAYMENT_PER_PERIOD, "telemetry minimum due mismatch");
+        require(telemetry.paymentCurrent, "payment should be current");
+        require(!telemetry.drawsFrozen, "telemetry draws frozen mismatch");
+        require(telemetry.currentPeriodDrawn == 200e18, "telemetry current period mismatch");
+        require(telemetry.maxDrawPerPeriod == MAX_DRAW_PER_PERIOD, "telemetry max draw mismatch");
+        require(telemetry.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "telemetry status mismatch");
+    }
+
+    function test_previewRepay_currentMinimumDueAndRefinanceStatus_surfaceLiveState() external {
+        uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.draw(lineId, 300e18);
+
+        uint256 elapsed = PAYMENT_INTERVAL_SECS / 2;
+        vm.warp(block.timestamp + elapsed);
+
+        EqualScaleAlphaViewFacet.RepayPreview memory repayPreview = facet.previewRepay(lineId, 120e18);
+        uint256 expectedInterest = _expectedInterest(300e18, elapsed);
+
+        require(repayPreview.requestedAmount == 120e18, "repay request mismatch");
+        require(repayPreview.effectiveAmount == 120e18, "repay amount mismatch");
+        require(repayPreview.totalOutstanding == 300e18 + expectedInterest, "total outstanding mismatch");
+        require(repayPreview.outstandingPrincipal == 300e18, "principal outstanding mismatch");
+        require(repayPreview.accruedInterest == expectedInterest, "repay interest mismatch");
+        require(repayPreview.interestComponent == expectedInterest, "repay interest component mismatch");
+        require(repayPreview.principalComponent == 120e18 - expectedInterest, "repay principal component mismatch");
+        require(repayPreview.currentMinimumDue == MINIMUM_PAYMENT_PER_PERIOD, "repay minimum due mismatch");
+        require(repayPreview.minimumDueSatisfied, "minimum due should be satisfied");
+        require(
+            repayPreview.remainingOutstandingPrincipal == 300e18 - (120e18 - expectedInterest),
+            "remaining principal mismatch"
+        );
+        require(repayPreview.remainingAccruedInterest == 0, "remaining interest mismatch");
+        require(repayPreview.nextDueAt == facet.line(lineId).nextDueAt, "repay next due mismatch");
+        require(repayPreview.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "repay status mismatch");
+        require(facet.currentMinimumDue(lineId) == MINIMUM_PAYMENT_PER_PERIOD, "current minimum due mismatch");
+
+        uint40 termEndAt = facet.line(lineId).termEndAt;
+        vm.warp(termEndAt);
+
+        LibEqualScaleAlphaStorage.RefinanceStatusView memory refinanceStatus = facet.getRefinanceStatus(lineId);
+        require(refinanceStatus.termEndAt == termEndAt, "term end mismatch");
+        require(refinanceStatus.refinanceEndAt == facet.line(lineId).refinanceEndAt, "refinance end mismatch");
+        require(refinanceStatus.currentCommittedAmount == TARGET_LIMIT, "refinance committed mismatch");
+        require(refinanceStatus.activeLimit == TARGET_LIMIT, "refinance active limit mismatch");
+        require(refinanceStatus.outstandingPrincipal == 300e18, "refinance principal mismatch");
+        require(refinanceStatus.refinanceWindowActive, "refinance window should be active");
+    }
+
+    function test_lineLossSummary_surfacesAggregateAndPerCommitmentWriteDowns() external {
+        (uint256 lineId, uint256 lenderPositionOne, uint256 lenderPositionTwo) =
+            _createPooledActivatedLine(_defaultProposalParamsNone(), 400e18, 600e18);
+
+        vm.prank(alice);
+        facet.draw(lineId, 300e18);
+
+        vm.warp(facet.line(lineId).nextDueAt + GRACE_PERIOD_SECS + 1);
+        facet.markDelinquent(lineId);
+
+        facet.setChargeOffThresholdForTest(1 days);
+        vm.warp(block.timestamp + 1 days);
+        facet.chargeOffLine(lineId);
+
+        EqualScaleAlphaViewFacet.LineLossSummaryView memory lossSummary = facet.getLineLossSummary(lineId);
+        require(lossSummary.totalPrincipalExposed == 0, "loss summary exposed mismatch");
+        require(lossSummary.totalPrincipalRepaid == 0, "loss summary principal repaid mismatch");
+        require(lossSummary.totalInterestReceived == 0, "loss summary interest mismatch");
+        require(lossSummary.totalRecoveryReceived == 0, "loss summary recovery mismatch");
+        require(lossSummary.totalLossWrittenDown == 300e18, "loss summary write-down mismatch");
+        require(lossSummary.commitmentCount == 2, "loss summary commitment count mismatch");
+        require(lossSummary.hasRecognizedLoss, "loss summary should recognize loss");
+
+        LibEqualScaleAlphaStorage.Commitment[] memory commitments = facet.getLineCommitments(lineId);
+        require(commitments.length == 2, "loss commitment count mismatch");
+        require(commitments[0].status == LibEqualScaleAlphaStorage.CommitmentStatus.WrittenDown, "first status mismatch");
+        require(commitments[1].status == LibEqualScaleAlphaStorage.CommitmentStatus.WrittenDown, "second status mismatch");
+        require(commitments[0].lossWrittenDown == 120e18, "first write-down mismatch");
+        require(commitments[1].lossWrittenDown == 180e18, "second write-down mismatch");
+
+        EqualScaleAlphaViewFacet.LenderPositionCommitmentView[] memory firstLenderCommitments =
+            facet.getLenderPositionCommitments(lenderPositionOne);
+        EqualScaleAlphaViewFacet.LenderPositionCommitmentView[] memory secondLenderCommitments =
+            facet.getLenderPositionCommitments(lenderPositionTwo);
+        require(firstLenderCommitments.length == 1, "first lender lookup length mismatch");
+        require(secondLenderCommitments.length == 1, "second lender lookup length mismatch");
+        require(firstLenderCommitments[0].commitment.lossWrittenDown == 120e18, "first lender lookup mismatch");
+        require(secondLenderCommitments[0].commitment.lossWrittenDown == 180e18, "second lender lookup mismatch");
     }
 
     function _timelockCall(bytes memory data) internal {
