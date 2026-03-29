@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {EqualIndexBaseV3} from "./EqualIndexBaseV3.sol";
 import {IndexToken} from "./IndexToken.sol";
+import {IEqualIndexFlashReceiver} from "../interfaces/IEqualIndexFlashReceiver.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEqualIndexLending} from "../libraries/LibEqualIndexLending.sol";
@@ -17,6 +18,14 @@ import "../libraries/Errors.sol";
 contract EqualIndexActionsFacetV3 is EqualIndexBaseV3, ReentrancyGuardModifiers {
     uint256 internal constant INDEX_SCALE = 1e18;
     bytes32 internal constant INDEX_FEE_SOURCE = keccak256("INDEX_FEE");
+
+    event FlashLoaned(
+        uint256 indexed indexId,
+        address indexed receiver,
+        uint256 units,
+        uint256[] loanAmounts,
+        uint256[] fees
+    );
 
     struct MintLeg {
         address asset;
@@ -47,6 +56,13 @@ contract EqualIndexActionsFacetV3 is EqualIndexBaseV3, ReentrancyGuardModifiers 
     struct BurnState {
         uint256[] assetsOut;
         uint256[] feeAmounts;
+    }
+
+    struct FlashState {
+        address[] assets;
+        uint256[] loanAmounts;
+        uint256[] fees;
+        uint256[] contractBalancesBefore;
     }
 
     function mint(uint256 indexId, uint256 units, address to, uint256[] calldata maxInputAmounts)
@@ -112,6 +128,31 @@ contract EqualIndexActionsFacetV3 is EqualIndexBaseV3, ReentrancyGuardModifiers 
         IndexToken(idx.token).burnIndexUnits(msg.sender, units);
         assetsOut = state.assetsOut;
         IndexToken(idx.token).recordBurnDetails(msg.sender, units, idx.assets, state.assetsOut, state.feeAmounts, 0);
+    }
+
+    function flashLoan(uint256 indexId, uint256 units, address receiver, bytes calldata data)
+        external
+        payable
+        nonReentrant
+        indexExists(indexId)
+    {
+        LibCurrency.assertZeroMsgValue();
+        if (units == 0 || units % INDEX_SCALE != 0) revert InvalidUnits();
+
+        Index storage idx = s().indexes[indexId];
+        _requireIndexActive(idx, indexId);
+
+        uint256 totalSupply = idx.totalUnits;
+        if (totalSupply == 0 || units > totalSupply) revert InvalidUnits();
+
+        FlashState memory state = _prepareFlashLoan(indexId, idx, units, receiver);
+
+        IEqualIndexFlashReceiver(receiver).onEqualIndexFlashLoan(
+            indexId, units, state.assets, state.loanAmounts, state.fees, data
+        );
+        _finalizeFlashLoan(indexId, state.assets, state.loanAmounts, state.fees, state.contractBalancesBefore);
+
+        emit FlashLoaned(indexId, receiver, units, state.loanAmounts, state.fees);
     }
 
     function _pullNativeMint(uint256 amount) internal {
@@ -240,6 +281,36 @@ contract EqualIndexActionsFacetV3 is EqualIndexBaseV3, ReentrancyGuardModifiers 
         }
     }
 
+    function _prepareFlashLoan(uint256 indexId, Index storage idx, uint256 units, address receiver)
+        internal
+        returns (FlashState memory state)
+    {
+        uint256 len = idx.assets.length;
+        state.assets = idx.assets;
+        state.loanAmounts = new uint256[](len);
+        state.fees = new uint256[](len);
+        state.contractBalancesBefore = new uint256[](len);
+
+        for (uint256 i = 0; i < len; i++) {
+            address asset = state.assets[i];
+            state.contractBalancesBefore[i] = LibCurrency.balanceOfSelf(asset);
+
+            uint256 vaultBalance = s().vaultBalances[indexId][asset];
+            uint256 loanAmount = Math.mulDiv(idx.bundleAmounts[i], units, INDEX_SCALE);
+            if (vaultBalance < loanAmount) {
+                revert InsufficientPoolLiquidity(loanAmount, vaultBalance);
+            }
+
+            state.loanAmounts[i] = loanAmount;
+            state.fees[i] = Math.mulDiv(loanAmount, idx.flashFeeBps, 10_000);
+            s().vaultBalances[indexId][asset] = vaultBalance - loanAmount;
+
+            if (loanAmount > 0) {
+                LibCurrency.transfer(asset, receiver, loanAmount);
+            }
+        }
+    }
+
     function _distributeIndexFee(
         uint256 indexId,
         address asset,
@@ -265,6 +336,48 @@ contract EqualIndexActionsFacetV3 is EqualIndexBaseV3, ReentrancyGuardModifiers 
                 LibFeeRouter.routeSamePool(poolId, poolShare, INDEX_FEE_SOURCE, true, poolShare);
             }
         }
+    }
+
+    function _finalizeFlashLoan(
+        uint256 indexId,
+        address[] memory assets,
+        uint256[] memory loanAmounts,
+        uint256[] memory fees,
+        uint256[] memory contractBalancesBefore
+    ) internal {
+        uint16 poolFeeShareBps = _poolFeeShareBps();
+        uint256 len = assets.length;
+        for (uint256 i = 0; i < len; i++) {
+            _settleFlashLoanFee(
+                indexId,
+                assets[i],
+                loanAmounts[i],
+                fees[i],
+                contractBalancesBefore[i],
+                poolFeeShareBps
+            );
+        }
+    }
+
+    function _settleFlashLoanFee(
+        uint256 indexId,
+        address asset,
+        uint256 loanAmount,
+        uint256 fee,
+        uint256 balanceBefore,
+        uint16 poolFeeShareBps
+    ) internal {
+        uint256 expectedBalance = balanceBefore + fee;
+        uint256 actualBalance = LibCurrency.balanceOfSelf(asset);
+        if (actualBalance < expectedBalance) {
+            revert FlashLoanUnderpaid(indexId, asset, expectedBalance, actualBalance);
+        }
+
+        s().vaultBalances[indexId][asset] += loanAmount;
+        if (LibCurrency.isNative(asset) && fee > 0) {
+            LibAppStorage.s().nativeTrackedTotal += fee;
+        }
+        _distributeIndexFee(indexId, asset, fee, poolFeeShareBps);
     }
 
     function _routeIndexPoolShareNative(Types.PoolData storage pool, uint256 pid, uint256 amount) internal {

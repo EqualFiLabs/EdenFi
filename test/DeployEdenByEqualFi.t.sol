@@ -10,8 +10,10 @@ import {IDiamondLoupe} from "src/interfaces/IDiamondLoupe.sol";
 import {OwnershipFacet} from "src/core/OwnershipFacet.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
+import {FlashLoanFacet} from "src/equallend/FlashLoanFacet.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
+import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {PositionAgentConfigFacet} from "src/agent-wallet/erc6551/PositionAgentConfigFacet.sol";
 import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFacet.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
@@ -88,15 +90,23 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _assertEqAddress(positionNft.diamond(), diamond, "position nft diamond");
 
         address[] memory facetAddresses = IDiamondLoupe(diamond).facetAddresses();
-        _assertEq(facetAddresses.length, 23, "facet count");
+        _assertEq(facetAddresses.length, 24, "facet count");
 
         _assertTrue(
             IDiamondLoupe(diamond).facetAddress(PositionManagementFacet.mintPosition.selector) != address(0),
             "position facet cut"
         );
         _assertTrue(
+            IDiamondLoupe(diamond).facetAddress(FlashLoanFacet.flashLoan.selector) != address(0),
+            "pool flash facet cut"
+        );
+        _assertTrue(
             IDiamondLoupe(diamond).facetAddress(EqualIndexAdminFacetV3.createIndex.selector) != address(0),
             "equalindex facet cut"
+        );
+        _assertTrue(
+            IDiamondLoupe(diamond).facetAddress(EqualIndexActionsFacetV3.flashLoan.selector) != address(0),
+            "index flash action cut"
         );
         _assertTrue(
             IDiamondLoupe(diamond).facetAddress(PositionAgentConfigFacet.setERC6551Registry.selector) != address(0),

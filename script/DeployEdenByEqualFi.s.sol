@@ -15,6 +15,7 @@ import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockCon
 
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
+import {FlashLoanFacet} from "src/equallend/FlashLoanFacet.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
@@ -47,7 +48,7 @@ interface IPoolManagementFacetInitConfig {
 }
 
 contract DeployEdenByEqualFi is Script {
-    uint256 internal constant LAUNCH_FACET_COUNT = 20;
+    uint256 internal constant LAUNCH_FACET_COUNT = 21;
     uint256 internal constant CUT_BATCH_SIZE = 3;
 
     struct BaseDeployment {
@@ -188,6 +189,10 @@ contract DeployEdenByEqualFi is Script {
         {
             PositionManagementFacet facet = new PositionManagementFacet();
             cuts[i++] = _cut(address(facet), _selectorsPositionManagement());
+        }
+        {
+            FlashLoanFacet facet = new FlashLoanFacet();
+            cuts[i++] = _cut(address(facet), _selectorsFlashLoan());
         }
         {
             EqualIndexAdminFacetV3 facet = new EqualIndexAdminFacetV3();
@@ -353,6 +358,12 @@ contract DeployEdenByEqualFi is Script {
         s[5] = PositionManagementFacet.claimPositionYield.selector;
     }
 
+    function _selectorsFlashLoan() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = FlashLoanFacet.previewFlashLoanRepayment.selector;
+        s[1] = FlashLoanFacet.flashLoan.selector;
+    }
+
     function _selectorsEqualIndexAdmin() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](6);
         s[0] = EqualIndexAdminFacetV3.createIndex.selector;
@@ -364,9 +375,10 @@ contract DeployEdenByEqualFi is Script {
     }
 
     function _selectorsEqualIndexActions() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = EqualIndexActionsFacetV3.mint.selector;
         s[1] = EqualIndexActionsFacetV3.burn.selector;
+        s[2] = EqualIndexActionsFacetV3.flashLoan.selector;
     }
 
     function _selectorsEqualIndexPosition() internal pure returns (bytes4[] memory s) {
