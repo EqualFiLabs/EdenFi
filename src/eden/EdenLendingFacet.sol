@@ -74,7 +74,7 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
         uint256 nativeFee = _checkBorrowRequest(basketId, positionKey, collateralUnits, duration);
         _requireNativeFee(nativeFee);
 
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         (address[] memory assets, uint256[] memory principals) =
             _deriveLoanPrincipals(basket, collateralUnits, LibEdenLendingStorage.DEFAULT_LTV_BPS);
         _enforceBorrowInvariantForNewLoan(basketId, collateralUnits, assets, principals);
@@ -122,8 +122,8 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
         if (loan.borrowerPositionKey == bytes32(0) || lending.loanClosed[loanId]) revert LoanNotFound(loanId);
         if (loan.borrowerPositionKey != positionKey) revert PositionMismatch(loan.borrowerPositionKey, positionKey);
 
-        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
-        LibEdenBasketStorage.BasketConfig storage basket = store.baskets[loan.basketId];
+        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
+        LibEdenBasketStorage.ProductConfig storage basket = store.product;
         (address[] memory assets, uint256[] memory principals) =
             _deriveLoanPrincipals(basket, loan.collateralUnits, loan.ltvBps);
 
@@ -132,7 +132,7 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
             address asset = assets[i];
             uint256 principal = principals[i];
             uint256 received = LibCurrency.pullAtLeast(asset, msg.sender, principal, principal);
-            store.vaultBalances[loan.basketId][asset] += received;
+            store.accounting.vaultBalances[asset] += received;
             lending.outstandingPrincipal[loan.basketId][asset] -= principal;
         }
 
@@ -169,8 +169,8 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
         if (loan.borrowerPositionKey == bytes32(0) || lending.loanClosed[loanId]) revert LoanNotFound(loanId);
         if (block.timestamp <= loan.maturity) revert LoanNotExpired(loanId, loan.maturity);
 
-        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
-        LibEdenBasketStorage.BasketConfig storage basket = store.baskets[loan.basketId];
+        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
+        LibEdenBasketStorage.ProductConfig storage basket = store.product;
         Types.PoolData storage basketPool = LibAppStorage.s().pools[basket.poolId];
         (address[] memory assets, uint256[] memory principals) =
             _deriveLoanPrincipals(basket, loan.collateralUnits, loan.ltvBps);
@@ -334,7 +334,7 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
         if (collateralUnits == 0 || collateralUnits % UNIT_SCALE != 0) revert InvalidUnits();
 
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         LibEdenLendingStorage.LendingStorage storage lending = LibEdenLendingStorage.s();
         _validateDuration(lending.lendingConfigs[basketId], duration);
 
@@ -368,7 +368,7 @@ contract EdenLendingFacet is EdenLendingLogic, ReentrancyGuardModifiers {
         if (loan.borrowerPositionKey != positionKey) revert PositionMismatch(loan.borrowerPositionKey, positionKey);
 
         (address[] memory assets, uint256[] memory principals) =
-            _deriveLoanPrincipals(LibEdenBasketStorage.s().baskets[loan.basketId], loan.collateralUnits, loan.ltvBps);
+            _deriveLoanPrincipals(LibEdenBasketStorage.s().product, loan.collateralUnits, loan.ltvBps);
         preview = RepayPreview({
             loanId: loanId,
             assets: assets,

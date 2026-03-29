@@ -36,7 +36,7 @@ contract EdenStEVEActionFacet is EdenBasketLogic, EdenPositionPoolHelpers, Reent
         _validateCreateParams(params);
         if (LibAppStorage.s().assetToPoolId[params.assets[0]] == 0) revert NoPoolForAsset(params.assets[0]);
 
-        basketId = LibEdenBasketStorage.s().basketCount;
+        basketId = LibEdenBasketStorage.PRODUCT_ID;
         token = address(new StEVEToken(params.name, params.symbol, address(this), basketId));
         _createBasketInternal(params, basketId, token);
 
@@ -56,7 +56,7 @@ contract EdenStEVEActionFacet is EdenBasketLogic, EdenPositionPoolHelpers, Reent
         LibEdenStEVEStorage.StEVEStorage storage store = LibEdenStEVEStorage.s();
         if (!store.configured) revert InvalidParameterRange("stEVE not configured");
 
-        uint256 pid = LibEdenBasketStorage.s().baskets[store.basketId].poolId;
+        uint256 pid = LibEdenBasketStorage.s().product.poolId;
         if (amount == 0) revert InvalidParameterRange("amount=0");
         _requireOwnership(tokenId);
         Types.PoolData storage pool = _pool(pid);
@@ -109,7 +109,7 @@ contract EdenStEVEActionFacet is EdenBasketLogic, EdenPositionPoolHelpers, Reent
         uint256 eligible = store.eligiblePrincipal[positionKey];
         if (amount > eligible) revert InsufficientPrincipal(amount, eligible);
 
-        uint256 pid = LibEdenBasketStorage.s().baskets[store.basketId].poolId;
+        uint256 pid = LibEdenBasketStorage.s().product.poolId;
         _requireOwnership(tokenId);
         Types.PoolData storage pool = _pool(pid);
         LibPoolMembership._ensurePoolMembership(positionKey, pid, true);

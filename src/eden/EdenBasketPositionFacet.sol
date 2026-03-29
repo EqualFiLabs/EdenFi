@@ -25,7 +25,7 @@ contract EdenBasketPositionFacet is EdenBasketLogic, ReentrancyGuardModifiers {
         LibPositionHelpers.requireOwnership(positionId);
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
 
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         if (basket.paused) revert IndexPaused(basketId);
 
         bool updatesEligible = _isStEveBasket(basketId);
@@ -89,7 +89,7 @@ contract EdenBasketPositionFacet is EdenBasketLogic, ReentrancyGuardModifiers {
         LibPositionHelpers.requireOwnership(positionId);
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
 
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         if (basket.paused) revert IndexPaused(basketId);
         if (units > basket.totalUnits) revert InvalidUnits();
 

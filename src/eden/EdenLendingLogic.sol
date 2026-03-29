@@ -68,7 +68,7 @@ abstract contract EdenLendingLogic is EdenBasketBase {
         LibEdenLendingStorage.Loan storage loan = lending.loans[loanId];
         if (loan.borrowerPositionKey == bytes32(0)) revert IEdenLendingErrors.LoanNotFound(loanId);
 
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[loan.basketId];
+        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         (address[] memory assets, uint256[] memory principals) =
             _deriveLoanPrincipals(basket, loan.collateralUnits, loan.ltvBps);
         (bool hasTier, uint256 extensionFeeNative) =
@@ -180,7 +180,7 @@ abstract contract EdenLendingLogic is EdenBasketBase {
         uint256 collateralUnits,
         uint40 duration
     ) internal view returns (uint256 nativeFee) {
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         if (basket.paused) revert IndexPaused(basketId);
 
         LibEdenLendingStorage.LendingStorage storage lending = LibEdenLendingStorage.s();
@@ -200,7 +200,7 @@ abstract contract EdenLendingLogic is EdenBasketBase {
         address[] memory assets,
         uint256[] memory principals
     ) internal view {
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         _enforceRedeemabilityInvariant(
             basketId,
             basket,
@@ -258,14 +258,14 @@ abstract contract EdenLendingLogic is EdenBasketBase {
         uint256[] memory principals,
         address recipient
     ) internal {
-        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
+        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
         LibEdenLendingStorage.LendingStorage storage lending = LibEdenLendingStorage.s();
 
         uint256 len = assets.length;
         for (uint256 i = 0; i < len; i++) {
             address asset = assets[i];
             uint256 principal = principals[i];
-            store.vaultBalances[basketId][asset] -= principal;
+            store.accounting.vaultBalances[asset] -= principal;
             lending.outstandingPrincipal[basketId][asset] += principal;
             LibCurrency.transfer(asset, recipient, principal);
         }
@@ -308,7 +308,7 @@ abstract contract EdenLendingLogic is EdenBasketBase {
     }
 
     function _deriveLoanPrincipals(
-        LibEdenBasketStorage.BasketConfig storage basket,
+        LibEdenBasketStorage.ProductConfig storage basket,
         uint256 collateralUnits,
         uint16 ltvBps
     ) internal view returns (address[] memory assets, uint256[] memory principals) {
@@ -348,19 +348,19 @@ abstract contract EdenLendingLogic is EdenBasketBase {
     }
 
     function _redeemabilityInvariantSatisfied(
-        uint256 basketId,
-        LibEdenBasketStorage.BasketConfig storage basket,
+        uint256,
+        LibEdenBasketStorage.ProductConfig storage basket,
         address[] memory assets,
         uint256[] memory principals,
         uint256 lockedCollateralUnits,
         uint256 totalUnits
     ) internal view returns (bool) {
-        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
+        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
         uint256 redeemableSupply = totalUnits - lockedCollateralUnits;
         uint256 len = assets.length;
 
         for (uint256 i = 0; i < len; i++) {
-            uint256 currentVault = store.vaultBalances[basketId][assets[i]];
+            uint256 currentVault = store.accounting.vaultBalances[assets[i]];
             if (currentVault < principals[i]) return false;
 
             uint256 remainingVault = currentVault - principals[i];
@@ -372,19 +372,19 @@ abstract contract EdenLendingLogic is EdenBasketBase {
     }
 
     function _enforceRedeemabilityInvariant(
-        uint256 basketId,
-        LibEdenBasketStorage.BasketConfig storage basket,
+        uint256,
+        LibEdenBasketStorage.ProductConfig storage basket,
         address[] memory assets,
         uint256[] memory principals,
         uint256 lockedCollateralUnits,
         uint256 totalUnits
     ) internal view {
-        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
+        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
         uint256 redeemableSupply = totalUnits - lockedCollateralUnits;
         uint256 len = assets.length;
 
         for (uint256 i = 0; i < len; i++) {
-            uint256 currentVault = store.vaultBalances[basketId][assets[i]];
+            uint256 currentVault = store.accounting.vaultBalances[assets[i]];
             if (currentVault < principals[i]) {
                 revert IEdenLendingErrors.InsufficientVaultBalance(assets[i], principals[i], currentVault);
             }
@@ -398,18 +398,18 @@ abstract contract EdenLendingLogic is EdenBasketBase {
     }
 
     function _enforcePostRecoveryInvariant(
-        uint256 basketId,
-        LibEdenBasketStorage.BasketConfig storage basket,
+        uint256,
+        LibEdenBasketStorage.ProductConfig storage basket,
         uint256 lockedCollateralUnits,
         uint256 totalUnits
     ) internal view {
-        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
+        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
         uint256 redeemableSupply = totalUnits - lockedCollateralUnits;
         uint256 len = basket.assets.length;
 
         for (uint256 i = 0; i < len; i++) {
             address asset = basket.assets[i];
-            uint256 currentVault = store.vaultBalances[basketId][asset];
+            uint256 currentVault = store.accounting.vaultBalances[asset];
             uint256 requiredVault = Math.mulDiv(redeemableSupply, basket.bundleAmounts[i], UNIT_SCALE);
             if (currentVault < requiredVault) {
                 revert IEdenLendingErrors.RedeemabilityInvariantBroken(asset, requiredVault, currentVault);

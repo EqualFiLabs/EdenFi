@@ -27,12 +27,12 @@ contract EdenBasketWalletFacet is EdenBasketLogic, ReentrancyGuardModifiers {
             if (app.assetToPoolId[params.assets[i]] == 0) revert NoPoolForAsset(params.assets[i]);
         }
 
-        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
+        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
         if (store.poolFeeShareBps == 0) {
             store.poolFeeShareBps = 1000;
         }
 
-        basketId = store.basketCount;
+        basketId = LibEdenBasketStorage.PRODUCT_ID;
         token = address(new BasketToken(params.name, params.symbol, address(this), basketId));
         _createBasketInternal(params, basketId, token);
     }
@@ -45,7 +45,7 @@ contract EdenBasketWalletFacet is EdenBasketLogic, ReentrancyGuardModifiers {
         returns (uint256 minted)
     {
         if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         if (basket.paused) revert IndexPaused(basketId);
         if (maxInputAmounts.length != basket.assets.length) revert InvalidArrayLength();
 
@@ -71,7 +71,7 @@ contract EdenBasketWalletFacet is EdenBasketLogic, ReentrancyGuardModifiers {
         LibCurrency.assertZeroMsgValue();
         if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
 
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         if (basket.paused) revert IndexPaused(basketId);
         if (units > basket.totalUnits) revert InvalidUnits();
         uint256 balance = BasketToken(basket.token).balanceOf(msg.sender);

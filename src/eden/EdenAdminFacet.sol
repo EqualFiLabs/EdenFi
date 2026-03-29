@@ -50,11 +50,11 @@ contract EdenAdminFacet is EdenBasketBase, ReentrancyGuardModifiers {
         LibCurrency.assertZeroMsgValue();
         LibAccess.enforceTimelockOrOwnerIfUnset();
 
-        LibEdenBasketStorage.BasketMetadata storage metadata = LibEdenBasketStorage.s().basketMetadata[basketId];
+        LibEdenBasketStorage.ProductMetadata storage metadata = LibEdenBasketStorage.s().productMetadata;
         string memory oldUri = metadata.uri;
-        uint8 oldBasketType = metadata.basketType;
+        uint8 oldBasketType = metadata.productType;
         metadata.uri = uri;
-        metadata.basketType = basketType;
+        metadata.productType = basketType;
 
         emit BasketMetadataUpdated(basketId, oldUri, uri, oldBasketType, basketType);
     }
@@ -108,7 +108,7 @@ contract EdenAdminFacet is EdenBasketBase, ReentrancyGuardModifiers {
         LibCurrency.assertZeroMsgValue();
         LibAccess.enforceTimelockOrOwnerIfUnset();
 
-        LibEdenBasketStorage.s().baskets[basketId].paused = paused;
+        LibEdenBasketStorage.s().product.paused = paused;
         emit BasketPausedUpdated(basketId, paused);
     }
 
@@ -121,7 +121,7 @@ contract EdenAdminFacet is EdenBasketBase, ReentrancyGuardModifiers {
         LibCurrency.assertZeroMsgValue();
         LibAccess.enforceTimelockOrOwnerIfUnset();
 
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         uint256 len = basket.assets.length;
         if (mintFeeBps.length != len || burnFeeBps.length != len) revert InvalidArrayLength();
         if (flashFeeBps > 1000) revert InvalidParameterRange("flashFeeBps too high");
@@ -144,7 +144,7 @@ contract EdenAdminFacet is EdenBasketBase, ReentrancyGuardModifiers {
         LibAccess.enforceTimelockOrOwnerIfUnset();
         if (poolFeeShareBps > 10_000) revert InvalidParameterRange("poolFeeShareBps too high");
 
-        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
+        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
         uint16 oldBps = store.poolFeeShareBps;
         store.poolFeeShareBps = poolFeeShareBps;
 

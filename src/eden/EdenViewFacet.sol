@@ -126,25 +126,21 @@ contract EdenViewFacet is EdenLendingLogic {
     }
 
     function basketCount() external view returns (uint256) {
-        return LibEdenBasketStorage.s().basketCount;
+        return LibEdenBasketStorage.s().productInitialized ? 1 : 0;
     }
 
     function getBasketIds(uint256 start, uint256 limit) external view returns (uint256[] memory basketIds) {
-        uint256 count = LibEdenBasketStorage.s().basketCount;
+        uint256 count = LibEdenBasketStorage.s().productInitialized ? 1 : 0;
         if (start >= count || limit == 0) return new uint256[](0);
 
-        uint256 remaining = count - start;
-        uint256 resultLen = remaining < limit ? remaining : limit;
-        basketIds = new uint256[](resultLen);
-        for (uint256 i = 0; i < resultLen; i++) {
-            basketIds[i] = start + i;
-        }
+        basketIds = new uint256[](1);
+        basketIds[0] = LibEdenBasketStorage.PRODUCT_ID;
     }
 
     function getBasketSummary(uint256 basketId) public view basketExists(basketId) returns (BasketSummary memory summary) {
-        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
-        LibEdenBasketStorage.BasketConfig storage basket = store.baskets[basketId];
-        LibEdenBasketStorage.BasketMetadata storage metadata = store.basketMetadata[basketId];
+        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
+        LibEdenBasketStorage.ProductConfig storage basket = store.product;
+        LibEdenBasketStorage.ProductMetadata storage metadata = store.productMetadata;
 
         summary.basketId = basketId;
         summary.name = metadata.name;
@@ -153,7 +149,7 @@ contract EdenViewFacet is EdenLendingLogic {
         summary.token = basket.token;
         summary.poolId = basket.poolId;
         summary.totalUnits = basket.totalUnits;
-        summary.basketType = metadata.basketType;
+        summary.basketType = metadata.productType;
         summary.paused = basket.paused;
         summary.isStEVE = LibEdenStEVEStorage.s().configured && basketId == LibEdenStEVEStorage.s().basketId;
         summary.assets = basket.assets;
@@ -164,15 +160,11 @@ contract EdenViewFacet is EdenLendingLogic {
     }
 
     function getBasketSummaries(uint256 start, uint256 limit) external view returns (BasketSummary[] memory summaries) {
-        uint256 count = LibEdenBasketStorage.s().basketCount;
+        uint256 count = LibEdenBasketStorage.s().productInitialized ? 1 : 0;
         if (start >= count || limit == 0) return new BasketSummary[](0);
 
-        uint256 remaining = count - start;
-        uint256 resultLen = remaining < limit ? remaining : limit;
-        summaries = new BasketSummary[](resultLen);
-        for (uint256 i = 0; i < resultLen; i++) {
-            summaries[i] = getBasketSummary(start + i);
-        }
+        summaries = new BasketSummary[](1);
+        summaries[0] = getBasketSummary(LibEdenBasketStorage.PRODUCT_ID);
     }
 
     function getProductConfig() external view returns (ProductConfigView memory view_) {
@@ -183,7 +175,7 @@ contract EdenViewFacet is EdenLendingLogic {
         view_.treasury = LibAppStorage.treasuryAddress(app);
         view_.timelock = LibAppStorage.timelockAddress(app);
         view_.timelockDelaySeconds = LibEdenAdminStorage.TIMELOCK_DELAY_SECONDS;
-        view_.basketCount = LibEdenBasketStorage.s().basketCount;
+        view_.basketCount = LibEdenBasketStorage.s().productInitialized ? 1 : 0;
         view_.poolFeeShareBps = _basketPoolFeeShareBps();
         view_.protocolURI = LibEdenAdminStorage.s().protocolURI;
         view_.contractVersion = LibEdenAdminStorage.s().contractVersion;
@@ -351,26 +343,26 @@ contract EdenViewFacet is EdenLendingLogic {
     }
 
     function canMint(uint256 basketId, uint256 units) external view returns (ActionCheck memory) {
-        if (basketId >= LibEdenBasketStorage.s().basketCount) {
+        if (!_isKnownBasketId(basketId)) {
             return _fail(ACTION_UNKNOWN_BASKET, "unknown basket");
         }
         if (units == 0 || units % UNIT_SCALE != 0) {
             return _fail(ACTION_INVALID_UNITS, "invalid units");
         }
-        if (LibEdenBasketStorage.s().baskets[basketId].paused) {
+        if (LibEdenBasketStorage.s().product.paused) {
             return _fail(ACTION_BASKET_PAUSED, "basket paused");
         }
         return _ok();
     }
 
     function canBurn(address owner, uint256 basketId, uint256 units) external view returns (ActionCheck memory) {
-        if (basketId >= LibEdenBasketStorage.s().basketCount) {
+        if (!_isKnownBasketId(basketId)) {
             return _fail(ACTION_UNKNOWN_BASKET, "unknown basket");
         }
         if (units == 0 || units % UNIT_SCALE != 0) {
             return _fail(ACTION_INVALID_UNITS, "invalid units");
         }
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         if (basket.paused) {
             return _fail(ACTION_BASKET_PAUSED, "basket paused");
         }
@@ -385,14 +377,14 @@ contract EdenViewFacet is EdenLendingLogic {
         view
         returns (ActionCheck memory)
     {
-        if (basketId >= LibEdenBasketStorage.s().basketCount) {
+        if (!_isKnownBasketId(basketId)) {
             return _fail(ACTION_UNKNOWN_BASKET, "unknown basket");
         }
         if (collateralUnits == 0 || collateralUnits % UNIT_SCALE != 0) {
             return _fail(ACTION_INVALID_UNITS, "invalid collateral units");
         }
 
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         if (basket.paused) {
             return _fail(ACTION_BASKET_PAUSED, "basket paused");
         }
@@ -483,38 +475,29 @@ contract EdenViewFacet is EdenLendingLogic {
     }
 
     function _positionBaskets(bytes32 positionKey) internal view returns (PositionBasketView[] memory baskets) {
-        LibEdenBasketStorage.EdenBasketStorage storage store = LibEdenBasketStorage.s();
-        uint256 count = store.basketCount;
-        uint256 holdings;
-
-        for (uint256 basketId = 0; basketId < count; basketId++) {
-            LibEdenBasketStorage.BasketConfig storage basket = store.baskets[basketId];
-            uint256 principal = LibAppStorage.s().pools[basket.poolId].userPrincipal[positionKey];
-            uint256 encumbered = LibEncumbrance.total(positionKey, basket.poolId);
-            if (principal > 0 || encumbered > 0) {
-                holdings++;
-            }
+        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
+        if (!store.productInitialized) {
+            return new PositionBasketView[](0);
         }
 
-        baskets = new PositionBasketView[](holdings);
-        uint256 index;
-        for (uint256 basketId = 0; basketId < count; basketId++) {
-            LibEdenBasketStorage.BasketConfig storage basket = store.baskets[basketId];
-            uint256 principal = LibAppStorage.s().pools[basket.poolId].userPrincipal[positionKey];
-            uint256 encumbered = LibEncumbrance.total(positionKey, basket.poolId);
-            if (principal == 0 && encumbered == 0) continue;
-
-            baskets[index++] = PositionBasketView({
-                basketId: basketId,
-                poolId: basket.poolId,
-                token: basket.token,
-                basketType: store.basketMetadata[basketId].basketType,
-                units: principal,
-                encumberedUnits: encumbered,
-                availableUnits: principal > encumbered ? principal - encumbered : 0,
-                paused: basket.paused
-            });
+        LibEdenBasketStorage.ProductConfig storage basket = store.product;
+        uint256 principal = LibAppStorage.s().pools[basket.poolId].userPrincipal[positionKey];
+        uint256 encumbered = LibEncumbrance.total(positionKey, basket.poolId);
+        if (principal == 0 && encumbered == 0) {
+            return new PositionBasketView[](0);
         }
+
+        baskets = new PositionBasketView[](1);
+        baskets[0] = PositionBasketView({
+            basketId: LibEdenBasketStorage.PRODUCT_ID,
+            poolId: basket.poolId,
+            token: basket.token,
+            basketType: store.productMetadata.productType,
+            units: principal,
+            encumberedUnits: encumbered,
+            availableUnits: principal > encumbered ? principal - encumbered : 0,
+            paused: basket.paused
+        });
     }
 
     function _hasBorrowFeeTier(LibEdenLendingStorage.BorrowFeeTier[] storage tiers, uint256 collateralUnits)
@@ -546,5 +529,10 @@ contract EdenViewFacet is EdenLendingLogic {
 
     function _boolString(bool value) internal pure returns (string memory) {
         return value ? "true" : "false";
+    }
+
+    function _isKnownBasketId(uint256 basketId) internal view returns (bool) {
+        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
+        return store.productInitialized && basketId == LibEdenBasketStorage.PRODUCT_ID;
     }
 }

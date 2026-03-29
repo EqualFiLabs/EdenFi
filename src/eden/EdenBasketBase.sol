@@ -90,7 +90,8 @@ abstract contract EdenBasketBase {
     }
 
     modifier basketExists(uint256 basketId) {
-        if (basketId >= LibEdenBasketStorage.s().basketCount) revert UnknownIndex(basketId);
+        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
+        if (!store.productInitialized || basketId != LibEdenBasketStorage.PRODUCT_ID) revert UnknownIndex(basketId);
         _;
     }
 

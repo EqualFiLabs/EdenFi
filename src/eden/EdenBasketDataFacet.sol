@@ -6,7 +6,7 @@ import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
 
 contract EdenBasketDataFacet is EdenBasketBase {
     function getBasket(uint256 basketId) external view basketExists(basketId) returns (BasketView memory basket_) {
-        LibEdenBasketStorage.BasketConfig storage basket = LibEdenBasketStorage.s().baskets[basketId];
+        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         basket_.assets = basket.assets;
         basket_.bundleAmounts = basket.bundleAmounts;
         basket_.mintFeeBps = basket.mintFeeBps;
@@ -22,13 +22,13 @@ contract EdenBasketDataFacet is EdenBasketBase {
         external
         view
         basketExists(basketId)
-        returns (LibEdenBasketStorage.BasketMetadata memory)
+        returns (LibEdenBasketStorage.ProductMetadata memory)
     {
-        return LibEdenBasketStorage.s().basketMetadata[basketId];
+        return LibEdenBasketStorage.s().productMetadata;
     }
 
     function getBasketPoolId(uint256 basketId) external view basketExists(basketId) returns (uint256) {
-        return LibEdenBasketStorage.s().baskets[basketId].poolId;
+        return LibEdenBasketStorage.s().product.poolId;
     }
 
     function getBasketVaultBalance(uint256 basketId, address asset)
@@ -37,7 +37,7 @@ contract EdenBasketDataFacet is EdenBasketBase {
         basketExists(basketId)
         returns (uint256)
     {
-        return LibEdenBasketStorage.s().vaultBalances[basketId][asset];
+        return LibEdenBasketStorage.s().accounting.vaultBalances[asset];
     }
 
     function getBasketFeePot(uint256 basketId, address asset)
@@ -46,6 +46,6 @@ contract EdenBasketDataFacet is EdenBasketBase {
         basketExists(basketId)
         returns (uint256)
     {
-        return LibEdenBasketStorage.s().feePots[basketId][asset];
+        return LibEdenBasketStorage.s().accounting.feePots[asset];
     }
 }
