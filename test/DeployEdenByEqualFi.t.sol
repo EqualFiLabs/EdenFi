@@ -51,6 +51,8 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
     address internal alice = _addr("alice");
     address internal bob = _addr("bob");
     address internal carol = _addr("carol");
+    uint256 internal externalOwnerPk = uint256(0xA71CE);
+    address internal externalOwner = vm.addr(externalOwnerPk);
     uint256 internal timelockSaltNonce;
 
     MockERC20Deploy internal eve;
@@ -511,5 +513,145 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             "&agentMode=1&agentCanonical=true&agentExternal=false&agentActive=true&agentComplete=true"
         );
         _assertEqBytes32(keccak256(bytes(tokenUri)), keccak256(bytes(expectedUri)), "token uri agent state");
+    }
+
+    function test_DeployLaunch_IntegratesExternalWalletRegistration_AndCoexistsWithCanonical() public {
+        LaunchDeployment memory deployment = deployLaunch(
+            address(this),
+            address(this),
+            treasury,
+            address(entryPoint),
+            address(erc6551Registry),
+            address(identityRegistry)
+        );
+
+        Types.PoolConfig memory cfg = _poolConfig();
+        FixedDelayTimelockController controller =
+            FixedDelayTimelockController(payable(deployment.timelockController));
+        _timelockCall(
+            controller,
+            deployment.diamond,
+            abi.encodeWithSelector(PoolManagementFacet.setDefaultPoolConfig.selector, cfg)
+        );
+        _timelockCall(
+            controller,
+            deployment.diamond,
+            abi.encodeWithSelector(bytes4(keccak256("initPool(address)")), address(eve))
+        );
+
+        vm.prank(alice);
+        uint256 canonicalTokenId = PositionManagementFacet(deployment.diamond).mintPosition(1);
+        vm.prank(bob);
+        uint256 externalTokenId = PositionManagementFacet(deployment.diamond).mintPosition(1);
+
+        vm.prank(alice);
+        address canonicalTba = PositionAgentTBAFacet(deployment.diamond).deployTBA(canonicalTokenId);
+        vm.prank(bob);
+        address externalTba = PositionAgentTBAFacet(deployment.diamond).deployTBA(externalTokenId);
+
+        uint256 canonicalAgentId = 101;
+        identityRegistry.setOwner(canonicalAgentId, canonicalTba);
+        vm.prank(alice);
+        PositionAgentRegistryFacet(deployment.diamond).recordAgentRegistration(canonicalTokenId, canonicalAgentId);
+
+        uint256 externalAgentId = 202;
+        uint256 deadline = block.timestamp + 1 days;
+        identityRegistry.setOwner(externalAgentId, externalOwner);
+        bytes32 digest = _externalLinkDigest(
+            deployment.diamond,
+            externalTokenId,
+            externalAgentId,
+            bob,
+            externalTba,
+            0,
+            deadline
+        );
+        bytes memory signature = _signDigest(externalOwnerPk, digest);
+
+        vm.prank(bob);
+        PositionAgentRegistryFacet(deployment.diamond).linkExternalAgentRegistration(
+            externalTokenId, externalAgentId, deadline, signature
+        );
+
+        _assertTrue(
+            PositionAgentViewFacet(deployment.diamond).isCanonicalAgentLink(canonicalTokenId), "canonical path intact"
+        );
+        _assertTrue(
+            !PositionAgentViewFacet(deployment.diamond).isExternalAgentLink(canonicalTokenId),
+            "canonical path not external"
+        );
+        _assertTrue(
+            !PositionAgentViewFacet(deployment.diamond).isCanonicalAgentLink(externalTokenId),
+            "external path not canonical"
+        );
+        _assertTrue(
+            PositionAgentViewFacet(deployment.diamond).isExternalAgentLink(externalTokenId), "external path active"
+        );
+
+        EdenViewFacet.PositionAgentWalletView memory externalAgentView =
+            EdenViewFacet(deployment.diamond).getPositionAgentView(externalTokenId);
+        _assertEqAddress(externalAgentView.tbaAddress, externalTba, "external tba");
+        _assertEq(externalAgentView.agentId, externalAgentId, "external agent id");
+        _assertEq(externalAgentView.registrationMode, 2, "external mode");
+        _assertTrue(!externalAgentView.canonicalLink, "external canonical");
+        _assertTrue(externalAgentView.externalLink, "external flag");
+        _assertTrue(externalAgentView.linkActive, "external active");
+        _assertEqAddress(externalAgentView.externalAuthorizer, externalOwner, "external authorizer");
+        _assertTrue(externalAgentView.registrationComplete, "external complete");
+
+        EdenViewFacet.PositionPortfolio memory canonicalPortfolio =
+            EdenViewFacet(deployment.diamond).getPositionPortfolio(canonicalTokenId);
+        EdenViewFacet.PositionPortfolio memory externalPortfolio =
+            EdenViewFacet(deployment.diamond).getPositionPortfolio(externalTokenId);
+        _assertEq(canonicalPortfolio.agentRegistrationMode, 1, "canonical portfolio mode");
+        _assertEq(externalPortfolio.agentRegistrationMode, 2, "external portfolio mode");
+        _assertTrue(canonicalPortfolio.agent.canonicalLink, "canonical portfolio link");
+        _assertTrue(!canonicalPortfolio.agent.externalLink, "canonical portfolio ext");
+        _assertTrue(!externalPortfolio.agent.canonicalLink, "external portfolio canonical");
+        _assertTrue(externalPortfolio.agent.externalLink, "external portfolio link");
+        _assertEqAddress(externalPortfolio.agent.externalAuthorizer, externalOwner, "portfolio authorizer");
+
+        string memory tokenUri = PositionNFT(deployment.positionNFT).tokenURI(externalTokenId);
+        string memory expectedUri = string.concat(
+            "equalfi://positions/",
+            Strings.toString(externalTokenId),
+            "?poolId=1&tba=",
+            Strings.toHexString(uint160(externalTba), 20),
+            "&tbaDeployed=true&agentId=",
+            Strings.toString(externalAgentId),
+            "&agentMode=2&agentCanonical=false&agentExternal=true&agentActive=true&agentComplete=true"
+        );
+        _assertEqBytes32(keccak256(bytes(tokenUri)), keccak256(bytes(expectedUri)), "external token uri state");
+    }
+
+    function _externalLinkDigest(
+        address diamond_,
+        uint256 tokenId,
+        uint256 agentId,
+        address positionOwner,
+        address tba,
+        uint256 nonce,
+        uint256 deadline
+    ) internal view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                keccak256(
+                    "EqualFiExternalAgentLink(uint256 chainId,address diamond,uint256 positionTokenId,uint256 agentId,address positionOwner,address tbaAddress,uint256 nonce,uint256 deadline)"
+                ),
+                block.chainid,
+                diamond_,
+                tokenId,
+                agentId,
+                positionOwner,
+                tba,
+                nonce,
+                deadline
+            )
+        );
+    }
+
+    function _signDigest(uint256 signerPk, bytes32 digest) internal returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
+        return abi.encodePacked(r, s, v);
     }
 }

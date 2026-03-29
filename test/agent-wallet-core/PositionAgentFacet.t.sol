@@ -511,6 +511,27 @@ contract PositionAgentFacetTest {
         facet.linkExternalAgentRegistration(expiredTokenId, agentId, expiredDeadline, expiredSignature);
     }
 
+    function test_externalLink_rejectsWhenIdentityOwnerDriftsBeforeSubmission() external {
+        _configure(owner);
+        uint256 tokenId = _tokenIdFor(owner, 1);
+
+        vm.prank(owner);
+        address tba = facet.deployTBA(tokenId);
+
+        uint256 agentId = 96;
+        uint256 deadline = block.timestamp + 1 days;
+        identity.setOwner(agentId, externalOwner);
+
+        bytes32 digest = _externalLinkDigest(tokenId, agentId, owner, tba, facet.getExternalLinkNonce(tokenId), deadline);
+        bytes memory signature = _signDigest(externalOwnerPk, digest);
+
+        identity.setOwner(agentId, bob);
+
+        vm.prank(owner);
+        vm.expectRevert(PositionAgent_InvalidExternalLinkSignature.selector);
+        facet.linkExternalAgentRegistration(tokenId, agentId, deadline, signature);
+    }
+
     function test_externalLink_rejectsSignatureBoundToDifferentPositionContext() external {
         _configure(owner);
         uint256 tokenId = _tokenIdFor(owner, 1);
