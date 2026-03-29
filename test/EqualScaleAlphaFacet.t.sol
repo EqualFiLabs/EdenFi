@@ -6,6 +6,8 @@ import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
 import {IEqualScaleAlphaErrors} from "src/equalscale/IEqualScaleAlphaErrors.sol";
 import {IEqualScaleAlphaEvents} from "src/equalscale/IEqualScaleAlphaEvents.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
+import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
+import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
 import {LibPositionAgentStorage} from "src/libraries/LibPositionAgentStorage.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
@@ -68,6 +70,43 @@ contract EqualScaleAlphaFacetHarness is EqualScaleAlphaFacet, PositionAgentViewF
         return LibEqualScaleAlphaStorage.s().borrowerLineIds[borrowerPositionKey];
     }
 
+    function commitment(uint256 lineId, uint256 lenderPositionId)
+        external
+        view
+        returns (LibEqualScaleAlphaStorage.Commitment memory)
+    {
+        return LibEqualScaleAlphaStorage.s().lineCommitments[lineId][lenderPositionId];
+    }
+
+    function lineCommitmentPositionIds(uint256 lineId) external view returns (uint256[] memory) {
+        return LibEqualScaleAlphaStorage.s().lineCommitmentPositionIds[lineId];
+    }
+
+    function lenderPositionLineIds(uint256 lenderPositionId) external view returns (uint256[] memory) {
+        return LibEqualScaleAlphaStorage.s().lenderPositionLineIds[lenderPositionId];
+    }
+
+    function setPoolInitialized(uint256 pid, bool initialized) external {
+        LibAppStorage.s().pools[pid].initialized = initialized;
+    }
+
+    function seedPrincipal(uint256 pid, bytes32 positionKey, uint256 principal) external {
+        LibAppStorage.s().pools[pid].userPrincipal[positionKey] = principal;
+        LibAppStorage.s().pools[pid].userFeeIndex[positionKey] = LibAppStorage.s().pools[pid].feeIndex;
+        LibAppStorage.s().pools[pid].userMaintenanceIndex[positionKey] = LibAppStorage.s().pools[pid].maintenanceIndex;
+    }
+
+    function settlementCommitmentModuleId(uint256 lineId) external pure returns (uint256) {
+        return _settlementCommitmentModuleId(lineId);
+    }
+
+    function moduleEncumbranceForLine(uint256 lineId, uint256 lenderPositionId) external view returns (uint256) {
+        PositionNFT positionNft = _positionNft();
+        bytes32 positionKey = positionNft.getPositionKey(lenderPositionId);
+        uint256 pid = positionNft.getPoolId(lenderPositionId);
+        return LibEncumbrance.getModuleEncumberedForModule(positionKey, pid, _settlementCommitmentModuleId(lineId));
+    }
+
     function setLineCurrentCommittedAmount(uint256 lineId, uint256 currentCommittedAmount) external {
         LibEqualScaleAlphaStorage.s().lines[lineId].currentCommittedAmount = currentCommittedAmount;
     }
@@ -103,6 +142,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     address internal alice = address(0xA11CE);
     address internal bob = address(0xB0B);
+    address internal carol = address(0xCA11);
     address internal treasuryWallet = address(0xCAFE);
     address internal bankrToken = address(0xBEEF);
 
@@ -629,6 +669,158 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         facet.cancelLineProposal(lineId);
     }
 
+    function test_commitSolo_encumbersFullTargetDuringSoloWindow() external {
+        uint256 lineId = _createDefaultLine();
+        uint256 lenderPositionId = _seedSettlementPosition(bob, TARGET_LIMIT);
+        bytes32 lenderPositionKey = positionNft.getPositionKey(lenderPositionId);
+
+        vm.expectEmit(true, true, true, true, address(facet));
+        emit CommitmentAdded(lineId, lenderPositionId, lenderPositionKey, TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.prank(bob);
+        facet.commitSolo(lineId, lenderPositionId);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        LibEqualScaleAlphaStorage.Commitment memory commitment = facet.commitment(lineId, lenderPositionId);
+        require(line.currentCommittedAmount == TARGET_LIMIT, "line not fully committed");
+        require(commitment.lenderPositionId == lenderPositionId, "lender position id mismatch");
+        require(commitment.lenderPositionKey == lenderPositionKey, "lender position key mismatch");
+        require(commitment.settlementPoolId == SETTLEMENT_POOL_ID, "commitment settlement pool mismatch");
+        require(commitment.committedAmount == TARGET_LIMIT, "commitment amount mismatch");
+        require(commitment.status == LibEqualScaleAlphaStorage.CommitmentStatus.Active, "commitment not active");
+        require(facet.moduleEncumbranceForLine(lineId, lenderPositionId) == TARGET_LIMIT, "encumbrance mismatch");
+    }
+
+    function test_commitSolo_revertsWhenAvailableSettlementPrincipalIsTooLow() external {
+        uint256 lineId = _createDefaultLine();
+        uint256 lenderPositionId = _seedSettlementPosition(bob, TARGET_LIMIT - 1);
+
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IEqualScaleAlphaErrors.InsufficientLenderPrincipal.selector, lenderPositionId, TARGET_LIMIT, TARGET_LIMIT - 1
+            )
+        );
+        facet.commitSolo(lineId, lenderPositionId);
+    }
+
+    function test_transitionToPooledOpen_isPermissionlessOnlyAfterSoloExpiry() external {
+        uint256 lineId = _createDefaultLine();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.InvalidProposalTerms.selector, "solo window still active")
+        );
+        facet.transitionToPooledOpen(lineId);
+
+        vm.warp(block.timestamp + 3 days + 1);
+        vm.expectEmit(true, false, false, true, address(facet));
+        emit CreditLineOpenedToPool(lineId);
+
+        vm.prank(carol);
+        facet.transitionToPooledOpen(lineId);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        require(
+            line.status == LibEqualScaleAlphaStorage.CreditLineStatus.PooledOpen, "line did not enter pooled open"
+        );
+    }
+
+    function test_commitPooled_tracksSeparateCommitmentsPerPositionNotWallet() external {
+        uint256 lineId = _openLineToPool();
+        uint256 lenderPositionOne = _seedSettlementPosition(bob, 700e18);
+        uint256 lenderPositionTwo = _seedSettlementPosition(bob, 500e18);
+
+        vm.startPrank(bob);
+        facet.commitPooled(lineId, lenderPositionOne, 400e18);
+        facet.commitPooled(lineId, lenderPositionTwo, 300e18);
+        vm.stopPrank();
+
+        LibEqualScaleAlphaStorage.Commitment memory first = facet.commitment(lineId, lenderPositionOne);
+        LibEqualScaleAlphaStorage.Commitment memory second = facet.commitment(lineId, lenderPositionTwo);
+        uint256[] memory committedPositions = facet.lineCommitmentPositionIds(lineId);
+        uint256[] memory firstLines = facet.lenderPositionLineIds(lenderPositionOne);
+        uint256[] memory secondLines = facet.lenderPositionLineIds(lenderPositionTwo);
+
+        require(first.lenderPositionId == lenderPositionOne, "first commitment position mismatch");
+        require(second.lenderPositionId == lenderPositionTwo, "second commitment position mismatch");
+        require(first.committedAmount == 400e18, "first commitment amount mismatch");
+        require(second.committedAmount == 300e18, "second commitment amount mismatch");
+        require(committedPositions.length == 2, "line should track two committed positions");
+        require(committedPositions[0] == lenderPositionOne, "first committed position id mismatch");
+        require(committedPositions[1] == lenderPositionTwo, "second committed position id mismatch");
+        require(firstLines.length == 1 && firstLines[0] == lineId, "first lender reverse lookup mismatch");
+        require(secondLines.length == 1 && secondLines[0] == lineId, "second lender reverse lookup mismatch");
+        require(facet.line(lineId).currentCommittedAmount == 700e18, "aggregate commitment mismatch");
+    }
+
+    function test_commitPooled_revertsWhenCommitmentExceedsRemainingCapacity() external {
+        uint256 lineId = _openLineToPool();
+        uint256 lenderPositionOne = _seedSettlementPosition(bob, 700e18);
+        uint256 lenderPositionTwo = _seedSettlementPosition(carol, 500e18);
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionOne, 700e18);
+
+        vm.prank(carol);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IEqualScaleAlphaErrors.InvalidProposalTerms.selector, "commitment exceeds remaining capacity"
+            )
+        );
+        facet.commitPooled(lineId, lenderPositionTwo, 301e18);
+
+        require(facet.line(lineId).currentCommittedAmount == 700e18, "committed amount should remain capped");
+    }
+
+    function test_cancelCommitment_releasesPooledEncumbrance() external {
+        uint256 lineId = _openLineToPool();
+        uint256 lenderPositionId = _seedSettlementPosition(bob, 600e18);
+        bytes32 lenderPositionKey = positionNft.getPositionKey(lenderPositionId);
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionId, 400e18);
+
+        vm.expectEmit(true, true, true, true, address(facet));
+        emit CommitmentCancelled(lineId, lenderPositionId, lenderPositionKey, 400e18, 0);
+
+        vm.prank(bob);
+        facet.cancelCommitment(lineId, lenderPositionId);
+
+        LibEqualScaleAlphaStorage.Commitment memory commitment = facet.commitment(lineId, lenderPositionId);
+        require(commitment.committedAmount == 0, "commitment amount not cleared");
+        require(
+            commitment.status == LibEqualScaleAlphaStorage.CommitmentStatus.Canceled, "commitment not canceled"
+        );
+        require(facet.moduleEncumbranceForLine(lineId, lenderPositionId) == 0, "encumbrance not released");
+        require(facet.line(lineId).currentCommittedAmount == 0, "line committed amount not reduced");
+    }
+
+    function test_lenderPositionTransfer_movesCommitmentRightsAndObligations() external {
+        uint256 lineId = _openLineToPool();
+        uint256 lenderPositionId = _seedSettlementPosition(bob, 600e18);
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionId, 400e18);
+
+        vm.prank(bob);
+        positionNft.transferFrom(bob, carol, lenderPositionId);
+
+        vm.prank(bob);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.LenderPositionNotOwned.selector, bob, lenderPositionId)
+        );
+        facet.cancelCommitment(lineId, lenderPositionId);
+
+        vm.prank(carol);
+        facet.cancelCommitment(lineId, lenderPositionId);
+
+        LibEqualScaleAlphaStorage.Commitment memory commitment = facet.commitment(lineId, lenderPositionId);
+        require(
+            commitment.status == LibEqualScaleAlphaStorage.CommitmentStatus.Canceled, "transferred commitment not cancelable"
+        );
+        require(facet.moduleEncumbranceForLine(lineId, lenderPositionId) == 0, "transferred encumbrance not released");
+    }
+
     function _registerBorrowerProfileForAlice() internal returns (uint256 positionId) {
         positionId = positionNft.mint(alice, 7);
         uint256 agentId = 17;
@@ -639,6 +831,25 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
         vm.prank(alice);
         facet.registerBorrowerProfile(positionId, treasuryWallet, bankrToken, keccak256("profile"));
+    }
+
+    function _createDefaultLine() internal returns (uint256 lineId) {
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+        facet.setPoolInitialized(SETTLEMENT_POOL_ID, true);
+
+        vm.prank(alice);
+        lineId = facet.createLineProposal(borrowerPositionId, _defaultProposalParamsNone());
+    }
+
+    function _openLineToPool() internal returns (uint256 lineId) {
+        lineId = _createDefaultLine();
+        vm.warp(block.timestamp + 3 days + 1);
+        facet.transitionToPooledOpen(lineId);
+    }
+
+    function _seedSettlementPosition(address owner, uint256 principal) internal returns (uint256 positionId) {
+        positionId = positionNft.mint(owner, SETTLEMENT_POOL_ID);
+        facet.seedPrincipal(SETTLEMENT_POOL_ID, positionNft.getPositionKey(positionId), principal);
     }
 
     function _defaultProposalParamsNone() internal pure returns (EqualScaleAlphaFacet.LineProposalParams memory params) {

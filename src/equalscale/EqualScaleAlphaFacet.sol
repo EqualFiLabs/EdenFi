@@ -3,9 +3,15 @@ pragma solidity ^0.8.20;
 
 import {IEqualScaleAlphaErrors} from "src/equalscale/IEqualScaleAlphaErrors.sol";
 import {IEqualScaleAlphaEvents} from "src/equalscale/IEqualScaleAlphaEvents.sol";
+import {LibActiveCreditIndex} from "src/libraries/LibActiveCreditIndex.sol";
+import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
+import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
+import {LibFeeIndex} from "src/libraries/LibFeeIndex.sol";
+import {LibModuleEncumbrance} from "src/libraries/LibModuleEncumbrance.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {DirectError_InvalidPositionNFT} from "src/libraries/Errors.sol";
+import {Types} from "src/libraries/Types.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 
 interface IPositionAgentIdentityRead {
@@ -135,6 +141,85 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         emit ProposalCancelled(lineId, line.borrowerPositionId, borrowerPositionKey);
     }
 
+    function commitSolo(uint256 lineId, uint256 lenderPositionId) external {
+        LibEqualScaleAlphaStorage.CreditLine storage line = LibEqualScaleAlphaStorage.s().lines[lineId];
+        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.SoloWindow) {
+            revert InvalidProposalTerms(_statusMutationReason(lineId, line.status));
+        }
+        if (block.timestamp > line.soloExclusiveUntil) {
+            revert InvalidProposalTerms("solo window expired");
+        }
+        if (line.currentCommittedAmount != 0) {
+            revert InvalidProposalTerms("solo commitment already exists");
+        }
+
+        _addCommitment(lineId, line, lenderPositionId, line.requestedTargetLimit);
+    }
+
+    function transitionToPooledOpen(uint256 lineId) external {
+        LibEqualScaleAlphaStorage.CreditLine storage line = LibEqualScaleAlphaStorage.s().lines[lineId];
+        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.SoloWindow) {
+            revert InvalidProposalTerms(_statusMutationReason(lineId, line.status));
+        }
+        if (block.timestamp <= line.soloExclusiveUntil) {
+            revert InvalidProposalTerms("solo window still active");
+        }
+        if (line.currentCommittedAmount != 0) {
+            revert InvalidProposalTerms("solo commitment already exists");
+        }
+
+        line.status = LibEqualScaleAlphaStorage.CreditLineStatus.PooledOpen;
+        emit CreditLineOpenedToPool(lineId);
+    }
+
+    function commitPooled(uint256 lineId, uint256 lenderPositionId, uint256 amount) external {
+        LibEqualScaleAlphaStorage.CreditLine storage line = LibEqualScaleAlphaStorage.s().lines[lineId];
+        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.PooledOpen) {
+            revert InvalidProposalTerms("line not open to pooled commitments");
+        }
+        if (amount == 0) {
+            revert InvalidProposalTerms("amount == 0");
+        }
+
+        uint256 remainingCapacity = line.requestedTargetLimit - line.currentCommittedAmount;
+        if (amount > remainingCapacity) {
+            revert InvalidProposalTerms("commitment exceeds remaining capacity");
+        }
+
+        _addCommitment(lineId, line, lenderPositionId, amount);
+    }
+
+    function cancelCommitment(uint256 lineId, uint256 lenderPositionId) external {
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
+        LibEqualScaleAlphaStorage.CreditLine storage line = store.lines[lineId];
+        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.PooledOpen) {
+            revert InvalidProposalTerms("line not cancelable during current status");
+        }
+
+        bytes32 lenderPositionKey = _requireLenderPositionOwner(lenderPositionId, line.settlementPoolId);
+        LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionId];
+        if (
+            commitment.status != LibEqualScaleAlphaStorage.CommitmentStatus.Active || commitment.committedAmount == 0
+                || commitment.lenderPositionKey != lenderPositionKey
+        ) {
+            revert InvalidProposalTerms("no active commitment");
+        }
+
+        uint256 canceledAmount = commitment.committedAmount;
+        commitment.committedAmount = 0;
+        commitment.status = LibEqualScaleAlphaStorage.CommitmentStatus.Canceled;
+        line.currentCommittedAmount -= canceledAmount;
+
+        _settleSettlementPosition(line.settlementPoolId, lenderPositionKey);
+        LibModuleEncumbrance.unencumber(
+            lenderPositionKey, line.settlementPoolId, _settlementCommitmentModuleId(lineId), canceledAmount
+        );
+
+        emit CommitmentCancelled(
+            lineId, lenderPositionId, lenderPositionKey, canceledAmount, line.currentCommittedAmount
+        );
+    }
+
     function _createLineProposal(
         uint256 borrowerPositionId,
         bytes32 borrowerPositionKey,
@@ -166,6 +251,52 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         _emitLineProposalUpdated(lineId, line.borrowerPositionId, borrowerPositionKey, params);
     }
 
+    function _addCommitment(
+        uint256 lineId,
+        LibEqualScaleAlphaStorage.CreditLine storage line,
+        uint256 lenderPositionId,
+        uint256 amount
+    ) internal {
+        bytes32 lenderPositionKey = _requireLenderPositionOwner(lenderPositionId, line.settlementPoolId);
+        _settleSettlementPosition(line.settlementPoolId, lenderPositionKey);
+
+        Types.PoolData storage settlementPool = LibAppStorage.s().pools[line.settlementPoolId];
+        if (!settlementPool.initialized) {
+            revert InvalidProposalTerms("settlement pool not initialized");
+        }
+        uint256 available = _availablePrincipal(settlementPool, lenderPositionKey, line.settlementPoolId);
+        if (available < amount) {
+            revert InsufficientLenderPrincipal(lenderPositionId, amount, available);
+        }
+
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
+        LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionId];
+        if (!store.lineHasCommitmentPosition[lineId][lenderPositionId]) {
+            store.lineHasCommitmentPosition[lineId][lenderPositionId] = true;
+            store.lineCommitmentPositionIds[lineId].push(lenderPositionId);
+        }
+        if (!store.lenderPositionHasLine[lenderPositionId][lineId]) {
+            store.lenderPositionHasLine[lenderPositionId][lineId] = true;
+            store.lenderPositionLineIds[lenderPositionId].push(lineId);
+        }
+
+        if (commitment.lenderPositionId == 0) {
+            commitment.lenderPositionId = lenderPositionId;
+        }
+        commitment.lenderPositionKey = lenderPositionKey;
+        commitment.settlementPoolId = line.settlementPoolId;
+        commitment.committedAmount += amount;
+        commitment.status = LibEqualScaleAlphaStorage.CommitmentStatus.Active;
+
+        line.currentCommittedAmount += amount;
+
+        LibModuleEncumbrance.encumber(
+            lenderPositionKey, line.settlementPoolId, _settlementCommitmentModuleId(lineId), amount
+        );
+
+        emit CommitmentAdded(lineId, lenderPositionId, lenderPositionKey, amount, line.currentCommittedAmount);
+    }
+
     function _requireBorrowerPositionOwner(uint256 positionId) internal view returns (bytes32 borrowerPositionKey) {
         PositionNFT positionNft = _positionNft();
         address owner = positionNft.ownerOf(positionId);
@@ -174,6 +305,23 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         }
 
         borrowerPositionKey = positionNft.getPositionKey(positionId);
+    }
+
+    function _requireLenderPositionOwner(uint256 lenderPositionId, uint256 settlementPoolId)
+        internal
+        view
+        returns (bytes32 lenderPositionKey)
+    {
+        PositionNFT positionNft = _positionNft();
+        address owner = positionNft.ownerOf(lenderPositionId);
+        if (owner != msg.sender) {
+            revert LenderPositionNotOwned(msg.sender, lenderPositionId);
+        }
+        if (positionNft.getPoolId(lenderPositionId) != settlementPoolId) {
+            revert InvalidProposalTerms("lender position not in settlement pool");
+        }
+
+        lenderPositionKey = positionNft.getPositionKey(lenderPositionId);
     }
 
     function _requireCompletedBorrowerIdentity(uint256 positionId) internal view returns (uint256 resolvedAgentId) {
@@ -380,6 +528,28 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
             value /= 10;
         }
         return string(buffer);
+    }
+
+    function _availablePrincipal(Types.PoolData storage pool, bytes32 positionKey, uint256 pid)
+        internal
+        view
+        returns (uint256 available)
+    {
+        uint256 principal = pool.userPrincipal[positionKey];
+        uint256 totalEncumbered = LibEncumbrance.total(positionKey, pid);
+        if (totalEncumbered >= principal) {
+            return 0;
+        }
+        return principal - totalEncumbered;
+    }
+
+    function _settlementCommitmentModuleId(uint256 lineId) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encodePacked("equalscale.alpha.commitment.", lineId)));
+    }
+
+    function _settleSettlementPosition(uint256 settlementPoolId, bytes32 lenderPositionKey) internal {
+        LibActiveCreditIndex.settle(settlementPoolId, lenderPositionKey);
+        LibFeeIndex.settle(settlementPoolId, lenderPositionKey);
     }
 
     function _positionNft() internal view returns (PositionNFT positionNft) {
