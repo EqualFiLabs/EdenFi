@@ -15,6 +15,7 @@ import {PositionAgentConfigFacet} from "src/agent-wallet/erc6551/PositionAgentCo
 import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFacet.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
 import {PositionAgentRegistryFacet} from "src/agent-wallet/erc6551/PositionAgentRegistryFacet.sol";
+import {PositionAgent_ConfigLocked} from "src/libraries/PositionAgentErrors.sol";
 import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
 import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
 import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
@@ -23,6 +24,11 @@ import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {Types} from "src/libraries/Types.sol";
+import {
+    MockEntryPointLaunch,
+    MockERC6551RegistryLaunch,
+    MockIdentityRegistryLaunch
+} from "test/utils/PositionAgentBootstrapMocks.sol";
 
 contract MockERC20Deploy is ERC20 {
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
@@ -48,6 +54,9 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
 
     MockERC20Deploy internal eve;
     MockERC20Deploy internal alt;
+    MockEntryPointLaunch internal entryPoint;
+    MockERC6551RegistryLaunch internal erc6551Registry;
+    MockIdentityRegistryLaunch internal identityRegistry;
 
     PositionNFT internal positionNft;
     address internal diamond;
@@ -55,6 +64,9 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
     function setUp() public {
         eve = new MockERC20Deploy("EVE", "EVE");
         alt = new MockERC20Deploy("ALT", "ALT");
+        entryPoint = new MockEntryPointLaunch();
+        erc6551Registry = new MockERC6551RegistryLaunch();
+        identityRegistry = new MockIdentityRegistryLaunch();
 
         BaseDeployment memory deployment = deployBase(address(this), treasury);
         diamond = deployment.diamond;
@@ -62,7 +74,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _installLaunchFacets(diamond);
     }
 
-    function test_DeployLaunch_WiresDiamondCoreAndMinimalFacetSet() public {
+    function test_DeployLaunch_WiresDiamondCoreAndMinimalFacetSet() public view {
         _assertEqAddress(OwnershipFacet(diamond).owner(), address(this), "owner wired");
         _assertEqAddress(positionNft.minter(), diamond, "position nft minter");
         _assertEqAddress(positionNft.diamond(), diamond, "position nft diamond");
@@ -110,7 +122,14 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
     }
 
     function test_DeployLaunch_HandsOffGovernanceToFixedDelayTimelock() public {
-        LaunchDeployment memory deployment = deployLaunch(address(this), address(this), treasury);
+        LaunchDeployment memory deployment = deployLaunch(
+            address(this),
+            address(this),
+            treasury,
+            address(entryPoint),
+            address(erc6551Registry),
+            address(identityRegistry)
+        );
         address launchedDiamond = deployment.diamond;
         FixedDelayTimelockController controller =
             FixedDelayTimelockController(payable(deployment.timelockController));
@@ -138,7 +157,14 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
     }
 
     function test_DeployLaunch_TimelockRejectsInvalidDelayMutation() public {
-        LaunchDeployment memory deployment = deployLaunch(address(this), address(this), treasury);
+        LaunchDeployment memory deployment = deployLaunch(
+            address(this),
+            address(this),
+            treasury,
+            address(entryPoint),
+            address(erc6551Registry),
+            address(identityRegistry)
+        );
         FixedDelayTimelockController controller =
             FixedDelayTimelockController(payable(deployment.timelockController));
 
@@ -337,5 +363,54 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
 
     function _assertGt(uint256 left, uint256 right, string memory message) internal pure {
         require(left > right, message);
+    }
+
+    function test_DeployLaunch_BootstrapsWalletConfig_AndLocksAfterFirstTBA() public {
+        LaunchDeployment memory deployment = deployLaunch(
+            address(this),
+            address(this),
+            treasury,
+            address(entryPoint),
+            address(erc6551Registry),
+            address(identityRegistry)
+        );
+
+        (address configuredRegistry, address configuredImplementation, address configuredIdentity) =
+            PositionAgentViewFacet(deployment.diamond).getCanonicalRegistries();
+        _assertEqAddress(configuredRegistry, address(erc6551Registry), "wallet registry set");
+        _assertEqAddress(configuredIdentity, address(identityRegistry), "identity registry set");
+        _assertEqAddress(configuredImplementation, deployment.positionMSCAImplementation, "wallet implementation set");
+
+        Types.PoolConfig memory cfg = _poolConfig();
+        Types.ActionFeeSet memory actionFees;
+        FixedDelayTimelockController controller =
+            FixedDelayTimelockController(payable(deployment.timelockController));
+        _timelockCall(
+            controller,
+            deployment.diamond,
+            abi.encodeWithSelector(PoolManagementFacet.setDefaultPoolConfig.selector, cfg)
+        );
+        _timelockCall(
+            controller,
+            deployment.diamond,
+            abi.encodeWithSelector(PoolManagementFacet.initPoolWithActionFees.selector, 1, address(eve), cfg, actionFees)
+        );
+
+        vm.prank(alice);
+        uint256 tokenId = PositionManagementFacet(deployment.diamond).mintPosition(1);
+        address expectedTba = PositionAgentTBAFacet(deployment.diamond).computeTBAAddress(tokenId);
+        vm.prank(alice);
+        address deployedTba = PositionAgentTBAFacet(deployment.diamond).deployTBA(tokenId);
+
+        _assertEqAddress(deployedTba, expectedTba, "wallet deployed");
+        _assertTrue(PositionAgentViewFacet(deployment.diamond).isTBADeployed(tokenId), "wallet flagged deployed");
+
+        bytes memory data =
+            abi.encodeWithSelector(PositionAgentConfigFacet.setIdentityRegistry.selector, address(identityRegistry));
+        bytes32 salt = keccak256(abi.encodePacked("position-agent-config-lock", timelockSaltNonce++));
+        controller.schedule(deployment.diamond, 0, data, bytes32(0), salt, 7 days);
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.expectRevert(PositionAgent_ConfigLocked.selector);
+        controller.execute(deployment.diamond, 0, data, bytes32(0), salt);
     }
 }

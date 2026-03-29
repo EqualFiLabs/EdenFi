@@ -22,6 +22,7 @@ import {PositionAgentConfigFacet} from "src/agent-wallet/erc6551/PositionAgentCo
 import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFacet.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
 import {PositionAgentRegistryFacet} from "src/agent-wallet/erc6551/PositionAgentRegistryFacet.sol";
+import {PositionMSCAImpl} from "src/agent-wallet/erc6900/PositionMSCAImpl.sol";
 import {EdenBasketFacet} from "src/eden/EdenBasketFacet.sol";
 import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
 import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
@@ -57,6 +58,10 @@ contract DeployEdenByEqualFi is Script {
         address timelockController;
         address governor;
         address treasury;
+        address entryPoint;
+        address erc6551Registry;
+        address identityRegistry;
+        address positionMSCAImplementation;
     }
 
     function runBase() external returns (BaseDeployment memory deployment) {
@@ -77,13 +82,17 @@ contract DeployEdenByEqualFi is Script {
     function run() external returns (LaunchDeployment memory deployment) {
         address governor_ = vm.envAddress("TIMELOCK");
         address treasury_ = vm.envAddress("TREASURY");
+        address entryPoint_ = vm.envAddress("ENTRYPOINT_ADDRESS");
+        address erc6551Registry_ = vm.envAddress("ERC6551_REGISTRY");
+        address identityRegistry_ = vm.envAddress("IDENTITY_REGISTRY");
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
         address owner_ = vm.envOr("OWNER", deployer);
         require(deployer == owner_, "DeployEdenByEqualFi: PRIVATE_KEY must be OWNER");
 
         vm.startBroadcast(deployerPrivateKey);
-        deployment = deployLaunch(owner_, governor_, treasury_);
+        deployment =
+            deployLaunch(owner_, governor_, treasury_, entryPoint_, erc6551Registry_, identityRegistry_);
         vm.stopBroadcast();
 
         console2.log("diamond", deployment.diamond);
@@ -91,6 +100,10 @@ contract DeployEdenByEqualFi is Script {
         console2.log("timelockController", deployment.timelockController);
         console2.log("governor", deployment.governor);
         console2.log("treasury", deployment.treasury);
+        console2.log("entryPoint", deployment.entryPoint);
+        console2.log("erc6551Registry", deployment.erc6551Registry);
+        console2.log("identityRegistry", deployment.identityRegistry);
+        console2.log("positionMSCAImplementation", deployment.positionMSCAImplementation);
     }
 
     function deployBase(address owner_, address treasury_)
@@ -119,12 +132,24 @@ contract DeployEdenByEqualFi is Script {
         deployment = BaseDeployment({diamond: address(diamond), positionNFT: address(nftContract)});
     }
 
-    function deployLaunch(address owner_, address governor_, address treasury_)
+    function deployLaunch(
+        address owner_,
+        address governor_,
+        address treasury_,
+        address entryPoint_,
+        address erc6551Registry_,
+        address identityRegistry_
+    )
         public
         returns (LaunchDeployment memory deployment)
     {
         BaseDeployment memory base = deployBase(owner_, treasury_);
         _installLaunchFacets(base.diamond);
+
+        PositionMSCAImpl positionMSCAImplementation = new PositionMSCAImpl(entryPoint_);
+        PositionAgentConfigFacet(base.diamond).setERC6551Registry(erc6551Registry_);
+        PositionAgentConfigFacet(base.diamond).setERC6551Implementation(address(positionMSCAImplementation));
+        PositionAgentConfigFacet(base.diamond).setIdentityRegistry(identityRegistry_);
 
         address[] memory proposers = new address[](1);
         proposers[0] = governor_;
@@ -141,7 +166,11 @@ contract DeployEdenByEqualFi is Script {
             positionNFT: base.positionNFT,
             timelockController: address(timelockController),
             governor: governor_,
-            treasury: treasury_
+            treasury: treasury_,
+            entryPoint: entryPoint_,
+            erc6551Registry: erc6551Registry_,
+            identityRegistry: identityRegistry_,
+            positionMSCAImplementation: address(positionMSCAImplementation)
         });
     }
 

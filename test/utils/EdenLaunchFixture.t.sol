@@ -23,6 +23,11 @@ import {BasketToken} from "src/tokens/BasketToken.sol";
 import {IDiamondCut} from "src/interfaces/IDiamondCut.sol";
 import {Types} from "src/libraries/Types.sol";
 import {ProtocolTestSupportFacet} from "test/utils/ProtocolTestSupport.sol";
+import {
+    MockEntryPointLaunch,
+    MockERC6551RegistryLaunch,
+    MockIdentityRegistryLaunch
+} from "test/utils/PositionAgentBootstrapMocks.sol";
 
 contract MockERC20Launch is ERC20 {
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
@@ -71,6 +76,9 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
     MockERC20Launch internal eve;
     MockERC20Launch internal alt;
     MockFeeOnTransferLaunch internal fot;
+    MockEntryPointLaunch internal entryPoint;
+    MockERC6551RegistryLaunch internal erc6551Registry;
+    MockIdentityRegistryLaunch internal identityRegistry;
 
     uint256 internal steveBasketId;
     address internal steveToken;
@@ -79,7 +87,18 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
     uint256 internal timelockSaltNonce;
 
     function setUp() public virtual {
-        LaunchDeployment memory deployment = deployLaunch(address(this), address(this), treasury);
+        entryPoint = new MockEntryPointLaunch();
+        erc6551Registry = new MockERC6551RegistryLaunch();
+        identityRegistry = new MockIdentityRegistryLaunch();
+
+        LaunchDeployment memory deployment = deployLaunch(
+            address(this),
+            address(this),
+            treasury,
+            address(entryPoint),
+            address(erc6551Registry),
+            address(identityRegistry)
+        );
         diamond = deployment.diamond;
         positionNft = PositionNFT(deployment.positionNFT);
         timelockController = FixedDelayTimelockController(payable(deployment.timelockController));
