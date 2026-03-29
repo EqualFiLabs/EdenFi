@@ -119,14 +119,14 @@
 - [x] 5. Update loupe and facet-count assertions in deploy tests
 
 ## Task 13: Add Regression Tests For the Clean Break
-- [ ] 1. Add tests proving arbitrary EDEN basket creation is impossible
-- [ ] 2. Add tests proving arbitrary EDEN wallet mint / burn is impossible
-- [ ] 3. Add tests proving arbitrary EDEN position mint / burn is impossible
-- [ ] 4. Add tests proving wallet-mode `stEVE` mint / burn still works
-- [ ] 5. Add tests proving PNFT-mode `stEVE` deposit / withdraw still works
-- [ ] 6. Add tests proving only PNFT-held `stEVE` earns `EVE`
-- [ ] 7. Add tests proving EDEN lending works against the singleton EDEN product
-- [ ] 8. Add tests proving pool flash loans still work
+- [x] 1. Add tests proving arbitrary EDEN basket creation is impossible
+- [x] 2. Add tests proving arbitrary EDEN wallet mint / burn is impossible
+- [x] 3. Add tests proving arbitrary EDEN position mint / burn is impossible
+- [x] 4. Add tests proving wallet-mode `stEVE` mint / burn still works
+- [x] 5. Add tests proving PNFT-mode `stEVE` deposit / withdraw still works
+- [x] 6. Add tests proving only PNFT-held `stEVE` earns `EVE`
+- [x] 7. Add tests proving EDEN lending works against the singleton EDEN product
+- [x] 8. Add tests proving pool flash loans still work
 - [ ] 9. Add tests proving index flash loans still work
 - [ ] 10. Add tests proving EqualIndex generic mint / burn still works for non-EDEN products
 - [ ] 11. Add tests proving deploy selector set matches the intended final surface
