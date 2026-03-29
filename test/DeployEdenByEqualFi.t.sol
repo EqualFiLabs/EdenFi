@@ -14,6 +14,7 @@ import {FlashLoanFacet} from "src/equallend/FlashLoanFacet.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
+import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {PositionAgentConfigFacet} from "src/agent-wallet/erc6551/PositionAgentConfigFacet.sol";
 import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFacet.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
@@ -200,6 +201,50 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _assertSelectorGroupInstalled(loupe, _selectorsEqualScaleAlpha());
         _assertSelectorGroupInstalled(loupe, _selectorsEqualScaleAlphaAdmin());
         _assertSelectorGroupInstalled(loupe, _selectorsEqualScaleAlphaView());
+    }
+
+    function test_DeployLaunch_KeepsCanonicalNonEdenSelectorsInSubstrateAndEqualIndex() public view {
+        IDiamondLoupe loupe = IDiamondLoupe(diamond);
+
+        address poolFlashFacet = loupe.facetAddress(FlashLoanFacet.flashLoan.selector);
+        _assertTrue(poolFlashFacet != address(0), "pool flash selector installed");
+        _assertEqAddress(
+            poolFlashFacet,
+            loupe.facetAddress(FlashLoanFacet.previewFlashLoanRepayment.selector),
+            "pool flash selectors stay together"
+        );
+
+        address equalIndexActionsFacet = loupe.facetAddress(EqualIndexActionsFacetV3.flashLoan.selector);
+        _assertTrue(equalIndexActionsFacet != address(0), "index flash selector installed");
+        _assertEqAddress(
+            equalIndexActionsFacet,
+            loupe.facetAddress(EqualIndexActionsFacetV3.mint.selector),
+            "wallet-mode generic mint stays in EqualIndex"
+        );
+        _assertEqAddress(
+            equalIndexActionsFacet,
+            loupe.facetAddress(EqualIndexActionsFacetV3.burn.selector),
+            "wallet-mode generic burn stays in EqualIndex"
+        );
+
+        address equalIndexPositionFacet = loupe.facetAddress(EqualIndexPositionFacet.mintFromPosition.selector);
+        _assertTrue(equalIndexPositionFacet != address(0), "position-mode EqualIndex selector installed");
+        _assertEqAddress(
+            equalIndexPositionFacet,
+            loupe.facetAddress(EqualIndexPositionFacet.burnFromPosition.selector),
+            "position-mode generic burn stays in EqualIndex"
+        );
+
+        _assertTrue(poolFlashFacet != equalIndexActionsFacet, "pool and index flash lanes stay separate");
+        _assertTrue(equalIndexActionsFacet != equalIndexPositionFacet, "EqualIndex action and position lanes stay explicit");
+        _assertTrue(
+            loupe.facetAddress(EdenStEVEWalletFacet.mintStEVE.selector) != equalIndexActionsFacet,
+            "EDEN wallet selector does not own generic EqualIndex wallet flows"
+        );
+        _assertTrue(
+            loupe.facetAddress(EdenBasketPositionFacet.mintStEVEFromPosition.selector) != equalIndexPositionFacet,
+            "EDEN position selector does not own generic EqualIndex position flows"
+        );
     }
 
     function test_DeployLaunch_KeepsEqualScaleAlphaFacetsWithinEip170RuntimeLimit() public {
