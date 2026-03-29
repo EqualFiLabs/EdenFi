@@ -78,7 +78,7 @@ contract EqualScaleAlphaIntegrationTest is DeployEdenByEqualFi {
     MockIdentityRegistryLaunch internal identityRegistry;
     PositionMSCAImpl internal positionMSCAImplementation;
 
-    function setUp() public {
+    function setUp() public virtual {
         entryPoint = new MockEntryPointLaunch();
         erc6551Registry = new MockERC6551RegistryLaunch();
         identityRegistry = new MockIdentityRegistryLaunch();
