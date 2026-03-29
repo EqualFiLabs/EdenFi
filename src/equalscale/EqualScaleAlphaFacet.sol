@@ -25,6 +25,8 @@ interface IPositionAgentIdentityRead {
 /// @notice Borrower-profile writes for EqualScale Alpha.
 contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors {
     uint40 internal constant SOLO_WINDOW_DURATION = 3 days;
+    uint256 internal constant BPS_DENOMINATOR = 10_000;
+    uint256 internal constant YEAR_SECS = 365 days;
     bytes32 internal constant LINE_PROPOSAL_CREATED_TOPIC0 =
         keccak256(
             "LineProposalCreated(uint256,uint256,bytes32,uint256,uint256,uint256,uint16,uint256,uint256,uint32,uint32,uint40,uint40,uint8,uint256,uint256)"
@@ -129,6 +131,11 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         line.currentCommittedAmount = 0;
         line.activeLimit = 0;
         line.outstandingPrincipal = 0;
+        line.accruedInterest = 0;
+        line.interestAccruedSinceLastDue = 0;
+        line.totalPrincipalRepaid = 0;
+        line.totalInterestRepaid = 0;
+        line.paidSinceLastDue = 0;
         line.currentPeriodDrawn = 0;
         line.currentPeriodStartedAt = 0;
         line.interestAccruedAt = 0;
@@ -275,6 +282,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
             revert InvalidProposalTerms("line not active for draw");
         }
 
+        _accrueInterest(line);
         _resetDrawPeriodIfRolled(line);
 
         uint256 nextPeriodDrawn = line.currentPeriodDrawn + amount;
@@ -323,6 +331,60 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         LibCurrency.transfer(settlementPool.underlying, profile.treasuryWallet, amount);
 
         emit CreditDrawn(lineId, amount, line.outstandingPrincipal, line.currentPeriodDrawn);
+    }
+
+    function repay(uint256 lineId, uint256 amount) external {
+        if (amount == 0) {
+            revert InvalidProposalTerms("amount == 0");
+        }
+
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
+        LibEqualScaleAlphaStorage.CreditLine storage line = store.lines[lineId];
+        bytes32 borrowerPositionKey = _requireBorrowerPositionOwner(line.borrowerPositionId);
+        if (!_repaymentAllowed(line.status)) {
+            revert InvalidProposalTerms("line not repayable during current status");
+        }
+
+        _accrueInterest(line);
+
+        uint256 totalOutstanding = line.outstandingPrincipal + line.accruedInterest;
+        if (totalOutstanding == 0) {
+            revert InvalidProposalTerms("line has no outstanding obligation");
+        }
+
+        uint256 effectiveAmount = amount > totalOutstanding ? totalOutstanding : amount;
+        uint256 requiredMinimumDue = _requiredMinimumDue(line);
+        uint256 interestComponent = effectiveAmount > line.accruedInterest ? line.accruedInterest : effectiveAmount;
+        uint256 principalComponent = effectiveAmount - interestComponent;
+
+        Types.PoolData storage settlementPool = LibAppStorage.s().pools[line.settlementPoolId];
+        uint256 received =
+            LibCurrency.pullAtLeast(settlementPool.underlying, msg.sender, effectiveAmount, effectiveAmount);
+        settlementPool.trackedBalance += received;
+
+        _settleSettlementPosition(line.settlementPoolId, borrowerPositionKey);
+
+        line.accruedInterest -= interestComponent;
+        line.outstandingPrincipal -= principalComponent;
+        line.totalInterestRepaid += interestComponent;
+        line.totalPrincipalRepaid += principalComponent;
+        line.paidSinceLastDue += effectiveAmount;
+
+        if (principalComponent != 0) {
+            _reduceBorrowerDebt(settlementPool, line.settlementPoolId, borrowerPositionKey, principalComponent);
+        }
+
+        _allocateRepayment(store, lineId, interestComponent, principalComponent);
+        _recordPaymentRecord(store, lineId, effectiveAmount, principalComponent, interestComponent);
+
+        bool minimumDueSatisfied = requiredMinimumDue == 0 || line.paidSinceLastDue >= requiredMinimumDue;
+        if (minimumDueSatisfied) {
+            _advanceDueCheckpoint(line);
+        }
+
+        _cureLineIfCovered(line, minimumDueSatisfied);
+
+        _emitCreditPaymentMade(lineId, effectiveAmount, principalComponent, interestComponent, line);
     }
 
     function _createLineProposal(
@@ -675,6 +737,193 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
 
             commitment.principalExposed += exposureShare;
         }
+    }
+
+    function _allocateRepayment(
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store,
+        uint256 lineId,
+        uint256 interestComponent,
+        uint256 principalComponent
+    ) internal {
+        if (interestComponent == 0 && principalComponent == 0) {
+            return;
+        }
+
+        uint256[] storage lenderPositionIds = store.lineCommitmentPositionIds[lineId];
+        uint256 totalExposed;
+        uint256 activeCommitmentCount;
+        uint256 len = lenderPositionIds.length;
+
+        for (uint256 i = 0; i < len; i++) {
+            LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionIds[i]];
+            if (
+                commitment.status == LibEqualScaleAlphaStorage.CommitmentStatus.Active && commitment.principalExposed != 0
+            ) {
+                totalExposed += commitment.principalExposed;
+                activeCommitmentCount++;
+            }
+        }
+
+        if (totalExposed == 0 || activeCommitmentCount == 0) {
+            return;
+        }
+
+        uint256 remainingInterest = interestComponent;
+        uint256 remainingPrincipal = principalComponent;
+        uint256 seenActiveCommitments;
+        for (uint256 i = 0; i < len; i++) {
+            LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionIds[i]];
+            if (
+                commitment.status != LibEqualScaleAlphaStorage.CommitmentStatus.Active || commitment.principalExposed == 0
+            ) {
+                continue;
+            }
+
+            seenActiveCommitments++;
+            uint256 interestShare = remainingInterest;
+            uint256 principalShare = remainingPrincipal;
+            if (seenActiveCommitments != activeCommitmentCount) {
+                interestShare = Math.mulDiv(interestComponent, commitment.principalExposed, totalExposed);
+                principalShare = Math.mulDiv(principalComponent, commitment.principalExposed, totalExposed);
+                remainingInterest -= interestShare;
+                remainingPrincipal -= principalShare;
+            }
+
+            commitment.interestReceived += interestShare;
+            commitment.principalRepaid += principalShare;
+            commitment.principalExposed -= principalShare;
+        }
+    }
+
+    function _recordPaymentRecord(
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store,
+        uint256 lineId,
+        uint256 effectiveAmount,
+        uint256 principalComponent,
+        uint256 interestComponent
+    ) internal {
+        store.paymentRecords[lineId].push(
+            LibEqualScaleAlphaStorage.PaymentRecord({
+                paidAt: uint40(block.timestamp),
+                amount: effectiveAmount,
+                principalComponent: principalComponent,
+                interestComponent: interestComponent
+            })
+        );
+    }
+
+    function _accrueInterest(LibEqualScaleAlphaStorage.CreditLine storage line) internal {
+        uint40 accruedAt = line.interestAccruedAt;
+        if (accruedAt == 0 || line.outstandingPrincipal == 0) {
+            line.interestAccruedAt = uint40(block.timestamp);
+            return;
+        }
+
+        uint256 elapsed = block.timestamp - uint256(accruedAt);
+        if (elapsed == 0) {
+            return;
+        }
+
+        uint256 accrued = Math.mulDiv(line.outstandingPrincipal, uint256(line.aprBps) * elapsed, BPS_DENOMINATOR * YEAR_SECS);
+        if (accrued != 0) {
+            line.accruedInterest += accrued;
+            line.interestAccruedSinceLastDue += accrued;
+        }
+        line.interestAccruedAt = uint40(block.timestamp);
+    }
+
+    function _requiredMinimumDue(LibEqualScaleAlphaStorage.CreditLine storage line) internal view returns (uint256) {
+        return line.interestAccruedSinceLastDue > line.minimumPaymentPerPeriod
+            ? line.interestAccruedSinceLastDue
+            : line.minimumPaymentPerPeriod;
+    }
+
+    function _advanceDueCheckpoint(LibEqualScaleAlphaStorage.CreditLine storage line) internal {
+        line.nextDueAt += line.paymentIntervalSecs;
+        line.interestAccruedSinceLastDue = 0;
+        line.paidSinceLastDue = 0;
+    }
+
+    function _cureLineIfCovered(LibEqualScaleAlphaStorage.CreditLine storage line, bool minimumDueSatisfied) internal {
+        if (line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Delinquent && minimumDueSatisfied) {
+            if (line.delinquentSince != 0) {
+                line.delinquentSince = 0;
+            }
+            line.missedPayments = 0;
+            line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Active;
+            return;
+        }
+
+        if (
+            line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Runoff
+                && line.outstandingPrincipal <= line.currentCommittedAmount
+        ) {
+            uint40 restartedAt = uint40(block.timestamp);
+            line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Active;
+            line.activeLimit = line.currentCommittedAmount;
+            line.currentPeriodDrawn = 0;
+            line.currentPeriodStartedAt = restartedAt;
+            line.nextDueAt = restartedAt + line.paymentIntervalSecs;
+            line.termStartedAt = restartedAt;
+            line.termEndAt = restartedAt + line.facilityTermSecs;
+            line.refinanceEndAt = line.termEndAt + line.refinanceWindowSecs;
+            line.interestAccruedSinceLastDue = 0;
+            line.paidSinceLastDue = 0;
+        }
+    }
+
+    function _reduceBorrowerDebt(
+        Types.PoolData storage settlementPool,
+        uint256 settlementPoolId,
+        bytes32 borrowerPositionKey,
+        uint256 principalComponent
+    ) internal {
+        uint256 sameAssetDebt = settlementPool.userSameAssetDebt[borrowerPositionKey];
+        settlementPool.userSameAssetDebt[borrowerPositionKey] =
+            sameAssetDebt > principalComponent ? sameAssetDebt - principalComponent : 0;
+
+        Types.ActiveCreditState storage debtState = settlementPool.userActiveCreditStateDebt[borrowerPositionKey];
+        uint256 debtPrincipalBefore = debtState.principal;
+        uint256 debtDecrease = debtPrincipalBefore > principalComponent ? principalComponent : debtPrincipalBefore;
+        LibActiveCreditIndex.applyPrincipalDecrease(settlementPool, debtState, debtDecrease);
+
+        if (debtPrincipalBefore <= principalComponent || debtState.principal == 0) {
+            LibActiveCreditIndex.resetIfZeroWithGate(debtState, settlementPoolId, borrowerPositionKey, true);
+        } else {
+            debtState.indexSnapshot = settlementPool.activeCreditIndex;
+        }
+
+        if (settlementPool.activeCreditPrincipalTotal >= debtDecrease) {
+            settlementPool.activeCreditPrincipalTotal -= debtDecrease;
+        } else {
+            settlementPool.activeCreditPrincipalTotal = 0;
+        }
+    }
+
+    function _repaymentAllowed(LibEqualScaleAlphaStorage.CreditLineStatus status) internal pure returns (bool) {
+        return status == LibEqualScaleAlphaStorage.CreditLineStatus.Active
+            || status == LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing
+            || status == LibEqualScaleAlphaStorage.CreditLineStatus.Runoff
+            || status == LibEqualScaleAlphaStorage.CreditLineStatus.Delinquent
+            || status == LibEqualScaleAlphaStorage.CreditLineStatus.Frozen;
+    }
+
+    function _emitCreditPaymentMade(
+        uint256 lineId,
+        uint256 effectiveAmount,
+        uint256 principalComponent,
+        uint256 interestComponent,
+        LibEqualScaleAlphaStorage.CreditLine storage line
+    ) internal {
+        emit CreditPaymentMade(
+            lineId,
+            effectiveAmount,
+            principalComponent,
+            interestComponent,
+            line.outstandingPrincipal,
+            line.accruedInterest,
+            line.nextDueAt
+        );
     }
 
     function _statusMutationReason(uint256 lineId, LibEqualScaleAlphaStorage.CreditLineStatus status)

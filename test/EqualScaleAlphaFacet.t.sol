@@ -168,6 +168,40 @@ contract EqualScaleAlphaFacetHarness is EqualScaleAlphaFacet, PositionAgentViewF
     function poolActiveCreditPrincipalTotal(uint256 pid) external view returns (uint256) {
         return LibAppStorage.s().pools[pid].activeCreditPrincipalTotal;
     }
+
+    function previewLineInterest(uint256 lineId)
+        external
+        view
+        returns (uint256 accruedInterest, uint256 accruedInterestSinceLastDue, uint256 requiredMinimumDue)
+    {
+        LibEqualScaleAlphaStorage.CreditLine storage creditLine = LibEqualScaleAlphaStorage.s().lines[lineId];
+
+        uint256 pendingInterest;
+        if (creditLine.interestAccruedAt != 0 && creditLine.outstandingPrincipal != 0 && block.timestamp > creditLine.interestAccruedAt) {
+            uint256 elapsed = block.timestamp - uint256(creditLine.interestAccruedAt);
+            pendingInterest =
+                (creditLine.outstandingPrincipal * creditLine.aprBps * elapsed) / (10_000 * 365 days);
+        }
+
+        accruedInterest = creditLine.accruedInterest + pendingInterest;
+        accruedInterestSinceLastDue = creditLine.interestAccruedSinceLastDue + pendingInterest;
+        requiredMinimumDue = accruedInterestSinceLastDue > creditLine.minimumPaymentPerPeriod
+            ? accruedInterestSinceLastDue
+            : creditLine.minimumPaymentPerPeriod;
+    }
+
+    function paymentRecordCount(uint256 lineId) external view returns (uint256) {
+        return LibEqualScaleAlphaStorage.s().paymentRecords[lineId].length;
+    }
+
+    function paymentRecord(uint256 lineId, uint256 index)
+        external
+        view
+        returns (uint40 paidAt, uint256 amount, uint256 principalComponent, uint256 interestComponent)
+    {
+        LibEqualScaleAlphaStorage.PaymentRecord storage record = LibEqualScaleAlphaStorage.s().paymentRecords[lineId][index];
+        return (record.paidAt, record.amount, record.principalComponent, record.interestComponent);
+    }
 }
 
 contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
@@ -1169,6 +1203,212 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         }
     }
 
+    function test_repay_accruesInterestAcrossDrawCheckpoints() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+        uint256 lineId = _createActivatedLine(params, TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.draw(lineId, 200e18);
+
+        vm.warp(block.timestamp + 10 days);
+
+        vm.prank(alice);
+        facet.draw(lineId, 100e18);
+
+        vm.warp(block.timestamp + 10 days);
+
+        uint256 expectedFirstSlice = _expectedInterest(200e18, 10 days);
+        uint256 expectedSecondSlice = _expectedInterest(300e18, 10 days);
+        uint256 expectedInterest = expectedFirstSlice + expectedSecondSlice;
+        (uint256 previewAccruedInterest, uint256 previewInterestSinceLastDue, uint256 previewRequiredMinimumDue) =
+            facet.previewLineInterest(lineId);
+
+        require(previewAccruedInterest == expectedInterest, "preview accrued interest mismatch");
+        require(previewInterestSinceLastDue == expectedInterest, "preview period interest mismatch");
+        require(previewRequiredMinimumDue == MINIMUM_PAYMENT_PER_PERIOD, "preview minimum due mismatch");
+
+        _mintAndApprove(alice, expectedInterest);
+
+        vm.expectEmit(true, false, false, true, address(facet));
+        emit CreditPaymentMade(lineId, expectedInterest, 0, expectedInterest, 300e18, 0, facet.line(lineId).nextDueAt);
+
+        vm.prank(alice);
+        facet.repay(lineId, expectedInterest);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        require(line.outstandingPrincipal == 300e18, "principal should remain after interest-only payment");
+        require(line.accruedInterest == 0, "accrued interest not cleared");
+        require(line.interestAccruedSinceLastDue == expectedInterest, "gross period interest should stay tracked");
+        require(line.totalInterestRepaid == expectedInterest, "interest repaid mismatch");
+        require(line.totalPrincipalRepaid == 0, "unexpected principal repaid");
+    }
+
+    function test_repay_appliesInterestFirstAdvancesDueAndRestoresCapacityOnlyByPrincipal() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+        uint256 lineId = _createActivatedLine(params, TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.draw(lineId, 300e18);
+
+        uint40 nextDueAtBefore = facet.line(lineId).nextDueAt;
+
+        vm.warp(block.timestamp + PAYMENT_INTERVAL_SECS);
+
+        uint256 expectedInterest = _expectedInterest(300e18, PAYMENT_INTERVAL_SECS);
+        uint256 repayAmount = expectedInterest + 60e18;
+
+        _mintAndApprove(alice, repayAmount);
+
+        vm.expectEmit(true, false, false, true, address(facet));
+        emit CreditPaymentMade(
+            lineId,
+            repayAmount,
+            60e18,
+            expectedInterest,
+            240e18,
+            0,
+            nextDueAtBefore + PAYMENT_INTERVAL_SECS
+        );
+
+        vm.prank(alice);
+        facet.repay(lineId, repayAmount);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        (uint256 debtPrincipal, uint40 debtStartTime, uint256 debtIndexSnapshot) =
+            facet.debtActiveCreditState(SETTLEMENT_POOL_ID, positionNft.getPositionKey(line.borrowerPositionId));
+        (uint40 paidAt, uint256 recordedAmount, uint256 recordedPrincipal, uint256 recordedInterest) =
+            facet.paymentRecord(lineId, 0);
+
+        require(line.outstandingPrincipal == 240e18, "outstanding principal mismatch");
+        require(line.activeLimit == TARGET_LIMIT, "active limit should not shrink on repay");
+        require(line.accruedInterest == 0, "accrued interest should be cleared");
+        require(line.totalInterestRepaid == expectedInterest, "total interest repaid mismatch");
+        require(line.totalPrincipalRepaid == 60e18, "total principal repaid mismatch");
+        require(line.interestAccruedSinceLastDue == 0, "period interest should reset after due advancement");
+        require(line.paidSinceLastDue == 0, "period payment should reset after due advancement");
+        require(line.nextDueAt == nextDueAtBefore + PAYMENT_INTERVAL_SECS, "next due not advanced");
+        require(facet.sameAssetDebt(SETTLEMENT_POOL_ID, positionNft.getPositionKey(line.borrowerPositionId)) == 240e18, "same-asset debt mismatch");
+        require(facet.poolActiveCreditPrincipalTotal(SETTLEMENT_POOL_ID) == 240e18, "active credit total mismatch");
+        require(debtPrincipal == 240e18, "debt principal not reduced");
+        require(debtIndexSnapshot == 0, "debt index snapshot mismatch");
+        require(facet.poolTrackedBalance(SETTLEMENT_POOL_ID) == TARGET_LIMIT - 300e18 + repayAmount, "tracked balance mismatch");
+        require(settlementToken.balanceOf(address(facet)) == TARGET_LIMIT - 300e18 + repayAmount, "facet balance mismatch");
+        require(facet.paymentRecordCount(lineId) == 1, "payment record count mismatch");
+        require(paidAt == uint40(block.timestamp), "payment timestamp mismatch");
+        require(recordedAmount == repayAmount, "payment amount mismatch");
+        require(recordedPrincipal == 60e18, "payment principal mismatch");
+        require(recordedInterest == expectedInterest, "payment interest mismatch");
+        require(debtStartTime != 0, "debt start time should remain populated");
+    }
+
+    function test_repay_distributesInterestAndPrincipalProRataAcrossLenders() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+        facet.setPoolInitialized(SETTLEMENT_POOL_ID, true);
+        facet.setPoolTrackedBalance(SETTLEMENT_POOL_ID, TARGET_LIMIT);
+        settlementToken.mint(address(facet), TARGET_LIMIT);
+
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(borrowerPositionId, params);
+
+        vm.warp(block.timestamp + 3 days + 1);
+        facet.transitionToPooledOpen(lineId);
+
+        uint256 lenderPositionOne = _seedSettlementPosition(bob, 600e18);
+        uint256 lenderPositionTwo = _seedSettlementPosition(carol, 400e18);
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionOne, 600e18);
+        vm.prank(carol);
+        facet.commitPooled(lineId, lenderPositionTwo, 400e18);
+
+        vm.prank(alice);
+        facet.activateLine(lineId);
+
+        vm.prank(alice);
+        facet.draw(lineId, 500e18);
+
+        vm.warp(block.timestamp + PAYMENT_INTERVAL_SECS);
+
+        uint256 expectedInterest = _expectedInterest(500e18, PAYMENT_INTERVAL_SECS);
+        uint256 repayAmount = expectedInterest + 100e18;
+        uint256 firstInterestShare = (expectedInterest * 300e18) / 500e18;
+        uint256 secondInterestShare = expectedInterest - firstInterestShare;
+
+        _mintAndApprove(alice, repayAmount);
+
+        vm.prank(alice);
+        facet.repay(lineId, repayAmount);
+
+        LibEqualScaleAlphaStorage.Commitment memory first = facet.commitment(lineId, lenderPositionOne);
+        LibEqualScaleAlphaStorage.Commitment memory second = facet.commitment(lineId, lenderPositionTwo);
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+
+        require(line.outstandingPrincipal == 400e18, "line principal not reduced");
+        require(first.principalExposed == 240e18, "first exposed principal mismatch");
+        require(second.principalExposed == 160e18, "second exposed principal mismatch");
+        require(first.principalRepaid == 60e18, "first principal repaid mismatch");
+        require(second.principalRepaid == 40e18, "second principal repaid mismatch");
+        require(first.interestReceived == firstInterestShare, "first interest share mismatch");
+        require(second.interestReceived == secondInterestShare, "second interest share mismatch");
+    }
+
+    function test_repay_curesDelinquentAndRunoffLinesWhenCoverageIsRestored() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+        uint256 delinquentLineId = _createActivatedLine(params, TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.draw(delinquentLineId, 200e18);
+
+        vm.warp(block.timestamp + PAYMENT_INTERVAL_SECS + GRACE_PERIOD_SECS + 1);
+        facet.setLineStatus(delinquentLineId, uint256(LibEqualScaleAlphaStorage.CreditLineStatus.Delinquent));
+
+        _mintAndApprove(alice, 50e18);
+
+        vm.prank(alice);
+        facet.repay(delinquentLineId, 40e18);
+        require(
+            facet.line(delinquentLineId).status == LibEqualScaleAlphaStorage.CreditLineStatus.Delinquent,
+            "insufficient payment should not cure delinquency"
+        );
+
+        vm.prank(alice);
+        facet.repay(delinquentLineId, 10e18);
+
+        LibEqualScaleAlphaStorage.CreditLine memory delinquentLine = facet.line(delinquentLineId);
+        require(
+            delinquentLine.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "delinquent line not cured"
+        );
+        require(delinquentLine.nextDueAt > uint40(block.timestamp), "cured delinquent line should advance due");
+
+        uint256 runoffLineId = _createActivatedLine(params, TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.draw(runoffLineId, 700e18);
+
+        facet.setLineCurrentCommittedAmount(runoffLineId, 500e18);
+        facet.setLineStatus(runoffLineId, uint256(LibEqualScaleAlphaStorage.CreditLineStatus.Runoff));
+
+        uint40 restartTimestamp = uint40(block.timestamp);
+        _mintAndApprove(alice, 200e18);
+
+        vm.prank(alice);
+        facet.repay(runoffLineId, 200e18);
+
+        LibEqualScaleAlphaStorage.CreditLine memory runoffLine = facet.line(runoffLineId);
+        require(runoffLine.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "runoff line not cured");
+        require(runoffLine.outstandingPrincipal == 500e18, "runoff outstanding mismatch");
+        require(runoffLine.activeLimit == 500e18, "runoff active limit should resize to covered amount");
+        require(runoffLine.currentPeriodStartedAt == restartTimestamp, "runoff period not restarted");
+        require(runoffLine.termStartedAt == restartTimestamp, "runoff term not restarted");
+        require(runoffLine.nextDueAt == restartTimestamp + PAYMENT_INTERVAL_SECS, "runoff due not reset");
+    }
+
     function _registerBorrowerProfileForAlice() internal returns (uint256 positionId) {
         positionId = positionNft.mint(alice, 7);
         uint256 agentId = 17;
@@ -1229,6 +1469,16 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
     function _seedSettlementPosition(address owner, uint256 principal) internal returns (uint256 positionId) {
         positionId = positionNft.mint(owner, SETTLEMENT_POOL_ID);
         facet.seedPrincipal(SETTLEMENT_POOL_ID, positionNft.getPositionKey(positionId), principal);
+    }
+
+    function _mintAndApprove(address owner, uint256 amount) internal {
+        settlementToken.mint(owner, amount);
+        vm.prank(owner);
+        settlementToken.approve(address(facet), amount);
+    }
+
+    function _expectedInterest(uint256 principal, uint256 elapsed) internal pure returns (uint256) {
+        return (principal * APR_BPS * elapsed) / (10_000 * 365 days);
     }
 
     function _defaultProposalParamsNone() internal pure returns (EqualScaleAlphaFacet.LineProposalParams memory params) {

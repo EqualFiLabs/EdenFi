@@ -64,8 +64,10 @@ library LibEqualScaleAlphaStorage {
         uint256 currentCommittedAmount;
         uint256 outstandingPrincipal;
         uint256 accruedInterest;
+        uint256 interestAccruedSinceLastDue;
         uint256 totalPrincipalRepaid;
         uint256 totalInterestRepaid;
+        uint256 paidSinceLastDue;
         uint256 currentPeriodDrawn;
         uint40 currentPeriodStartedAt;
         uint40 interestAccruedAt;
