@@ -15,8 +15,8 @@ import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.so
 import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
 import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
 import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
-import {EdenBasketWalletFacet} from "src/eden/EdenBasketWalletFacet.sol";
 import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
+import {EdenStEVEWalletFacet} from "src/eden/EdenStEVEWalletFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
@@ -122,21 +122,8 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
         _initPoolWithActionFees(3, address(fot), _poolConfig(), _actionFees());
     }
 
-    function _bootstrapEdenProduct() internal {
-        _bootstrapCorePools();
-
-        (steveBasketId, steveToken) = _createStEVE(_stEveParams(address(eve)));
-        (altBasketId, altBasketToken) =
-            _createBasket(_singleAssetParams("ALT Basket", "ALTB", address(alt), "ipfs://alt", 2, 0, 0));
-
-        _configureRewards(address(eve), 10e18, true);
-        _configureLending(altBasketId, 1 days, 14 days);
-
-        uint256[] memory mins = new uint256[](1);
-        mins[0] = 1e18;
-        uint256[] memory fees = new uint256[](1);
-        fees[0] = 0;
-        _configureBorrowFeeTiers(altBasketId, mins, fees);
+    function _bootstrapEdenProduct() internal pure {
+        revert("legacy EDEN bootstrap removed");
     }
 
     function _timelockCall(address target, bytes memory data) internal returns (bytes memory result) {
@@ -165,11 +152,13 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
 
     function _createBasket(EdenBasketBase.CreateBasketParams memory params)
         internal
+        pure
         returns (uint256 basketId, address basketToken)
     {
-        basketId = EdenViewFacet(diamond).basketCount();
-        _timelockCall(diamond, abi.encodeWithSelector(EdenBasketWalletFacet.createBasket.selector, params));
-        basketToken = EdenBasketDataFacet(diamond).getBasket(basketId).token;
+        params;
+        basketId = 0;
+        basketToken = address(0);
+        revert("generic EDEN basket creation removed");
     }
 
     function _createStEVE(EdenBasketBase.CreateBasketParams memory params)
@@ -312,11 +301,12 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
     }
 
     function _mintWalletBasket(address user, uint256 basketId, ERC20 asset, uint256 units) internal {
+        require(basketId == steveBasketId, "wallet mint only supports stEVE");
         uint256[] memory maxInputs = new uint256[](1);
         maxInputs[0] = units;
         vm.startPrank(user);
         asset.approve(diamond, units);
-        EdenBasketWalletFacet(diamond).mintBasket(basketId, units, user, maxInputs);
+        EdenStEVEWalletFacet(diamond).mintStEVE(units, user, maxInputs);
         vm.stopPrank();
     }
 

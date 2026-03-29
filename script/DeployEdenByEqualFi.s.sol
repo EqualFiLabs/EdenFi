@@ -29,8 +29,8 @@ import {EqualScaleAlphaAdminFacet} from "src/equalscale/EqualScaleAlphaAdminFace
 import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.sol";
 import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
 import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
-import {EdenBasketWalletFacet} from "src/eden/EdenBasketWalletFacet.sol";
 import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
+import {EdenStEVEWalletFacet} from "src/eden/EdenStEVEWalletFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
@@ -261,8 +261,8 @@ contract DeployEdenByEqualFi is Script {
             cuts[i++] = _cut(address(facet), _selectorsEdenBasketPosition());
         }
         {
-            EdenBasketWalletFacet facet = new EdenBasketWalletFacet();
-            cuts[i++] = _cut(address(facet), _selectorsEdenBasketWallet());
+            EdenStEVEWalletFacet facet = new EdenStEVEWalletFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEdenStEVEWallet());
         }
 
         require(i == LAUNCH_FACET_COUNT, "DeployEdenByEqualFi: bad facet count");
@@ -470,11 +470,10 @@ contract DeployEdenByEqualFi is Script {
         s[11] = EqualScaleAlphaViewFacet.getLineLossSummary.selector;
     }
 
-    function _selectorsEdenBasketWallet() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
-        s[0] = EdenBasketWalletFacet.createBasket.selector;
-        s[1] = EdenBasketWalletFacet.mintBasket.selector;
-        s[2] = EdenBasketWalletFacet.burnBasket.selector;
+    function _selectorsEdenStEVEWallet() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = EdenStEVEWalletFacet.mintStEVE.selector;
+        s[1] = EdenStEVEWalletFacet.burnStEVE.selector;
     }
 
     function _selectorsEdenBasketPosition() internal pure returns (bytes4[] memory s) {

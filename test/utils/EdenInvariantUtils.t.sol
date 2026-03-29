@@ -19,10 +19,10 @@ import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.so
 import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
 import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
 import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
-import {EdenBasketWalletFacet} from "src/eden/EdenBasketWalletFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
+import {EdenStEVEWalletFacet} from "src/eden/EdenStEVEWalletFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibEdenRewardStorage} from "src/libraries/LibEdenRewardStorage.sol";
@@ -33,6 +33,7 @@ import {LibPositionHelpers} from "src/libraries/LibPositionHelpers.sol";
 import {Types} from "src/libraries/Types.sol";
 
 import {MockERC20Launch} from "test/utils/EdenLaunchFixture.t.sol";
+import {ILegacyEdenWalletFacet} from "test/utils/LegacyEdenWalletFacet.sol";
 
 contract EdenInvariantInspector {
     struct PoolSnapshot {
@@ -311,7 +312,7 @@ contract EdenInvariantHandler {
         alt.approve(diamond, required);
         uint256[] memory maxInputs = new uint256[](1);
         maxInputs[0] = required;
-        EdenBasketWalletFacet(diamond).mintBasket(feeBasketId, units, actor, maxInputs);
+        ILegacyEdenWalletFacet(diamond).mintBasket(feeBasketId, units, actor, maxInputs);
         vm.stopPrank();
         _syncRewardIndex();
     }
@@ -325,7 +326,7 @@ contract EdenInvariantHandler {
         if (units == 0) return;
 
         vm.prank(actor);
-        EdenBasketWalletFacet(diamond).burnBasket(feeBasketId, units, actor);
+        ILegacyEdenWalletFacet(diamond).burnBasket(feeBasketId, units, actor);
         _syncRewardIndex();
     }
 
@@ -360,7 +361,7 @@ contract EdenInvariantHandler {
         eve.approve(diamond, units);
         uint256[] memory maxInputs = new uint256[](1);
         maxInputs[0] = units;
-        EdenBasketWalletFacet(diamond).mintBasket(steveBasketId, units, actor, maxInputs);
+        EdenStEVEWalletFacet(diamond).mintStEVE(units, actor, maxInputs);
         vm.stopPrank();
         _syncRewardIndex();
     }
@@ -718,7 +719,7 @@ contract EdenInvariantHandler {
         eve.approve(diamond, amount);
         uint256[] memory maxInputs = new uint256[](1);
         maxInputs[0] = amount;
-        EdenBasketWalletFacet(diamond).mintBasket(steveBasketId, amount, owner, maxInputs);
+        EdenStEVEWalletFacet(diamond).mintStEVE(amount, owner, maxInputs);
         vm.stopPrank();
         _syncRewardIndex();
     }

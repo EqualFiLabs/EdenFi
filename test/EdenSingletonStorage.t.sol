@@ -2,11 +2,12 @@
 pragma solidity ^0.8.20;
 
 import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
-import {EdenBasketWalletFacet} from "src/eden/EdenBasketWalletFacet.sol";
+import {EdenStEVEWalletFacet} from "src/eden/EdenStEVEWalletFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
 
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
+import {ILegacyEdenWalletFacet} from "test/utils/LegacyEdenWalletFacet.sol";
 
 contract EdenSingletonStorageTest is EdenLaunchFixture {
     function setUp() public override {
@@ -36,7 +37,7 @@ contract EdenSingletonStorageTest is EdenLaunchFixture {
         assertEq(EdenBasketDataFacet(diamond).getBasketFeePot(steveBasketId, address(eve)), 0);
 
         vm.prank(alice);
-        EdenBasketWalletFacet(diamond).burnBasket(steveBasketId, 10e18, alice);
+        EdenStEVEWalletFacet(diamond).burnStEVE(10e18, alice);
 
         EdenViewFacet.BasketSummary memory afterBurn = EdenViewFacet(diamond).getBasketSummary(steveBasketId);
         assertEq(afterBurn.totalUnits, 0);
@@ -47,6 +48,6 @@ contract EdenSingletonStorageTest is EdenLaunchFixture {
         EdenBasketBase.CreateBasketParams memory params =
             _singleAssetParams("ALT Basket", "ALTB", address(alt), "ipfs://alt", 2, 0, 0);
         vm.expectRevert();
-        EdenBasketWalletFacet(diamond).createBasket(params);
+        ILegacyEdenWalletFacet(diamond).createBasket(params);
     }
 }

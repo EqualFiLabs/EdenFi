@@ -5,12 +5,12 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
 import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
-import {EdenBasketWalletFacet} from "src/eden/EdenBasketWalletFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
 
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
+import {ILegacyEdenWalletFacet} from "test/utils/LegacyEdenWalletFacet.sol";
 
 contract EdenBasketFuzzTest is EdenLaunchFixture {
     function testFuzz_EdenBasketWalletMintBurnConservesUserFacingState(uint96 unitsSeed) public {
@@ -26,9 +26,9 @@ contract EdenBasketFuzzTest is EdenLaunchFixture {
         eve.approve(diamond, units * 3);
         uint256[] memory maxInputs = new uint256[](1);
         maxInputs[0] = units * 2;
-        EdenBasketWalletFacet(diamond).mintBasket(basketId, units, bob, maxInputs);
+        ILegacyEdenWalletFacet(diamond).mintBasket(basketId, units, bob, maxInputs);
         assertEq(ERC20(basketToken).balanceOf(bob), units);
-        EdenBasketWalletFacet(diamond).burnBasket(basketId, units, bob);
+        ILegacyEdenWalletFacet(diamond).burnBasket(basketId, units, bob);
         vm.stopPrank();
 
         assertEq(ERC20(basketToken).balanceOf(bob), 0);
@@ -89,7 +89,7 @@ contract EdenBasketFuzzTest is EdenLaunchFixture {
         vm.expectRevert(
             abi.encodeWithSelector(LibCurrency.LibCurrency_InsufficientReceived.selector, (units * 9) / 10, units)
         );
-        EdenBasketWalletFacet(diamond).mintBasket(basketId, units, bob, maxInputs);
+        ILegacyEdenWalletFacet(diamond).mintBasket(basketId, units, bob, maxInputs);
         vm.stopPrank();
     }
 }
