@@ -128,6 +128,29 @@ contract FlashLoanFacetTest is EdenLaunchFixture {
         assertEq(alt.balanceOf(address(receiver)), 0);
     }
 
+    function test_IndexFlashLoan_StillWorksAfterBootstrappingSingletonEden() public {
+        (steveBasketId, steveToken) = _createStEVE(_stEveParams(address(alt)));
+
+        uint256 indexId = _seedDualIndex(true);
+        address indexToken = EqualIndexAdminFacetV3(diamond).getIndex(indexId).token;
+        assertTrue(indexToken != steveToken);
+
+        IndexFlashExpectation memory expected = _snapshotDualIndexFlash(indexId);
+        IndexFlashLoanReceiverMock receiver = new IndexFlashLoanReceiverMock();
+        eve.mint(address(receiver), expected.eveFee);
+        alt.mint(address(receiver), expected.altFee);
+
+        vm.prank(carol);
+        EqualIndexActionsFacetV3(diamond).flashLoan(indexId, 5e18, address(receiver), abi.encode(true));
+
+        assertEq(EqualIndexAdminFacetV3(diamond).getVaultBalance(indexId, address(eve)), expected.eveVaultBefore);
+        assertEq(EqualIndexAdminFacetV3(diamond).getVaultBalance(indexId, address(alt)), expected.altVaultBefore);
+        assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(indexId, address(eve)), expected.evePotBefore + expected.evePotFee);
+        assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(indexId, address(alt)), expected.altPotBefore + expected.altPotFee);
+        assertEq(eve.balanceOf(address(receiver)), 0);
+        assertEq(alt.balanceOf(address(receiver)), 0);
+    }
+
     function test_IndexFlashLoan_RevertsWhenFeesAreNotReturned() public {
         uint256 indexId = _seedDualIndex(false);
         IndexFlashExpectation memory expected = _snapshotDualIndexFlash(indexId);

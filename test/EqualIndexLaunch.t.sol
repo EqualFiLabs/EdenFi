@@ -7,6 +7,7 @@ import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
+import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
@@ -76,6 +77,46 @@ contract EqualIndexLaunchTest is EdenLaunchFixture {
 
         assertEq(ERC20(indexToken).balanceOf(diamond), 0);
         assertEq(EqualIndexAdminFacetV3(diamond).getIndex(indexId).totalUnits, 0);
+    }
+
+    function test_NonEdenEqualIndexWalletAndPositionFlows_WorkAlongsideSingletonEden() public {
+        (steveBasketId, steveToken) = _createStEVE(_stEveParams(address(alt)));
+
+        eve.mint(alice, 200e18);
+        eve.mint(bob, 30e18);
+        uint256 positionId = _mintPosition(alice, 1);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 200e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 200e18, 200e18);
+        vm.stopPrank();
+
+        (uint256 indexId, address indexToken) =
+            _createIndexThroughTimelock(_singleAssetIndexParams("Equal EVE", "QEVE", address(eve), 1000, 1000));
+
+        assertTrue(indexToken != steveToken);
+        assertEq(EdenViewFacet(diamond).getProductConfig().token, steveToken);
+
+        vm.startPrank(bob);
+        eve.approve(diamond, 30e18);
+        uint256[] memory maxInputs = new uint256[](1);
+        maxInputs[0] = 11e18;
+        EqualIndexActionsFacetV3(diamond).mint(indexId, 10e18, bob, maxInputs);
+        EqualIndexActionsFacetV3(diamond).burn(indexId, 10e18, bob);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        uint256 minted = EqualIndexPositionFacet(diamond).mintFromPosition(positionId, indexId, 50e18);
+        assertEq(minted, 50e18);
+        assertEq(ERC20(indexToken).balanceOf(diamond), 50e18);
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).burnFromPosition(positionId, indexId, 50e18);
+
+        assertEq(ERC20(indexToken).balanceOf(bob), 0);
+        assertEq(ERC20(indexToken).balanceOf(diamond), 0);
+        assertEq(EqualIndexAdminFacetV3(diamond).getIndex(indexId).totalUnits, 0);
+        assertEq(EdenViewFacet(diamond).getProductConfig().token, steveToken);
     }
 
     function test_CreateIndex_RevertsForInvalidDefinitionsAndMissingPoolsOnLiveDiamond() public {
