@@ -388,7 +388,10 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
 
     function enterRefinancing(uint256 lineId) external {
         LibEqualScaleAlphaStorage.CreditLine storage line = LibEqualScaleAlphaStorage.s().lines[lineId];
-        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Active) {
+        if (
+            line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Active
+                && line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Frozen
+        ) {
             revert InvalidProposalTerms("line not active for refinancing");
         }
         if (block.timestamp < line.termEndAt) {

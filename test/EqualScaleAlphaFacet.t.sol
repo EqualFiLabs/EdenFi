@@ -1791,6 +1791,33 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         );
     }
 
+    function test_frozenLine_canStillEnterRefinancingPermissionlesslyAtTermEnd() external {
+        uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
+
+        _timelockCall(abi.encodeWithSelector(EqualScaleAlphaAdminFacet.freezeLine.selector, lineId, OPS_FREEZE_REASON));
+        require(
+            facet.line(lineId).status == LibEqualScaleAlphaStorage.CreditLineStatus.Frozen,
+            "line should be frozen before term end"
+        );
+
+        uint40 termEndAt = facet.line(lineId).termEndAt;
+        uint40 refinanceEndAt = facet.line(lineId).refinanceEndAt;
+        vm.warp(termEndAt);
+
+        vm.expectEmit(true, false, false, true, address(facet));
+        emit CreditLineEnteredRefinancing(lineId, refinanceEndAt, TARGET_LIMIT, 0);
+
+        vm.prank(dave);
+        facet.enterRefinancing(lineId);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        require(
+            line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing,
+            "frozen line should progress into refinancing"
+        );
+        require(line.activeLimit == TARGET_LIMIT, "refinancing should preserve active limit");
+    }
+
     function test_refinancing_allowsFullRenewalWithRolledAndNewPooledCommitments() external {
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
         (uint256 lineId, uint256 lenderPositionOne, uint256 lenderPositionTwo) =
