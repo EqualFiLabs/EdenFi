@@ -10,3 +10,7 @@ error PositionAgent_InvalidConfigAddress(address configAddress);
 error PositionAgent_ConfigLocked();
 error PositionAgent_CreateAccountAddressMismatch(address expected, address actual);
 error PositionAgent_TBANotDeployed(address tbaAddress);
+error PositionAgent_InvalidExternalLinkSignature();
+error PositionAgent_RegistrationExpired(uint256 deadline, uint256 currentTimestamp);
+error PositionAgent_InvalidRegistrationMode(uint8 expected, uint8 actual);
+error PositionAgent_NotIdentityOwner(address caller, address expectedOwner);

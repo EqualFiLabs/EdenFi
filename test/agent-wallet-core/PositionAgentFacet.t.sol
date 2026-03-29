@@ -13,12 +13,16 @@ import {PositionAgentRegistryFacet} from "src/agent-wallet/erc6551/PositionAgent
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
 import {
     PositionAgent_NotAdmin,
+    PositionAgent_InvalidExternalLinkSignature,
     PositionAgent_InvalidConfigAddress,
     PositionAgent_ConfigLocked,
+    PositionAgent_InvalidRegistrationMode,
     PositionAgent_Unauthorized,
     PositionAgent_InvalidAgentId,
     PositionAgent_InvalidAgentOwner,
-    PositionAgent_AlreadyRegistered
+    PositionAgent_AlreadyRegistered,
+    PositionAgent_NotIdentityOwner,
+    PositionAgent_RegistrationExpired
 } from "src/libraries/PositionAgentErrors.sol";
 import {IERC165} from "@agent-wallet-core/interfaces/IERC165.sol";
 import {IERC6551Account} from "@agent-wallet-core/interfaces/IERC6551Account.sol";
@@ -26,6 +30,7 @@ import {IERC6551Executable} from "@agent-wallet-core/interfaces/IERC6551Executab
 import {IERC6551Registry} from "@agent-wallet-core/interfaces/IERC6551Registry.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 contract MockIdentityRegistry {
     mapping(uint256 => address) internal _owners;
@@ -36,6 +41,24 @@ contract MockIdentityRegistry {
 
     function ownerOf(uint256 agentId) external view returns (address) {
         return _owners[agentId];
+    }
+}
+
+contract Mock1271IdentityOwner is IERC1271 {
+    using ECDSA for bytes32;
+
+    address internal immutable signer;
+
+    constructor(address signer_) {
+        signer = signer_;
+    }
+
+    function isValidSignature(bytes32 hash, bytes memory signature) external view returns (bytes4) {
+        (address recovered, ECDSA.RecoverError error, ) = ECDSA.tryRecover(hash, signature);
+        if (error == ECDSA.RecoverError.NoError && recovered == signer) {
+            return IERC1271.isValidSignature.selector;
+        }
+        return 0xffffffff;
     }
 }
 
@@ -147,7 +170,7 @@ contract PositionAgentFacetHarness is
         return uint8(LibPositionAgentStorage.s().positionRegistrationMode[tokenId]);
     }
 
-    function getExternalAgentAuthorizer(uint256 tokenId) external view returns (address) {
+    function getStoredExternalAgentAuthorizer(uint256 tokenId) external view returns (address) {
         return LibPositionAgentStorage.s().externalAgentAuthorizer[tokenId];
     }
 
@@ -177,6 +200,7 @@ contract PositionAgentFacetTest {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     uint8 internal constant REGISTRATION_MODE_NONE = 0;
     uint8 internal constant REGISTRATION_MODE_CANONICAL_OWNED = 1;
+    uint8 internal constant REGISTRATION_MODE_EXTERNAL_LINKED = 2;
 
     event ERC6551RegistryUpdated(address indexed previous, address indexed current);
     event ERC6551ImplementationUpdated(address indexed previous, address indexed current);
@@ -194,6 +218,8 @@ contract PositionAgentFacetTest {
     address internal timelock = address(0xBEEF);
     address internal alice = address(0xCAFE);
     address internal bob = address(0xB0B);
+    uint256 internal externalOwnerPk = uint256(0xA71CE);
+    address internal externalOwner;
 
     function setUp() public {
         facet = new PositionAgentFacetHarness();
@@ -201,6 +227,7 @@ contract PositionAgentFacetTest {
         registry = new MockERC6551Registry();
         identity = new MockIdentityRegistry();
         implementation = new Mock6551Account(address(positionNft), 0);
+        externalOwner = vm.addr(externalOwnerPk);
 
         positionNft.setMinter(address(this));
 
@@ -219,6 +246,33 @@ contract PositionAgentFacetTest {
         facet.setERC6551Implementation(address(implementation));
         vm.prank(caller);
         facet.setIdentityRegistry(address(identity));
+    }
+
+    function _externalLinkDigest(uint256 tokenId, uint256 agentId, address positionOwner, address tba, uint256 nonce, uint256 deadline)
+        internal
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                keccak256(
+                    "EqualFiExternalAgentLink(uint256 chainId,address diamond,uint256 positionTokenId,uint256 agentId,address positionOwner,address tbaAddress,uint256 nonce,uint256 deadline)"
+                ),
+                block.chainid,
+                address(facet),
+                tokenId,
+                agentId,
+                positionOwner,
+                tba,
+                nonce,
+                deadline
+            )
+        );
+    }
+
+    function _signDigest(uint256 signerPk, bytes32 digest) internal returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
+        return abi.encodePacked(r, s, v);
     }
 
     function test_configFacet_isAdminOnly_andValidatesCode() external {
@@ -350,6 +404,186 @@ contract PositionAgentFacetTest {
         facet.recordAgentRegistration(tokenId, 7);
     }
 
+    function test_externalLink_succeedsForEOA_andTracksAuthorizerAndMode() external {
+        _configure(owner);
+        uint256 tokenId = _tokenIdFor(owner, 1);
+
+        vm.prank(owner);
+        address tba = facet.deployTBA(tokenId);
+
+        uint256 agentId = 88;
+        uint256 deadline = block.timestamp + 1 days;
+        identity.setOwner(agentId, externalOwner);
+
+        bytes32 digest = _externalLinkDigest(tokenId, agentId, owner, tba, facet.getExternalLinkNonce(tokenId), deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(externalOwnerPk, digest);
+        bytes memory signature = abi.encodePacked(r, s, v);
+
+        vm.prank(owner);
+        facet.linkExternalAgentRegistration(tokenId, agentId, deadline, signature);
+
+        require(facet.getAgentId(tokenId) == agentId, "agent id missing");
+        require(facet.getRegistrationMode(tokenId) == REGISTRATION_MODE_EXTERNAL_LINKED, "bad mode");
+        require(facet.getExternalAgentAuthorizer(tokenId) == externalOwner, "bad external authorizer");
+        require(facet.getExternalLinkNonce(tokenId) == 1, "nonce not consumed");
+        require(!facet.isCanonicalAgentLink(tokenId), "external link marked canonical");
+        require(facet.isExternalAgentLink(tokenId), "external link not active");
+        require(facet.isRegistrationComplete(tokenId), "external registration incomplete");
+    }
+
+    function test_externalLink_supportsEIP1271_andFailsClosedOnIdentityOwnerDrift() external {
+        _configure(owner);
+        uint256 tokenId = _tokenIdFor(owner, 1);
+
+        vm.prank(owner);
+        address tba = facet.deployTBA(tokenId);
+
+        uint256 agentId = 89;
+        uint256 deadline = block.timestamp + 1 days;
+        Mock1271IdentityOwner contractOwner = new Mock1271IdentityOwner(externalOwner);
+        identity.setOwner(agentId, address(contractOwner));
+
+        bytes32 digest = _externalLinkDigest(
+            tokenId, agentId, owner, tba, facet.getExternalLinkNonce(tokenId), deadline
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(externalOwnerPk, digest);
+        bytes memory signature = abi.encodePacked(r, s, v);
+
+        vm.prank(owner);
+        facet.linkExternalAgentRegistration(tokenId, agentId, deadline, signature);
+
+        require(facet.isExternalAgentLink(tokenId), "1271 external link inactive");
+        require(facet.isRegistrationComplete(tokenId), "1271 registration incomplete");
+
+        identity.setOwner(agentId, bob);
+        require(!facet.isExternalAgentLink(tokenId), "stale external link still active");
+        require(!facet.isRegistrationComplete(tokenId), "stale registration still complete");
+    }
+
+    function test_externalLink_rejectsBadSignerAndReplay() external {
+        _configure(owner);
+        uint256 tokenId = _tokenIdFor(owner, 1);
+
+        vm.prank(owner);
+        address tba = facet.deployTBA(tokenId);
+
+        uint256 agentId = 90;
+        identity.setOwner(agentId, externalOwner);
+
+        uint256 deadline = block.timestamp + 1 days;
+        bytes32 digest = _externalLinkDigest(tokenId, agentId, owner, tba, facet.getExternalLinkNonce(tokenId), deadline);
+        bytes memory signature = _signDigest(externalOwnerPk, digest);
+
+        vm.prank(owner);
+        facet.linkExternalAgentRegistration(tokenId, agentId, deadline, signature);
+
+        uint256 replayTokenId = _tokenIdFor(owner, 1);
+        vm.prank(owner);
+        address replayTba = facet.deployTBA(replayTokenId);
+        bytes32 wrongDigest =
+            _externalLinkDigest(replayTokenId, agentId, owner, replayTba, facet.getExternalLinkNonce(replayTokenId), deadline);
+        bytes memory badSignature = _signDigest(uint256(0xBEEFCAFE), wrongDigest);
+
+        identity.setOwner(agentId + 1, externalOwner);
+        vm.prank(owner);
+        vm.expectRevert(PositionAgent_InvalidExternalLinkSignature.selector);
+        facet.linkExternalAgentRegistration(replayTokenId, agentId + 1, deadline, badSignature);
+    }
+
+    function test_externalLink_rejectsExpiredApproval() external {
+        _configure(owner);
+        uint256 expiredTokenId = _tokenIdFor(owner, 1);
+        vm.prank(owner);
+        address expiredTba = facet.deployTBA(expiredTokenId);
+        uint256 agentId = 91;
+        identity.setOwner(agentId, externalOwner);
+        uint256 expiredDeadline = block.timestamp;
+        bytes32 expiredDigest = _externalLinkDigest(
+            expiredTokenId, agentId, owner, expiredTba, facet.getExternalLinkNonce(expiredTokenId), expiredDeadline
+        );
+        bytes memory expiredSignature = _signDigest(externalOwnerPk, expiredDigest);
+        vm.warp(block.timestamp + 1);
+
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(PositionAgent_RegistrationExpired.selector, expiredDeadline, block.timestamp)
+        );
+        facet.linkExternalAgentRegistration(expiredTokenId, agentId, expiredDeadline, expiredSignature);
+    }
+
+    function test_externalLink_rejectsSignatureBoundToDifferentPositionContext() external {
+        _configure(owner);
+        uint256 tokenId = _tokenIdFor(owner, 1);
+
+        vm.prank(owner);
+        address tba = facet.deployTBA(tokenId);
+
+        uint256 agentId = 91;
+        uint256 deadline = block.timestamp + 1 days;
+        identity.setOwner(agentId, externalOwner);
+
+        bytes32 digest = _externalLinkDigest(tokenId, agentId, owner, tba, facet.getExternalLinkNonce(tokenId), deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(externalOwnerPk, digest);
+        bytes memory signature = abi.encodePacked(r, s, v);
+
+        vm.prank(owner);
+        positionNft.transferFrom(owner, bob, tokenId);
+
+        vm.prank(bob);
+        vm.expectRevert(PositionAgent_InvalidExternalLinkSignature.selector);
+        facet.linkExternalAgentRegistration(tokenId, agentId, deadline, signature);
+    }
+
+    function test_externalLink_supportsUnlinkAndIdentityOwnerRevoke() external {
+        _configure(owner);
+        uint256 tokenId = _tokenIdFor(owner, 1);
+
+        vm.prank(owner);
+        address tba = facet.deployTBA(tokenId);
+
+        uint256 agentId = 92;
+        uint256 deadline = block.timestamp + 1 days;
+        identity.setOwner(agentId, externalOwner);
+        bytes32 digest = _externalLinkDigest(tokenId, agentId, owner, tba, facet.getExternalLinkNonce(tokenId), deadline);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(externalOwnerPk, digest);
+        bytes memory signature = abi.encodePacked(r, s, v);
+
+        vm.prank(owner);
+        facet.linkExternalAgentRegistration(tokenId, agentId, deadline, signature);
+
+        vm.prank(owner);
+        facet.unlinkExternalAgentRegistration(tokenId);
+
+        require(facet.getAgentId(tokenId) == 0, "unlink did not clear agent");
+        require(facet.getRegistrationMode(tokenId) == REGISTRATION_MODE_NONE, "unlink did not reset mode");
+        require(facet.getExternalAgentAuthorizer(tokenId) == address(0), "unlink did not clear authorizer");
+        require(!facet.isRegistrationComplete(tokenId), "unlink left registration complete");
+
+        uint256 tokenId2 = _tokenIdFor(owner, 1);
+        vm.prank(owner);
+        address tba2 = facet.deployTBA(tokenId2);
+        uint256 agentId2 = 93;
+        identity.setOwner(agentId2, externalOwner);
+        bytes32 digest2 =
+            _externalLinkDigest(tokenId2, agentId2, owner, tba2, facet.getExternalLinkNonce(tokenId2), deadline);
+        (v, r, s) = vm.sign(externalOwnerPk, digest2);
+        bytes memory signature2 = abi.encodePacked(r, s, v);
+
+        vm.prank(owner);
+        facet.linkExternalAgentRegistration(tokenId2, agentId2, deadline, signature2);
+
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(PositionAgent_NotIdentityOwner.selector, bob, externalOwner));
+        facet.revokeExternalAgentRegistration(tokenId2);
+
+        vm.prank(externalOwner);
+        facet.revokeExternalAgentRegistration(tokenId2);
+
+        require(facet.getAgentId(tokenId2) == 0, "revoke did not clear agent");
+        require(facet.getRegistrationMode(tokenId2) == REGISTRATION_MODE_NONE, "revoke did not reset mode");
+        require(facet.getExternalAgentAuthorizer(tokenId2) == address(0), "revoke did not clear authorizer");
+    }
+
     function test_viewFacet_reportsCanonicalState() external {
         _configure(owner);
         uint256 tokenId = _tokenIdFor(owner, 1);
@@ -365,6 +599,7 @@ contract PositionAgentFacetTest {
         require(facet.getAgentId(tokenId) == 0, "unexpected agent id");
         require(!facet.isAgentRegistered(tokenId), "unexpected registration");
         require(!facet.isCanonicalAgentLink(tokenId), "unexpected canonical link");
+        require(!facet.isExternalAgentLink(tokenId), "unexpected external link");
         require(!facet.isRegistrationComplete(tokenId), "unexpected registration complete");
 
         vm.prank(owner);
@@ -397,6 +632,7 @@ contract PositionAgentFacetTest {
         require(facet.getAgentId(tokenId) == 7, "agent id changed");
         require(facet.isAgentRegistered(tokenId), "registration lost");
         require(facet.isCanonicalAgentLink(tokenId), "canonical link lost");
+        require(!facet.isExternalAgentLink(tokenId), "canonical link flipped external");
         require(facet.isRegistrationComplete(tokenId), "registration no longer complete");
 
         vm.prank(bob);

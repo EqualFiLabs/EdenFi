@@ -376,21 +376,27 @@ contract DeployEdenByEqualFi is Script {
     }
 
     function _selectorsPositionAgentView() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
-        s[0] = PositionAgentViewFacet.getTBAAddress.selector;
-        s[1] = PositionAgentViewFacet.getAgentId.selector;
-        s[2] = PositionAgentViewFacet.isAgentRegistered.selector;
-        s[3] = PositionAgentViewFacet.isTBADeployed.selector;
-        s[4] = PositionAgentViewFacet.getCanonicalRegistries.selector;
-        s[5] = PositionAgentViewFacet.getTBAInterfaceSupport.selector;
-        s[6] = PositionAgentViewFacet.isCanonicalAgentLink.selector;
+        s = new bytes4[](11);
+        s[0] = PositionAgentViewFacet.getAgentRegistrationMode.selector;
+        s[1] = PositionAgentViewFacet.getExternalAgentAuthorizer.selector;
+        s[2] = PositionAgentViewFacet.getTBAAddress.selector;
+        s[3] = PositionAgentViewFacet.getAgentId.selector;
+        s[4] = PositionAgentViewFacet.isAgentRegistered.selector;
+        s[5] = PositionAgentViewFacet.isCanonicalAgentLink.selector;
+        s[6] = PositionAgentViewFacet.isExternalAgentLink.selector;
         s[7] = PositionAgentViewFacet.isRegistrationComplete.selector;
+        s[8] = PositionAgentViewFacet.isTBADeployed.selector;
+        s[9] = PositionAgentViewFacet.getCanonicalRegistries.selector;
+        s[10] = PositionAgentViewFacet.getTBAInterfaceSupport.selector;
     }
 
     function _selectorsPositionAgentRegistry() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](5);
         s[0] = PositionAgentRegistryFacet.recordAgentRegistration.selector;
-        s[1] = PositionAgentRegistryFacet.getIdentityRegistry.selector;
+        s[1] = PositionAgentRegistryFacet.linkExternalAgentRegistration.selector;
+        s[2] = PositionAgentRegistryFacet.unlinkExternalAgentRegistration.selector;
+        s[3] = PositionAgentRegistryFacet.revokeExternalAgentRegistration.selector;
+        s[4] = PositionAgentRegistryFacet.getIdentityRegistry.selector;
     }
 
     function _selectorsEdenBasketWallet() internal pure returns (bytes4[] memory s) {

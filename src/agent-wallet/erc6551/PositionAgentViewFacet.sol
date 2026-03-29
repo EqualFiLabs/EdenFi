@@ -15,6 +15,14 @@ import {IERC8004IdentityRegistry} from "@agent-wallet-core/adapters/ERC8004Ident
 /// @title PositionAgentViewFacet
 /// @notice View functions for ERC-6551 position-agent integration.
 contract PositionAgentViewFacet {
+    function getAgentRegistrationMode(uint256 positionTokenId) external view returns (uint8) {
+        return uint8(LibPositionAgentStorage.s().positionRegistrationMode[positionTokenId]);
+    }
+
+    function getExternalAgentAuthorizer(uint256 positionTokenId) external view returns (address) {
+        return LibPositionAgentStorage.s().externalAgentAuthorizer[positionTokenId];
+    }
+
     function getTBAAddress(uint256 positionTokenId) external view returns (address) {
         LibPositionAgentStorage.AgentStorage storage ds = LibPositionAgentStorage.s();
         address registry = ds.erc6551Registry;
@@ -42,9 +50,24 @@ contract PositionAgentViewFacet {
         return _isCanonicalAgentLink(LibPositionAgentStorage.s(), positionTokenId);
     }
 
+    function isExternalAgentLink(uint256 positionTokenId) external view returns (bool) {
+        return _isExternalAgentLinkActive(LibPositionAgentStorage.s(), positionTokenId);
+    }
+
     function isRegistrationComplete(uint256 positionTokenId) external view returns (bool) {
         LibPositionAgentStorage.AgentStorage storage ds = LibPositionAgentStorage.s();
-        return ds.positionToAgentId[positionTokenId] != 0 && _isCanonicalAgentLink(ds, positionTokenId);
+        if (ds.positionToAgentId[positionTokenId] == 0) {
+            return false;
+        }
+
+        LibPositionAgentStorage.AgentRegistrationMode mode = ds.positionRegistrationMode[positionTokenId];
+        if (mode == LibPositionAgentStorage.AgentRegistrationMode.CanonicalOwned) {
+            return _isCanonicalAgentLink(ds, positionTokenId);
+        }
+        if (mode == LibPositionAgentStorage.AgentRegistrationMode.ExternalLinked) {
+            return _isExternalAgentLinkActive(ds, positionTokenId);
+        }
+        return false;
     }
 
     function isTBADeployed(uint256 positionTokenId) external view returns (bool) {
@@ -95,6 +118,10 @@ contract PositionAgentViewFacet {
         view
         returns (bool)
     {
+        if (ds.positionRegistrationMode[positionTokenId] != LibPositionAgentStorage.AgentRegistrationMode.CanonicalOwned) {
+            return false;
+        }
+
         uint256 agentId = ds.positionToAgentId[positionTokenId];
         if (agentId == 0 || ds.identityRegistry == address(0) || ds.identityRegistry.code.length == 0) {
             return false;
@@ -113,6 +140,34 @@ contract PositionAgentViewFacet {
         }
 
         return abi.decode(data, (address)) == tba;
+    }
+
+    function _isExternalAgentLinkActive(LibPositionAgentStorage.AgentStorage storage ds, uint256 positionTokenId)
+        internal
+        view
+        returns (bool)
+    {
+        if (ds.positionRegistrationMode[positionTokenId] != LibPositionAgentStorage.AgentRegistrationMode.ExternalLinked) {
+            return false;
+        }
+
+        uint256 agentId = ds.positionToAgentId[positionTokenId];
+        address expectedAuthorizer = ds.externalAgentAuthorizer[positionTokenId];
+        if (
+            agentId == 0 || expectedAuthorizer == address(0) || ds.identityRegistry == address(0)
+                || ds.identityRegistry.code.length == 0
+        ) {
+            return false;
+        }
+
+        (bool ok, bytes memory data) = ds.identityRegistry.staticcall(
+            abi.encodeWithSelector(IERC8004IdentityRegistry.ownerOf.selector, agentId)
+        );
+        if (!ok || data.length < 32) {
+            return false;
+        }
+
+        return abi.decode(data, (address)) == expectedAuthorizer;
     }
 
     function _tbaAddress(LibPositionAgentStorage.AgentStorage storage ds, uint256 positionTokenId)
