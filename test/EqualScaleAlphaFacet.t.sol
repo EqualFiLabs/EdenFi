@@ -3,16 +3,18 @@ pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Vm} from "forge-std/Vm.sol";
+import {EqualScaleAlphaAdminFacet} from "src/equalscale/EqualScaleAlphaAdminFacet.sol";
 import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
 import {IEqualScaleAlphaErrors} from "src/equalscale/IEqualScaleAlphaErrors.sol";
 import {IEqualScaleAlphaEvents} from "src/equalscale/IEqualScaleAlphaEvents.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
+import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockController.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
 import {LibPositionAgentStorage} from "src/libraries/LibPositionAgentStorage.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
-import {InsufficientPoolLiquidity} from "src/libraries/Errors.sol";
+import {InsufficientPoolLiquidity, InvalidParameterRange} from "src/libraries/Errors.sol";
 import {Types} from "src/libraries/Types.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {MockERC6551RegistryLaunch, MockIdentityRegistryLaunch} from "test/utils/PositionAgentBootstrapMocks.sol";
@@ -25,7 +27,7 @@ contract EqualScaleAlphaMockERC20 is ERC20 {
     }
 }
 
-contract EqualScaleAlphaFacetHarness is EqualScaleAlphaFacet, PositionAgentViewFacet {
+contract EqualScaleAlphaFacetHarness is EqualScaleAlphaFacet, EqualScaleAlphaAdminFacet, PositionAgentViewFacet {
     function setPositionNFT(address nft) external {
         LibPositionNFT.PositionNFTStorage storage ds = LibPositionNFT.s();
         ds.positionNFTContract = nft;
@@ -114,6 +116,10 @@ contract EqualScaleAlphaFacetHarness is EqualScaleAlphaFacet, PositionAgentViewF
         LibAppStorage.s().pools[pid].totalDeposits = totalDeposits;
     }
 
+    function setTimelock(address timelock) external {
+        LibAppStorage.s().timelock = timelock;
+    }
+
     function seedPrincipal(uint256 pid, bytes32 positionKey, uint256 principal) external {
         LibAppStorage.s().pools[pid].userPrincipal[positionKey] = principal;
         LibAppStorage.s().pools[pid].userFeeIndex[positionKey] = LibAppStorage.s().pools[pid].feeIndex;
@@ -178,11 +184,15 @@ contract EqualScaleAlphaFacetHarness is EqualScaleAlphaFacet, PositionAgentViewF
         return LibAppStorage.s().pools[pid].activeCreditPrincipalTotal;
     }
 
-    function setChargeOffThreshold(uint256 chargeOffThresholdSecs) external {
+    function setChargeOffThresholdForTest(uint256 chargeOffThresholdSecs) external {
         if (chargeOffThresholdSecs > type(uint40).max) {
             revert("chargeOffThresholdSecs overflow");
         }
         LibEqualScaleAlphaStorage.s().chargeOffThresholdSecs = uint40(chargeOffThresholdSecs);
+    }
+
+    function storedChargeOffThresholdSecs() external view returns (uint40) {
+        return LibEqualScaleAlphaStorage.s().chargeOffThresholdSecs;
     }
 
     function previewLineInterest(uint256 lineId)
@@ -238,12 +248,15 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
     uint40 internal constant REFINANCE_WINDOW_SECS = 7 days;
     uint256 internal constant COLLATERAL_POOL_ID = 9;
     uint256 internal constant COLLATERAL_AMOUNT = 250e18;
+    bytes32 internal constant OPS_FREEZE_REASON = keccak256("ops-freeze");
 
     EqualScaleAlphaFacetHarness internal facet;
     EqualScaleAlphaMockERC20 internal settlementToken;
     PositionNFT internal positionNft;
     MockERC6551RegistryLaunch internal registry;
     MockIdentityRegistryLaunch internal identityRegistry;
+    FixedDelayTimelockController internal timelockController;
+    uint256 internal timelockSaltNonce;
 
     address internal alice = address(0xA11CE);
     address internal bob = address(0xB0B);
@@ -258,11 +271,17 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         positionNft = new PositionNFT();
         registry = new MockERC6551RegistryLaunch();
         identityRegistry = new MockIdentityRegistryLaunch();
+        address[] memory proposers = new address[](1);
+        proposers[0] = address(this);
+        address[] memory executors = new address[](1);
+        executors[0] = address(this);
+        timelockController = new FixedDelayTimelockController(proposers, executors, address(this));
 
         positionNft.setMinter(address(this));
         facet.setPositionNFT(address(positionNft));
         facet.setPositionAgentViews(address(registry), address(0x1234), address(identityRegistry));
         facet.setPoolUnderlying(SETTLEMENT_POOL_ID, address(settlementToken));
+        facet.setTimelock(address(timelockController));
     }
 
     function test_registerBorrowerProfile_recordsMetadataAndResolvedAgentId() external {
@@ -1210,6 +1229,90 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         }
     }
 
+    function test_freezeLine_isTimelockOnly_andBlocksOnlyDraws() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.aprBps = 0;
+        params.minimumPaymentPerPeriod = 1;
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+
+        uint256 lineId = _createActivatedLine(params, TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.draw(lineId, 200e18);
+        _mintAndApprove(alice, 50e18);
+
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        facet.freezeLine(lineId, OPS_FREEZE_REASON);
+
+        vm.recordLogs();
+        _timelockCall(abi.encodeWithSelector(EqualScaleAlphaAdminFacet.freezeLine.selector, lineId, OPS_FREEZE_REASON));
+        _assertIndexedEventEmitted(keccak256("CreditLineFreezeUpdated(uint256,bool,bytes32)"), bytes32(lineId));
+
+        require(
+            facet.line(lineId).status == LibEqualScaleAlphaStorage.CreditLineStatus.Frozen,
+            "line should be frozen"
+        );
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.InvalidProposalTerms.selector, "line not active for draw")
+        );
+        facet.draw(lineId, 1);
+
+        vm.prank(alice);
+        facet.repay(lineId, 50e18);
+
+        LibEqualScaleAlphaStorage.CreditLine memory frozenLine = facet.line(lineId);
+        require(
+            frozenLine.status == LibEqualScaleAlphaStorage.CreditLineStatus.Frozen,
+            "repayment should not require admin unfreeze"
+        );
+        require(frozenLine.outstandingPrincipal == 150e18, "repayment should reduce frozen principal");
+
+        vm.recordLogs();
+        _timelockCall(abi.encodeWithSelector(EqualScaleAlphaAdminFacet.unfreezeLine.selector, lineId));
+        _assertIndexedEventEmitted(keccak256("CreditLineFreezeUpdated(uint256,bool,bytes32)"), bytes32(lineId));
+
+        require(
+            facet.line(lineId).status == LibEqualScaleAlphaStorage.CreditLineStatus.Active,
+            "line should return to active"
+        );
+
+        vm.prank(alice);
+        facet.draw(lineId, 50e18);
+
+        LibEqualScaleAlphaStorage.CreditLine memory unfrozenLine = facet.line(lineId);
+        require(unfrozenLine.outstandingPrincipal == 200e18, "draw should resume after unfreeze");
+        require(unfrozenLine.currentPeriodDrawn == 250e18, "draw usage should resume without resetting term state");
+    }
+
+    function test_setChargeOffThreshold_isTimelockOnlyAndBounded() external {
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        facet.setChargeOffThreshold(7 days);
+
+        vm.recordLogs();
+        _timelockCall(abi.encodeWithSelector(EqualScaleAlphaAdminFacet.setChargeOffThreshold.selector, 7 days));
+        _assertEventEmitted(keccak256("ChargeOffThresholdUpdated(uint40,uint40)"));
+
+        require(facet.storedChargeOffThresholdSecs() == 7 days, "charge-off threshold not updated");
+
+        bytes memory lowThresholdData =
+            abi.encodeWithSelector(EqualScaleAlphaAdminFacet.setChargeOffThreshold.selector, 12 hours);
+        bytes32 lowThresholdSalt = _scheduleTimelockCall(lowThresholdData);
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "chargeOffThresholdSecs too low"));
+        _executeTimelockCall(lowThresholdData, lowThresholdSalt);
+
+        bytes memory highThresholdData =
+            abi.encodeWithSelector(EqualScaleAlphaAdminFacet.setChargeOffThreshold.selector, 366 days);
+        bytes32 highThresholdSalt = _scheduleTimelockCall(highThresholdData);
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "chargeOffThresholdSecs too high"));
+        _executeTimelockCall(highThresholdData, highThresholdSalt);
+
+        require(facet.storedChargeOffThresholdSecs() == 7 days, "failed writes should not mutate threshold");
+    }
+
     function test_repay_accruesInterestAcrossDrawCheckpoints() external {
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
         params.maxDrawPerPeriod = TARGET_LIMIT;
@@ -1453,7 +1556,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
     function test_chargeOffLine_writesDownUnsecuredExposureProRata() external {
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
         params.maxDrawPerPeriod = TARGET_LIMIT;
-        facet.setChargeOffThreshold(7 days);
+        facet.setChargeOffThresholdForTest(7 days);
 
         (uint256 lineId, uint256 lenderPositionOne, uint256 lenderPositionTwo) =
             _createPooledActivatedLine(params, 600e18, 400e18);
@@ -1518,7 +1621,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
     function test_chargeOffLine_recoversBorrowerCollateralBeforeWriteDown() external {
         EqualScaleAlphaFacet.LineProposalParams memory params = _borrowerPostedProposalParams();
         params.maxDrawPerPeriod = TARGET_LIMIT;
-        facet.setChargeOffThreshold(7 days);
+        facet.setChargeOffThresholdForTest(7 days);
 
         uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
         bytes32 borrowerPositionKey = positionNft.getPositionKey(borrowerPositionId);
@@ -1597,7 +1700,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         params.aprBps = 0;
         params.minimumPaymentPerPeriod = 1;
         params.maxDrawPerPeriod = TARGET_LIMIT;
-        facet.setChargeOffThreshold(1 days);
+        facet.setChargeOffThresholdForTest(1 days);
 
         uint256 lineId = _createActivatedLine(params, TARGET_LIMIT, TARGET_LIMIT);
         uint256[] memory lenderPositionIds = facet.lineCommitmentPositionIds(lineId);
@@ -1622,6 +1725,45 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(
             facet.poolTrackedBalance(SETTLEMENT_POOL_ID) == TARGET_LIMIT - 300e18, "tracked balance should not backfill"
         );
+    }
+
+    function test_frozenLine_stillAllowsPermissionlessDelinquencyAndChargeOff() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.aprBps = 0;
+        params.minimumPaymentPerPeriod = 1;
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+
+        uint256 lineId = _createActivatedLine(params, TARGET_LIMIT, TARGET_LIMIT);
+        uint256[] memory lenderPositionIds = facet.lineCommitmentPositionIds(lineId);
+        uint256 lenderPositionId = lenderPositionIds[0];
+
+        vm.prank(alice);
+        facet.draw(lineId, 300e18);
+
+        _timelockCall(abi.encodeWithSelector(EqualScaleAlphaAdminFacet.freezeLine.selector, lineId, OPS_FREEZE_REASON));
+        _timelockCall(abi.encodeWithSelector(EqualScaleAlphaAdminFacet.setChargeOffThreshold.selector, 1 days));
+
+        uint40 nextDueAt = facet.line(lineId).nextDueAt;
+        vm.warp(uint256(nextDueAt) + GRACE_PERIOD_SECS + 1);
+
+        vm.prank(dave);
+        facet.markDelinquent(lineId);
+
+        require(
+            facet.line(lineId).status == LibEqualScaleAlphaStorage.CreditLineStatus.Delinquent,
+            "frozen line should still become delinquent permissionlessly"
+        );
+
+        vm.warp(block.timestamp + 1 days);
+
+        vm.prank(dave);
+        facet.chargeOffLine(lineId);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        LibEqualScaleAlphaStorage.Commitment memory commitment = facet.commitment(lineId, lenderPositionId);
+
+        require(line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Closed, "line should close after charge-off");
+        require(commitment.lossWrittenDown == 300e18, "charge-off should still allocate lender loss");
     }
 
     function test_enterRefinancing_isPermissionlessOnlyAtTermEnd() external {
@@ -1787,6 +1929,44 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(line.currentPeriodStartedAt == cureTimestamp, "runoff cure period mismatch");
         require(line.termStartedAt == cureTimestamp, "runoff cure term mismatch");
         require(line.nextDueAt == cureTimestamp + PAYMENT_INTERVAL_SECS, "runoff cure due mismatch");
+    }
+
+    function _timelockCall(bytes memory data) internal {
+        bytes32 salt = _scheduleTimelockCall(data);
+        vm.warp(block.timestamp + 7 days + 1);
+        _executeTimelockCall(data, salt);
+    }
+
+    function _scheduleTimelockCall(bytes memory data) internal returns (bytes32 salt) {
+        salt = keccak256(abi.encodePacked("equalscale-alpha-admin", timelockSaltNonce++));
+        timelockController.schedule(address(facet), 0, data, bytes32(0), salt, 7 days);
+    }
+
+    function _executeTimelockCall(bytes memory data, bytes32 salt) internal {
+        timelockController.execute(address(facet), 0, data, bytes32(0), salt);
+    }
+
+    function _assertEventEmitted(bytes32 topic0) internal {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].emitter == address(facet) && logs[i].topics.length > 0 && logs[i].topics[0] == topic0) {
+                return;
+            }
+        }
+        revert("expected event not found");
+    }
+
+    function _assertIndexedEventEmitted(bytes32 topic0, bytes32 topic1) internal {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (
+                logs[i].emitter == address(facet) && logs[i].topics.length > 1 && logs[i].topics[0] == topic0
+                    && logs[i].topics[1] == topic1
+            ) {
+                return;
+            }
+        }
+        revert("expected indexed event not found");
     }
 
     function _registerBorrowerProfileForAlice() internal returns (uint256 positionId) {

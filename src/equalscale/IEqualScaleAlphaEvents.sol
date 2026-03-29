@@ -144,4 +144,6 @@ interface IEqualScaleAlphaEvents {
     );
 
     event CreditLineFreezeUpdated(uint256 indexed lineId, bool frozen, bytes32 reason);
+
+    event ChargeOffThresholdUpdated(uint40 previousThresholdSecs, uint40 newThresholdSecs);
 }
