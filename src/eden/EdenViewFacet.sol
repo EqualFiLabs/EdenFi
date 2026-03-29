@@ -77,10 +77,14 @@ contract EdenViewFacet is EdenLendingLogic {
         bool steveConfigured;
         uint256 steveBasketId;
         uint256 eligibleSupply;
+        uint256 pnftHeldStEVESupply;
         address rewardToken;
         uint256 rewardRatePerSecond;
         uint256 rewardReserve;
         uint256 globalRewardIndex;
+        bool onlyPnftHeldStEVEEligible;
+        bool walletHeldStEVERewardEligible;
+        bool rewardsAccrueToPosition;
         bool rewardsEnabled;
     }
 
@@ -102,6 +106,7 @@ contract EdenViewFacet is EdenLendingLogic {
         uint256 accruedRewards;
         uint256 claimableRewards;
         uint256 rewardCheckpoint;
+        bool rewardsAccrueToPosition;
     }
 
     struct PositionAgentWalletView {
@@ -196,10 +201,14 @@ contract EdenViewFacet is EdenLendingLogic {
         view_.steveConfigured = steve.configured;
         view_.steveBasketId = steve.configured ? steve.basketId : 0;
         view_.eligibleSupply = steve.eligibleSupply;
+        view_.pnftHeldStEVESupply = steve.eligibleSupply;
         view_.rewardToken = rewards.config.rewardToken;
         view_.rewardRatePerSecond = rewards.config.rewardRatePerSecond;
         view_.rewardReserve = LibEdenRewards.previewRewardReserve();
         view_.globalRewardIndex = LibEdenRewards.previewGlobalRewardIndex();
+        view_.onlyPnftHeldStEVEEligible = true;
+        view_.walletHeldStEVERewardEligible = false;
+        view_.rewardsAccrueToPosition = true;
         view_.rewardsEnabled = rewards.config.enabled;
     }
 
@@ -265,7 +274,8 @@ contract EdenViewFacet is EdenLendingLogic {
             eligiblePrincipal: LibEdenStEVEStorage.s().eligiblePrincipal[positionKey],
             accruedRewards: LibEdenRewardStorage.s().accruedRewards[positionKey],
             claimableRewards: LibEdenRewards.previewPositionRewards(positionKey),
-            rewardCheckpoint: LibEdenRewardStorage.s().positionRewardIndex[positionKey]
+            rewardCheckpoint: LibEdenRewardStorage.s().positionRewardIndex[positionKey],
+            rewardsAccrueToPosition: true
         });
     }
 

@@ -18,6 +18,11 @@ contract EdenRewardFacet is ReentrancyGuardModifiers {
         uint256 globalRewardIndex;
         uint256 rewardReserve;
         uint256 eligibleSupply;
+        uint256 pnftHeldStEVESupply;
+        bool steveConfigured;
+        bool onlyPnftHeldStEVEEligible;
+        bool walletHeldStEVERewardEligible;
+        bool rewardsAccrueToPosition;
         bool enabled;
     }
 
@@ -28,6 +33,7 @@ contract EdenRewardFacet is ReentrancyGuardModifiers {
     function configureRewards(address rewardToken, uint256 rewardRatePerSecond, bool enabled) external nonReentrant {
         LibAccess.enforceTimelockOrOwnerIfUnset();
         if (rewardToken == address(0)) revert InvalidUnderlying();
+        if (!LibEdenStEVEStorage.s().configured) revert InvalidParameterRange("stEVE not configured");
 
         LibEdenRewardStorage.RewardStorage storage rewards = LibEdenRewardStorage.s();
         LibEdenRewards.accrueGlobalRewards();
@@ -91,12 +97,18 @@ contract EdenRewardFacet is ReentrancyGuardModifiers {
 
     function getRewardConfig() external view returns (RewardView memory view_) {
         LibEdenRewardStorage.RewardStorage storage rewards = LibEdenRewardStorage.s();
+        LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
         view_.rewardToken = rewards.config.rewardToken;
         view_.rewardRatePerSecond = rewards.config.rewardRatePerSecond;
         view_.lastRewardUpdate = rewards.config.lastRewardUpdate;
         view_.globalRewardIndex = LibEdenRewards.previewGlobalRewardIndex();
         view_.rewardReserve = LibEdenRewards.previewRewardReserve();
-        view_.eligibleSupply = LibEdenStEVEStorage.s().eligibleSupply;
+        view_.eligibleSupply = steve.eligibleSupply;
+        view_.pnftHeldStEVESupply = steve.eligibleSupply;
+        view_.steveConfigured = steve.configured;
+        view_.onlyPnftHeldStEVEEligible = true;
+        view_.walletHeldStEVERewardEligible = false;
+        view_.rewardsAccrueToPosition = true;
         view_.enabled = rewards.config.enabled;
     }
 }

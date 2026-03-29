@@ -76,8 +76,12 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         assertTrue(rewards.steveConfigured);
         assertEq(rewards.steveBasketId, steveBasketId);
         assertEq(rewards.eligibleSupply, 10e18);
+        assertEq(rewards.pnftHeldStEVESupply, 10e18);
         assertEq(rewards.rewardToken, address(eve));
         assertEq(rewards.rewardRatePerSecond, 10e18);
+        assertTrue(rewards.onlyPnftHeldStEVEEligible);
+        assertTrue(!rewards.walletHeldStEVERewardEligible);
+        assertTrue(rewards.rewardsAccrueToPosition);
         assertTrue(rewards.rewardsEnabled);
 
         assertEq(EdenViewFacet(diamond).getProductVaultBalance(address(eve)), 20e18);
@@ -103,6 +107,7 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         assertEq(rewards.eligiblePrincipal, 10e18);
         assertEq(rewards.accruedRewards, 0);
         assertGt(rewards.claimableRewards, 0);
+        assertTrue(rewards.rewardsAccrueToPosition);
 
         EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(alicePositionId);
         assertEq(portfolio.positionId, alicePositionId);
@@ -116,6 +121,7 @@ contract EdenViewFacetTest is EdenLaunchFixture {
             EdenViewFacet(diamond).getPositionPortfolio(bobPositionId);
         assertTrue(!emptyPortfolio.product.active);
         assertEq(emptyPortfolio.rewards.eligiblePrincipal, 0);
+        assertTrue(emptyPortfolio.rewards.rewardsAccrueToPosition);
 
         EdenViewFacet.UserPortfolio memory userPortfolio = EdenViewFacet(diamond).getUserPortfolio(alice);
         assertEq(userPortfolio.positionIds.length, 1);
@@ -274,11 +280,15 @@ contract EdenViewFacetTest is EdenLaunchFixture {
 
         EdenViewFacet.ProductRewardStateView memory productRewards = EdenViewFacet(diamond).getProductRewardState();
         assertTrue(!productRewards.rewardsEnabled);
+        assertTrue(productRewards.onlyPnftHeldStEVEEligible);
+        assertTrue(!productRewards.walletHeldStEVERewardEligible);
+        assertTrue(productRewards.rewardsAccrueToPosition);
 
         EdenViewFacet.PositionRewardView memory positionRewards =
             EdenViewFacet(diamond).getPositionRewardView(bobPositionId);
         assertEq(positionRewards.eligiblePrincipal, 0);
         assertEq(positionRewards.claimableRewards, 0);
         assertEq(positionRewards.rewardCheckpoint, 0);
+        assertTrue(positionRewards.rewardsAccrueToPosition);
     }
 }

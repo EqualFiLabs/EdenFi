@@ -470,13 +470,15 @@ contract DeployEdenByEqualFi is Script {
     }
 
     function _selectorsEdenStEVE() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](8);
         s[0] = EdenStEVEActionFacet.createStEVE.selector;
         s[1] = EdenStEVEActionFacet.depositStEVEToPosition.selector;
         s[2] = EdenStEVEActionFacet.withdrawStEVEFromPosition.selector;
         s[3] = EdenStEVEActionFacet.steveBasketId.selector;
         s[4] = EdenStEVEActionFacet.eligibleSupply.selector;
         s[5] = EdenStEVEActionFacet.eligiblePrincipalOfPosition.selector;
+        s[6] = EdenStEVEActionFacet.pnftHeldStEVESupply.selector;
+        s[7] = EdenStEVEActionFacet.pnftHeldStEVEPrincipalOfPosition.selector;
     }
 
     function _selectorsEdenReward() internal pure returns (bytes4[] memory s) {

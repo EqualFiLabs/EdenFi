@@ -150,7 +150,15 @@ contract EdenStEVEActionFacet is EdenBasketLogic, EdenPositionPoolHelpers, Reent
         return LibEdenStEVEStorage.s().eligibleSupply;
     }
 
+    function pnftHeldStEVESupply() external view returns (uint256) {
+        return LibEdenStEVEStorage.s().eligibleSupply;
+    }
+
     function eligiblePrincipalOfPosition(uint256 tokenId) external view returns (uint256) {
+        return LibEdenStEVEStorage.s().eligiblePrincipal[_getPositionKey(tokenId)];
+    }
+
+    function pnftHeldStEVEPrincipalOfPosition(uint256 tokenId) external view returns (uint256) {
         return LibEdenStEVEStorage.s().eligiblePrincipal[_getPositionKey(tokenId)];
     }
 }

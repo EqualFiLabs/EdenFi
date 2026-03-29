@@ -5,7 +5,7 @@ import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
-import {InvalidParameterRange} from "src/libraries/Errors.sol";
+import {InvalidParameterRange, NotNFTOwner} from "src/libraries/Errors.sol";
 
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
 
@@ -33,7 +33,15 @@ contract EdenRewardFacetTest is EdenLaunchFixture {
         EdenRewardFacet(diamond).fundRewards(1_000e18, 1_000e18);
         vm.warp(block.timestamp + 10);
 
+        EdenRewardFacet.RewardView memory rewardConfig = EdenRewardFacet(diamond).getRewardConfig();
         assertEq(EdenStEVEActionFacet(diamond).eligibleSupply(), 10e18);
+        assertEq(EdenStEVEActionFacet(diamond).pnftHeldStEVESupply(), 10e18);
+        assertEq(rewardConfig.eligibleSupply, 10e18);
+        assertEq(rewardConfig.pnftHeldStEVESupply, 10e18);
+        assertTrue(rewardConfig.steveConfigured);
+        assertTrue(rewardConfig.onlyPnftHeldStEVEEligible);
+        assertTrue(!rewardConfig.walletHeldStEVERewardEligible);
+        assertTrue(rewardConfig.rewardsAccrueToPosition);
         assertGt(EdenRewardFacet(diamond).previewClaimRewards(alicePositionId), 0);
         assertEq(EdenRewardFacet(diamond).previewClaimRewards(bobPositionId), 0);
     }
@@ -107,6 +115,11 @@ contract EdenRewardFacetTest is EdenLaunchFixture {
 
         EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
         assertEq(portfolio.owner, carol);
+        assertTrue(portfolio.rewards.rewardsAccrueToPosition);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(NotNFTOwner.selector, alice, positionId));
+        EdenRewardFacet(diamond).claimRewards(positionId, alice);
 
         uint256 carolBefore = eve.balanceOf(carol);
         vm.prank(carol);
@@ -151,5 +164,24 @@ contract EdenRewardFacetTest is EdenLaunchFixture {
 
         vm.expectRevert(abi.encodeWithSelector(LibCurrency.LibCurrency_InsufficientReceived.selector, 9e18, 10e18));
         EdenRewardFacet(diamond).fundRewards(10e18, 10e18);
+    }
+}
+
+contract EdenRewardFacetConfigGuardTest is EdenLaunchFixture {
+    function setUp() public override {
+        super.setUp();
+        _bootstrapCorePools();
+    }
+
+    function test_ConfigureRewards_RevertsUntilStEVEConfigured() public {
+        bytes memory data =
+            abi.encodeWithSelector(EdenRewardFacet.configureRewards.selector, address(eve), 30e18, true);
+        bytes32 salt = keccak256("reward-config-without-steve");
+
+        timelockController.schedule(diamond, 0, data, bytes32(0), salt, 7 days);
+        vm.warp(block.timestamp + 7 days + 1);
+
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "stEVE not configured"));
+        timelockController.execute(diamond, 0, data, bytes32(0), salt);
     }
 }
