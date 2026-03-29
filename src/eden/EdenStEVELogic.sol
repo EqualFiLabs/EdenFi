@@ -14,32 +14,25 @@ import {LibPoolMembership} from "../libraries/LibPoolMembership.sol";
 import {Types} from "../libraries/Types.sol";
 import "../libraries/Errors.sol";
 
-abstract contract EdenBasketLogic is EdenBasketBase {
-    event BasketCreated(
-        uint256 indexed basketId,
-        address indexed token,
-        address[] assets,
-        uint256[] bundleAmounts
-    );
+abstract contract EdenStEVELogic is EdenBasketBase {
+    event StEVEProductConfigured(address indexed token, address[] assets, uint256[] bundleAmounts);
 
-    function _prepareWalletMint(
-        uint256 basketId,
-        LibEdenBasketStorage.ProductConfig storage basket,
+    function _prepareStEVEWalletMint(
+        LibEdenBasketStorage.ProductConfig storage product,
         uint256 units,
         uint256[] calldata maxInputAmounts,
         WalletMintState memory state
     ) internal {
-        uint256 totalSupply = basket.totalUnits;
-        uint256 len = basket.assets.length;
+        uint256 totalSupply = product.totalUnits;
+        uint256 len = product.assets.length;
         for (uint256 i = 0; i < len; i++) {
-            WalletMintLeg memory leg = _quoteWalletMintLeg(basketId, basket, i, units, totalSupply);
+            WalletMintLeg memory leg = _quoteStEVEWalletMintLeg(product, i, units, totalSupply);
             uint256 received = LibCurrency.pullAtLeast(leg.asset, msg.sender, leg.totalRequired, maxInputAmounts[i]);
-            _applyWalletMintLeg(basketId, i, leg, received, state);
+            _applyStEVEWalletMintLeg(i, leg, received, state);
         }
     }
 
-    function _applyWalletMintLeg(
-        uint256 basketId,
+    function _applyStEVEWalletMintLeg(
         uint256 i,
         WalletMintLeg memory leg,
         uint256 received,
@@ -51,49 +44,46 @@ abstract contract EdenBasketLogic is EdenBasketBase {
         if (leg.potBuyIn > 0) {
             store.accounting.feePots[leg.asset] += leg.potBuyIn;
         }
-        _distributeWalletBasketFee(basketId, leg.asset, leg.fee);
+        _distributeStEVEFee(leg.asset, leg.fee);
         state.required[i] = leg.totalRequired;
         state.feeAmounts[i] = leg.fee;
     }
 
-    function _quoteWalletMintLeg(
-        uint256,
-        LibEdenBasketStorage.ProductConfig storage basket,
+    function _quoteStEVEWalletMintLeg(
+        LibEdenBasketStorage.ProductConfig storage product,
         uint256 i,
         uint256 units,
         uint256 totalSupply
     ) internal view returns (WalletMintLeg memory leg) {
         LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
-        leg.asset = basket.assets[i];
+        leg.asset = product.assets[i];
         if (totalSupply == 0) {
-            leg.baseDeposit = Math.mulDiv(basket.bundleAmounts[i], units, UNIT_SCALE);
+            leg.baseDeposit = Math.mulDiv(product.bundleAmounts[i], units, UNIT_SCALE);
         } else {
             uint256 economicBalance = store.accounting.vaultBalances[leg.asset];
             leg.baseDeposit = Math.mulDiv(economicBalance, units, totalSupply, Math.Rounding.Ceil);
             leg.potBuyIn = Math.mulDiv(store.accounting.feePots[leg.asset], units, totalSupply, Math.Rounding.Ceil);
         }
         leg.grossInput = leg.baseDeposit + leg.potBuyIn;
-        leg.fee = Math.mulDiv(leg.grossInput, basket.mintFeeBps[i], BPS_DENOMINATOR, Math.Rounding.Ceil);
+        leg.fee = Math.mulDiv(leg.grossInput, product.mintFeeBps[i], BPS_DENOMINATOR, Math.Rounding.Ceil);
         leg.totalRequired = leg.grossInput + leg.fee;
     }
 
-    function _prepareWalletBurn(
-        uint256 basketId,
-        LibEdenBasketStorage.ProductConfig storage basket,
+    function _prepareStEVEWalletBurn(
+        LibEdenBasketStorage.ProductConfig storage product,
         uint256 units,
         address to,
         WalletBurnState memory state
     ) internal {
-        uint256 totalSupply = basket.totalUnits;
-        uint256 len = basket.assets.length;
+        uint256 totalSupply = product.totalUnits;
+        uint256 len = product.assets.length;
         for (uint256 i = 0; i < len; i++) {
-            WalletBurnLeg memory leg = _quoteWalletBurnLeg(basketId, basket, i, units, totalSupply);
-            _applyWalletBurnLeg(basketId, i, leg, to, state);
+            WalletBurnLeg memory leg = _quoteStEVEWalletBurnLeg(product, i, units, totalSupply);
+            _applyStEVEWalletBurnLeg(i, leg, to, state);
         }
     }
 
-    function _applyWalletBurnLeg(
-        uint256 basketId,
+    function _applyStEVEWalletBurnLeg(
         uint256 i,
         WalletBurnLeg memory leg,
         address to,
@@ -102,33 +92,31 @@ abstract contract EdenBasketLogic is EdenBasketBase {
         LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
         store.accounting.vaultBalances[leg.asset] -= leg.bundleOut;
         store.accounting.feePots[leg.asset] -= leg.potShare;
-        _distributeWalletBasketFee(basketId, leg.asset, leg.fee);
+        _distributeStEVEFee(leg.asset, leg.fee);
         LibCurrency.transfer(leg.asset, to, leg.payout);
         state.assetsOut[i] = leg.payout;
         state.feeAmounts[i] = leg.fee;
     }
 
-    function _quoteWalletBurnLeg(
-        uint256,
-        LibEdenBasketStorage.ProductConfig storage basket,
+    function _quoteStEVEWalletBurnLeg(
+        LibEdenBasketStorage.ProductConfig storage product,
         uint256 i,
         uint256 units,
         uint256 totalSupply
     ) internal view returns (WalletBurnLeg memory leg) {
         LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
-        leg.asset = basket.assets[i];
-        leg.bundleOut = Math.mulDiv(basket.bundleAmounts[i], units, UNIT_SCALE);
+        leg.asset = product.assets[i];
+        leg.bundleOut = Math.mulDiv(product.bundleAmounts[i], units, UNIT_SCALE);
         uint256 vaultBalance = store.accounting.vaultBalances[leg.asset];
         if (vaultBalance < leg.bundleOut) revert InsufficientPoolLiquidity(leg.bundleOut, vaultBalance);
         leg.potShare = Math.mulDiv(store.accounting.feePots[leg.asset], units, totalSupply);
         uint256 gross = leg.bundleOut + leg.potShare;
-        leg.fee = Math.mulDiv(gross, basket.burnFeeBps[i], BPS_DENOMINATOR);
+        leg.fee = Math.mulDiv(gross, product.burnFeeBps[i], BPS_DENOMINATOR);
         leg.payout = gross - leg.fee;
     }
 
-    function _preparePositionMint(
-        uint256 basketId,
-        LibEdenBasketStorage.ProductConfig storage basket,
+    function _prepareStEVEPositionMint(
+        LibEdenBasketStorage.ProductConfig storage product,
         uint256 units,
         uint256 totalSupply,
         bytes32 positionKey,
@@ -136,28 +124,27 @@ abstract contract EdenBasketLogic is EdenBasketBase {
         PositionMintState memory state
     ) internal {
         LibAppStorage.AppStorage storage app = LibAppStorage.s();
-        uint256 len = basket.assets.length;
+        uint256 len = product.assets.length;
         for (uint256 i = 0; i < len; i++) {
-            PositionMintLeg memory leg = _quotePositionMintLeg(basketId, basket, i, units, totalSupply, app);
-            _applyPositionMintLeg(app, basketId, positionKey, i, leg, poolFeeShareBps, state);
+            PositionMintLeg memory leg = _quoteStEVEPositionMintLeg(product, i, units, totalSupply, app);
+            _applyStEVEPositionMintLeg(app, positionKey, i, leg, poolFeeShareBps, state);
         }
     }
 
-    function _quotePositionMintLeg(
-        uint256,
-        LibEdenBasketStorage.ProductConfig storage basket,
+    function _quoteStEVEPositionMintLeg(
+        LibEdenBasketStorage.ProductConfig storage product,
         uint256 i,
         uint256 units,
         uint256 totalSupply,
         LibAppStorage.AppStorage storage app
     ) internal view returns (PositionMintLeg memory leg) {
         LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
-        leg.asset = basket.assets[i];
+        leg.asset = product.assets[i];
         leg.poolId = app.assetToPoolId[leg.asset];
         if (leg.poolId == 0) revert NoPoolForAsset(leg.asset);
 
         if (totalSupply == 0) {
-            leg.baseDeposit = Math.mulDiv(basket.bundleAmounts[i], units, UNIT_SCALE);
+            leg.baseDeposit = Math.mulDiv(product.bundleAmounts[i], units, UNIT_SCALE);
         } else {
             uint256 economicBalance = store.accounting.vaultBalances[leg.asset];
             leg.baseDeposit = Math.mulDiv(economicBalance, units, totalSupply, Math.Rounding.Ceil);
@@ -165,13 +152,12 @@ abstract contract EdenBasketLogic is EdenBasketBase {
         }
 
         leg.grossInput = leg.baseDeposit + leg.potBuyIn;
-        leg.fee = Math.mulDiv(leg.grossInput, basket.mintFeeBps[i], BPS_DENOMINATOR, Math.Rounding.Ceil);
+        leg.fee = Math.mulDiv(leg.grossInput, product.mintFeeBps[i], BPS_DENOMINATOR, Math.Rounding.Ceil);
         leg.totalRequired = leg.grossInput + leg.fee;
     }
 
-    function _applyPositionMintLeg(
+    function _applyStEVEPositionMintLeg(
         LibAppStorage.AppStorage storage app,
-        uint256 basketId,
         bytes32 positionKey,
         uint256 i,
         PositionMintLeg memory leg,
@@ -191,7 +177,7 @@ abstract contract EdenBasketLogic is EdenBasketBase {
         state.required[i] = leg.grossInput;
         state.feeAmounts[i] = leg.fee;
 
-        LibModuleEncumbrance.encumber(positionKey, leg.poolId, _basketEncumbranceId(basketId), leg.baseDeposit);
+        LibModuleEncumbrance.encumber(positionKey, leg.poolId, _stEVEEncumbranceId(), leg.baseDeposit);
         LibEdenBasketStorage.s().accounting.vaultBalances[leg.asset] += leg.baseDeposit;
 
         if (leg.potBuyIn > 0 || leg.fee > 0) {
@@ -220,14 +206,13 @@ abstract contract EdenBasketLogic is EdenBasketBase {
                 LibEdenBasketStorage.s().accounting.feePots[leg.asset] += potFee;
             }
             if (poolShare > 0) {
-                LibFeeRouter.routeManagedShare(leg.poolId, poolShare, _basketFeeSource(basketId), true, 0);
+                LibFeeRouter.routeManagedShare(leg.poolId, poolShare, _stEVEFeeSource(), true, 0);
             }
         }
     }
 
-    function _preparePositionBurn(
-        uint256 basketId,
-        LibEdenBasketStorage.ProductConfig storage basket,
+    function _prepareStEVEPositionBurn(
+        LibEdenBasketStorage.ProductConfig storage product,
         uint256 units,
         uint256 totalSupply,
         bytes32 positionKey,
@@ -235,37 +220,36 @@ abstract contract EdenBasketLogic is EdenBasketBase {
         PositionBurnState memory state
     ) internal {
         LibAppStorage.AppStorage storage app = LibAppStorage.s();
-        uint256 len = basket.assets.length;
+        uint256 len = product.assets.length;
         for (uint256 i = 0; i < len; i++) {
-            PositionBurnLeg memory leg = _quotePositionBurnLeg(basketId, basket, i, units, totalSupply, poolFeeShareBps);
-            _applyPositionBurnLeg(app, basketId, positionKey, i, leg, state);
+            PositionBurnLeg memory leg =
+                _quoteStEVEPositionBurnLeg(product, i, units, totalSupply, poolFeeShareBps);
+            _applyStEVEPositionBurnLeg(app, positionKey, i, leg, state);
         }
     }
 
-    function _quotePositionBurnLeg(
-        uint256,
-        LibEdenBasketStorage.ProductConfig storage basket,
+    function _quoteStEVEPositionBurnLeg(
+        LibEdenBasketStorage.ProductConfig storage product,
         uint256 i,
         uint256 units,
         uint256 totalSupply,
         uint16 poolFeeShareBps
     ) internal view returns (PositionBurnLeg memory leg) {
         LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
-        leg.asset = basket.assets[i];
-        leg.bundleOut = Math.mulDiv(basket.bundleAmounts[i], units, UNIT_SCALE);
+        leg.asset = product.assets[i];
+        leg.bundleOut = Math.mulDiv(product.bundleAmounts[i], units, UNIT_SCALE);
         uint256 vaultBalance = store.accounting.vaultBalances[leg.asset];
         if (vaultBalance < leg.bundleOut) revert InsufficientPoolLiquidity(leg.bundleOut, vaultBalance);
         leg.potShare = Math.mulDiv(store.accounting.feePots[leg.asset], units, totalSupply);
         uint256 gross = leg.bundleOut + leg.potShare;
-        leg.fee = Math.mulDiv(gross, basket.burnFeeBps[i], BPS_DENOMINATOR);
+        leg.fee = Math.mulDiv(gross, product.burnFeeBps[i], BPS_DENOMINATOR);
         leg.payout = gross - leg.fee;
         leg.poolShare = Math.mulDiv(leg.fee, poolFeeShareBps, BPS_DENOMINATOR);
         leg.potFee = leg.fee - leg.poolShare;
     }
 
-    function _applyPositionBurnLeg(
+    function _applyStEVEPositionBurnLeg(
         LibAppStorage.AppStorage storage app,
-        uint256 basketId,
         bytes32 positionKey,
         uint256 i,
         PositionBurnLeg memory leg,
@@ -282,7 +266,7 @@ abstract contract EdenBasketLogic is EdenBasketBase {
         store.accounting.feePots[leg.asset] = store.accounting.feePots[leg.asset] - leg.potShare + leg.potFee;
         if (leg.poolShare > 0) {
             pool.trackedBalance += leg.poolShare;
-            LibFeeRouter.routeManagedShare(poolId, leg.poolShare, _basketFeeSource(basketId), true, 0);
+            LibFeeRouter.routeManagedShare(poolId, leg.poolShare, _stEVEFeeSource(), true, 0);
         }
 
         state.assetsOut[i] = leg.payout;
@@ -295,7 +279,7 @@ abstract contract EdenBasketLogic is EdenBasketBase {
         uint256 potOut = leg.payout - navOut;
 
         if (navOut > 0) {
-            LibModuleEncumbrance.unencumber(positionKey, poolId, _basketEncumbranceId(basketId), navOut);
+            LibModuleEncumbrance.unencumber(positionKey, poolId, _stEVEEncumbranceId(), navOut);
         }
         if (potOut > 0) {
             LibFeeIndex.settle(poolId, positionKey);
@@ -316,7 +300,7 @@ abstract contract EdenBasketLogic is EdenBasketBase {
         }
     }
 
-    function _distributeWalletBasketFee(uint256 basketId, address asset, uint256 fee) internal {
+    function _distributeStEVEFee(address asset, uint256 fee) internal {
         if (fee == 0) return;
 
         LibAppStorage.AppStorage storage app = LibAppStorage.s();
@@ -331,7 +315,7 @@ abstract contract EdenBasketLogic is EdenBasketBase {
         }
         if (poolShare > 0) {
             app.pools[poolId].trackedBalance += poolShare;
-            LibFeeRouter.routeManagedShare(poolId, poolShare, _basketFeeSource(basketId), true, 0);
+            LibFeeRouter.routeManagedShare(poolId, poolShare, _stEVEFeeSource(), true, 0);
         }
     }
 
@@ -346,28 +330,27 @@ abstract contract EdenBasketLogic is EdenBasketBase {
         return principal - totalEncumbered;
     }
 
-    function _basketFeeSource(uint256 basketId) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked("EDEN_BASKET_FEE", basketId));
+    function _stEVEFeeSource() internal pure returns (bytes32) {
+        return keccak256("EDEN_STEVE_FEE");
     }
 
-    function _basketEncumbranceId(uint256 basketId) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encodePacked("EDEN_BASKET_ENCUMBRANCE", basketId)));
+    function _stEVEEncumbranceId() internal pure returns (uint256) {
+        return uint256(keccak256("EDEN_STEVE_ENCUMBRANCE"));
     }
 
-    function _createBasketInternal(CreateBasketParams calldata params, uint256 basketId, address token) internal {
+    function _configureStEVEProduct(CreateBasketParams calldata params, address token) internal {
         LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
         if (store.productInitialized) revert InvalidParameterRange("product already configured");
-        if (basketId != LibEdenBasketStorage.PRODUCT_ID) revert UnknownIndex(basketId);
         store.productInitialized = true;
 
-        LibEdenBasketStorage.ProductConfig storage basket = store.product;
-        basket.assets = params.assets;
-        basket.bundleAmounts = params.bundleAmounts;
-        basket.mintFeeBps = params.mintFeeBps;
-        basket.burnFeeBps = params.burnFeeBps;
-        basket.flashFeeBps = params.flashFeeBps;
-        basket.token = token;
-        basket.poolId = _createBasketTokenPool(token);
+        LibEdenBasketStorage.ProductConfig storage product = store.product;
+        product.assets = params.assets;
+        product.bundleAmounts = params.bundleAmounts;
+        product.mintFeeBps = params.mintFeeBps;
+        product.burnFeeBps = params.burnFeeBps;
+        product.flashFeeBps = params.flashFeeBps;
+        product.token = token;
+        product.poolId = _createStEVEPool(token);
 
         store.productMetadata = LibEdenBasketStorage.ProductMetadata({
             name: params.name,
@@ -378,16 +361,16 @@ abstract contract EdenBasketLogic is EdenBasketBase {
             productType: params.basketType
         });
 
-        emit BasketCreated(basketId, token, params.assets, params.bundleAmounts);
+        emit StEVEProductConfigured(token, params.assets, params.bundleAmounts);
     }
 
-    function _createBasketTokenPool(address underlying) internal returns (uint256 pid) {
+    function _createStEVEPool(address underlying) internal returns (uint256 pid) {
         LibAppStorage.AppStorage storage store = LibAppStorage.s();
         if (!store.defaultPoolConfigSet) revert DefaultPoolConfigNotSet();
         if (underlying == address(0)) revert InvalidUnderlying();
         if (store.assetToPoolId[underlying] != 0) revert PoolAlreadyExists(store.assetToPoolId[underlying]);
 
-        pid = _nextBasketPoolId(store);
+        pid = _nextStEVEPoolId(store);
         Types.PoolData storage p = store.pools[pid];
         if (p.initialized) revert PoolAlreadyExists(pid);
 
@@ -435,7 +418,7 @@ abstract contract EdenBasketLogic is EdenBasketBase {
         }
     }
 
-    function _nextBasketPoolId(LibAppStorage.AppStorage storage store) internal view returns (uint256 pid) {
+    function _nextStEVEPoolId(LibAppStorage.AppStorage storage store) internal view returns (uint256 pid) {
         pid = store.poolCount;
         if (pid == 0) pid = 1;
         while (store.pools[pid].initialized) {

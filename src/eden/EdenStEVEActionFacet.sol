@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {EdenBasketBase} from "./EdenBasketBase.sol";
-import {EdenBasketLogic} from "./EdenBasketLogic.sol";
+import {EdenStEVELogic} from "./EdenStEVELogic.sol";
 import {EdenPositionPoolHelpers} from "./EdenPositionPoolHelpers.sol";
 import {LibActiveCreditIndex} from "../libraries/LibActiveCreditIndex.sol";
 import {LibAccess} from "../libraries/LibAccess.sol";
@@ -19,7 +19,7 @@ import {StEVEToken} from "../tokens/StEVEToken.sol";
 import {Types} from "../libraries/Types.sol";
 import "../libraries/Errors.sol";
 
-contract EdenStEVEActionFacet is EdenBasketLogic, EdenPositionPoolHelpers, ReentrancyGuardModifiers {
+contract EdenStEVEActionFacet is EdenStEVELogic, EdenPositionPoolHelpers, ReentrancyGuardModifiers {
     event StEVEConfigured(uint256 indexed basketId, address indexed token);
     event StEVEDepositedToPosition(uint256 indexed tokenId, bytes32 indexed positionKey, uint256 amount);
     event StEVEWithdrawnFromPosition(uint256 indexed tokenId, bytes32 indexed positionKey, uint256 amount);
@@ -38,7 +38,7 @@ contract EdenStEVEActionFacet is EdenBasketLogic, EdenPositionPoolHelpers, Reent
 
         basketId = LibEdenBasketStorage.PRODUCT_ID;
         token = address(new StEVEToken(params.name, params.symbol, address(this), basketId));
-        _createBasketInternal(params, basketId, token);
+        _configureStEVEProduct(params, token);
 
         LibEdenStEVEStorage.StEVEStorage storage store = LibEdenStEVEStorage.s();
         store.configured = true;

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {BasketToken} from "../tokens/BasketToken.sol";
-import {EdenBasketLogic} from "./EdenBasketLogic.sol";
+import {EdenStEVELogic} from "./EdenStEVELogic.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibEdenRewards} from "../libraries/LibEdenRewards.sol";
 import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
@@ -14,7 +14,7 @@ import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
 import {Types} from "../libraries/Types.sol";
 import "../libraries/Errors.sol";
 
-contract EdenBasketPositionFacet is EdenBasketLogic, ReentrancyGuardModifiers {
+contract EdenBasketPositionFacet is EdenStEVELogic, ReentrancyGuardModifiers {
     function mintStEVEFromPosition(uint256 positionId, uint256 units)
         external
         nonReentrant
@@ -23,29 +23,29 @@ contract EdenBasketPositionFacet is EdenBasketLogic, ReentrancyGuardModifiers {
         if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
         LibPositionHelpers.requireOwnership(positionId);
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
-        uint256 basketId = _requireStEVEConfigured();
+        uint256 productId = _requireStEVEConfigured();
 
-        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
-        if (basket.paused) revert IndexPaused(basketId);
+        LibEdenBasketStorage.ProductConfig storage product = LibEdenBasketStorage.s().product;
+        if (product.paused) revert IndexPaused(productId);
 
         LibEdenRewards.settlePositionRewards(positionKey);
 
         PositionMintState memory state;
-        state.required = new uint256[](basket.assets.length);
-        state.feeAmounts = new uint256[](basket.assets.length);
+        state.required = new uint256[](product.assets.length);
+        state.feeAmounts = new uint256[](product.assets.length);
 
         uint16 poolFeeShareBps = _basketPoolFeeShareBps();
-        uint256 totalSupply = basket.totalUnits;
-        _preparePositionMint(basketId, basket, units, totalSupply, positionKey, poolFeeShareBps, state);
+        uint256 totalSupply = product.totalUnits;
+        _prepareStEVEPositionMint(product, units, totalSupply, positionKey, poolFeeShareBps, state);
 
         minted = units;
-        basket.totalUnits += minted;
-        BasketToken(basket.token).mintIndexUnits(address(this), minted);
+        product.totalUnits += minted;
+        BasketToken(product.token).mintIndexUnits(address(this), minted);
 
         LibAppStorage.AppStorage storage app = LibAppStorage.s();
-        Types.PoolData storage basketPool = app.pools[basket.poolId];
-        LibPoolMembership._ensurePoolMembership(positionKey, basket.poolId, true);
-        LibFeeIndex.settle(basket.poolId, positionKey);
+        Types.PoolData storage basketPool = app.pools[product.poolId];
+        LibPoolMembership._ensurePoolMembership(positionKey, product.poolId, true);
+        LibFeeIndex.settle(product.poolId, positionKey);
 
         uint256 currentPrincipal = basketPool.userPrincipal[positionKey];
         bool isNewUser = currentPrincipal == 0;
@@ -82,11 +82,11 @@ contract EdenBasketPositionFacet is EdenBasketLogic, ReentrancyGuardModifiers {
         if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
         LibPositionHelpers.requireOwnership(positionId);
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
-        uint256 basketId = _requireStEVEConfigured();
+        uint256 productId = _requireStEVEConfigured();
 
-        LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
-        if (basket.paused) revert IndexPaused(basketId);
-        if (units > basket.totalUnits) revert InvalidUnits();
+        LibEdenBasketStorage.ProductConfig storage product = LibEdenBasketStorage.s().product;
+        if (product.paused) revert IndexPaused(productId);
+        if (units > product.totalUnits) revert InvalidUnits();
 
         LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
         uint256 eligible = steve.eligiblePrincipal[positionKey];
@@ -96,21 +96,19 @@ contract EdenBasketPositionFacet is EdenBasketLogic, ReentrancyGuardModifiers {
         steve.eligibleSupply -= units;
 
         LibAppStorage.AppStorage storage app = LibAppStorage.s();
-        Types.PoolData storage basketPool = app.pools[basket.poolId];
-        LibPoolMembership._ensurePoolMembership(positionKey, basket.poolId, true);
-        LibFeeIndex.settle(basket.poolId, positionKey);
+        Types.PoolData storage basketPool = app.pools[product.poolId];
+        LibPoolMembership._ensurePoolMembership(positionKey, product.poolId, true);
+        LibFeeIndex.settle(product.poolId, positionKey);
         uint256 positionBalance = basketPool.userPrincipal[positionKey];
         if (units > positionBalance) revert InsufficientIndexTokens(units, positionBalance);
 
         PositionBurnState memory state;
-        state.assetsOut = new uint256[](basket.assets.length);
-        state.feeAmounts = new uint256[](basket.assets.length);
-        _preparePositionBurn(
-            basketId, basket, units, basket.totalUnits, positionKey, _basketPoolFeeShareBps(), state
-        );
+        state.assetsOut = new uint256[](product.assets.length);
+        state.feeAmounts = new uint256[](product.assets.length);
+        _prepareStEVEPositionBurn(product, units, product.totalUnits, positionKey, _basketPoolFeeShareBps(), state);
 
-        basket.totalUnits -= units;
-        BasketToken(basket.token).burnIndexUnits(address(this), units);
+        product.totalUnits -= units;
+        BasketToken(product.token).burnIndexUnits(address(this), units);
 
         uint256 newPrincipal = positionBalance - units;
         basketPool.userPrincipal[positionKey] = newPrincipal;
