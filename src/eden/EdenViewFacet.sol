@@ -93,7 +93,11 @@ contract EdenViewFacet is EdenLendingLogic {
         bool tbaDeployed;
         uint256 agentId;
         bool agentRegistered;
+        uint8 registrationMode;
         bool canonicalLink;
+        bool externalLink;
+        bool linkActive;
+        address externalAuthorizer;
         bool registrationComplete;
     }
 
@@ -102,6 +106,7 @@ contract EdenViewFacet is EdenLendingLogic {
         bytes32 positionKey;
         address owner;
         uint256 homePoolId;
+        uint8 agentRegistrationMode;
         PositionAgentWalletView agent;
         PositionBasketView[] baskets;
         PositionRewardView rewards;
@@ -193,22 +198,7 @@ contract EdenViewFacet is EdenLendingLogic {
     function getPositionTokenURI(uint256 positionId) external view returns (string memory) {
         PositionNFT nft = PositionNFT(LibPositionNFT.s().positionNFTContract);
         PositionAgentWalletView memory agent = _positionAgentWallet(positionId);
-        return string.concat(
-            "equalfi://positions/",
-            Strings.toString(positionId),
-            "?poolId=",
-            Strings.toString(nft.getPoolId(positionId)),
-            "&tba=",
-            Strings.toHexString(uint160(agent.tbaAddress), 20),
-            "&tbaDeployed=",
-            _boolString(agent.tbaDeployed),
-            "&agentId=",
-            Strings.toString(agent.agentId),
-            "&agentCanonical=",
-            _boolString(agent.canonicalLink),
-            "&agentComplete=",
-            _boolString(agent.registrationComplete)
-        );
+        return string.concat("equalfi://positions/", Strings.toString(positionId), _positionQueryString(nft, positionId, agent));
     }
 
     function hasOpenOffers(bytes32) external pure returns (bool) {
@@ -257,6 +247,7 @@ contract EdenViewFacet is EdenLendingLogic {
         portfolio.owner = nft.ownerOf(positionId);
         portfolio.homePoolId = nft.getPoolId(positionId);
         portfolio.agent = _positionAgentWallet(positionId);
+        portfolio.agentRegistrationMode = portfolio.agent.registrationMode;
         portfolio.baskets = _positionBaskets(positionKey);
         portfolio.rewards = PositionRewardView({
             eligiblePrincipal: LibEdenStEVEStorage.s().eligiblePrincipal[positionKey],
@@ -273,6 +264,12 @@ contract EdenViewFacet is EdenLendingLogic {
         LibPositionAgentStorage.AgentStorage storage wallet = LibPositionAgentStorage.s();
         agent.agentId = wallet.positionToAgentId[positionId];
         agent.agentRegistered = agent.agentId != 0;
+        agent.registrationMode = uint8(wallet.positionRegistrationMode[positionId]);
+        agent.canonicalLink = wallet.positionRegistrationMode[positionId]
+            == LibPositionAgentStorage.AgentRegistrationMode.CanonicalOwned;
+        agent.externalLink = wallet.positionRegistrationMode[positionId]
+            == LibPositionAgentStorage.AgentRegistrationMode.ExternalLinked;
+        agent.externalAuthorizer = wallet.externalAgentAuthorizer[positionId];
 
         if (
             wallet.erc6551Registry == address(0) || wallet.erc6551Implementation == address(0)
@@ -301,8 +298,46 @@ contract EdenViewFacet is EdenLendingLogic {
             return agent;
         }
 
-        agent.canonicalLink = abi.decode(data, (address)) == agent.tbaAddress;
-        agent.registrationComplete = agent.canonicalLink;
+        address registryOwner = abi.decode(data, (address));
+        if (agent.canonicalLink) {
+            agent.linkActive = registryOwner == agent.tbaAddress;
+        } else if (agent.externalLink) {
+            agent.linkActive = registryOwner == agent.externalAuthorizer;
+        }
+        agent.registrationComplete = agent.linkActive;
+    }
+
+    function _positionQueryString(PositionNFT nft, uint256 positionId, PositionAgentWalletView memory agent)
+        internal
+        view
+        returns (string memory)
+    {
+        return string.concat(
+            "?poolId=",
+            Strings.toString(nft.getPoolId(positionId)),
+            "&tba=",
+            Strings.toHexString(uint160(agent.tbaAddress), 20),
+            _agentQueryString(agent)
+        );
+    }
+
+    function _agentQueryString(PositionAgentWalletView memory agent) internal pure returns (string memory) {
+        return string.concat(
+            "&tbaDeployed=",
+            _boolString(agent.tbaDeployed),
+            "&agentId=",
+            Strings.toString(agent.agentId),
+            "&agentMode=",
+            Strings.toString(agent.registrationMode),
+            "&agentCanonical=",
+            _boolString(agent.canonicalLink),
+            "&agentExternal=",
+            _boolString(agent.externalLink),
+            "&agentActive=",
+            _boolString(agent.linkActive),
+            "&agentComplete=",
+            _boolString(agent.registrationComplete)
+        );
     }
 
     function getUserPortfolio(address user) external view returns (UserPortfolio memory portfolio) {

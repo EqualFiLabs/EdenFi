@@ -31,10 +31,14 @@ contract EdenViewFacetTest is EdenLaunchFixture {
     uint256 internal alicePositionId;
     uint256 internal aliceAltPositionId;
     uint256 internal bobPositionId;
+    uint256 internal constant REGISTRATION_MODE_EXTERNAL_LINKED = 2;
+    uint256 internal externalOwnerPk = uint256(0xA71CE);
+    address internal externalOwner;
 
     function setUp() public override {
         super.setUp();
         _bootstrapEdenProduct();
+        externalOwner = vm.addr(externalOwnerPk);
 
         eve.mint(alice, 200e18);
         alt.mint(alice, 200e18);
@@ -93,7 +97,12 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         assertEq(portfolio.agent.tbaAddress, PositionAgentViewFacet(diamond).getTBAAddress(alicePositionId));
         assertTrue(!portfolio.agent.tbaDeployed);
         assertEq(portfolio.agent.agentId, 0);
+        assertEq(portfolio.agent.registrationMode, 0);
+        assertEq(portfolio.agentRegistrationMode, 0);
         assertTrue(!portfolio.agent.canonicalLink);
+        assertTrue(!portfolio.agent.externalLink);
+        assertTrue(!portfolio.agent.linkActive);
+        assertEq(portfolio.agent.externalAuthorizer, address(0));
         assertTrue(!portfolio.agent.registrationComplete);
         assertEq(portfolio.baskets.length, 1);
         assertEq(portfolio.loans.length, 0);
@@ -120,7 +129,11 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         assertTrue(!beforeDeploy.tbaDeployed);
         assertEq(beforeDeploy.agentId, 0);
         assertTrue(!beforeDeploy.agentRegistered);
+        assertEq(beforeDeploy.registrationMode, 0);
         assertTrue(!beforeDeploy.canonicalLink);
+        assertTrue(!beforeDeploy.externalLink);
+        assertTrue(!beforeDeploy.linkActive);
+        assertEq(beforeDeploy.externalAuthorizer, address(0));
         assertTrue(!beforeDeploy.registrationComplete);
 
         vm.prank(alice);
@@ -139,7 +152,11 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         assertTrue(walletView.tbaDeployed);
         assertEq(walletView.agentId, agentId);
         assertTrue(walletView.agentRegistered);
+        assertEq(walletView.registrationMode, 1);
         assertTrue(walletView.canonicalLink);
+        assertTrue(!walletView.externalLink);
+        assertTrue(walletView.linkActive);
+        assertEq(walletView.externalAuthorizer, address(0));
         assertTrue(walletView.registrationComplete);
         assertTrue(PositionAgentViewFacet(diamond).isCanonicalAgentLink(alicePositionId));
         assertTrue(PositionAgentViewFacet(diamond).isRegistrationComplete(alicePositionId));
@@ -147,8 +164,65 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(alicePositionId);
         assertEq(portfolio.agent.tbaAddress, deployed);
         assertEq(portfolio.agent.agentId, agentId);
+        assertEq(portfolio.agentRegistrationMode, 1);
         assertTrue(portfolio.agent.canonicalLink);
+        assertTrue(!portfolio.agent.externalLink);
+        assertTrue(portfolio.agent.linkActive);
         assertTrue(portfolio.agent.registrationComplete);
+    }
+
+    function test_PositionAgentReads_ExposeExternalLinkModeAndActivity() public {
+        vm.prank(alice);
+        address deployed = PositionAgentTBAFacet(diamond).deployTBA(alicePositionId);
+
+        uint256 agentId = 88;
+        uint256 deadline = block.timestamp + 1 days;
+        identityRegistry.setOwner(agentId, externalOwner);
+
+        bytes32 digest = keccak256(
+            abi.encode(
+                keccak256(
+                    "EqualFiExternalAgentLink(uint256 chainId,address diamond,uint256 positionTokenId,uint256 agentId,address positionOwner,address tbaAddress,uint256 nonce,uint256 deadline)"
+                ),
+                block.chainid,
+                diamond,
+                alicePositionId,
+                agentId,
+                alice,
+                deployed,
+                0,
+                deadline
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(externalOwnerPk, digest);
+        bytes memory signature = abi.encodePacked(r, s, v);
+
+        vm.prank(alice);
+        PositionAgentRegistryFacet(diamond).linkExternalAgentRegistration(alicePositionId, agentId, deadline, signature);
+
+        EdenViewFacet.PositionAgentWalletView memory walletView =
+            EdenViewFacet(diamond).getPositionAgentView(alicePositionId);
+        assertEq(walletView.registrationMode, REGISTRATION_MODE_EXTERNAL_LINKED);
+        assertTrue(!walletView.canonicalLink);
+        assertTrue(walletView.externalLink);
+        assertTrue(walletView.linkActive);
+        assertEq(walletView.externalAuthorizer, externalOwner);
+        assertTrue(walletView.registrationComplete);
+
+        EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(alicePositionId);
+        assertEq(portfolio.agentRegistrationMode, REGISTRATION_MODE_EXTERNAL_LINKED);
+        assertTrue(portfolio.agent.externalLink);
+        assertTrue(portfolio.agent.linkActive);
+        assertEq(portfolio.agent.externalAuthorizer, externalOwner);
+        assertTrue(PositionAgentViewFacet(diamond).isExternalAgentLink(alicePositionId));
+
+        identityRegistry.setOwner(agentId, bob);
+
+        walletView = EdenViewFacet(diamond).getPositionAgentView(alicePositionId);
+        assertEq(walletView.registrationMode, REGISTRATION_MODE_EXTERNAL_LINKED);
+        assertTrue(walletView.externalLink);
+        assertTrue(!walletView.linkActive);
+        assertTrue(!walletView.registrationComplete);
     }
 
     function test_ActionChecksReflectState() public {
@@ -303,7 +377,7 @@ contract EdenViewFacetTest is EdenLaunchFixture {
                 Strings.toString(alicePositionId),
                 "?poolId=1&tba=",
                 Strings.toHexString(uint160(predicted), 20),
-                "&tbaDeployed=false&agentId=0&agentCanonical=false&agentComplete=false"
+                "&tbaDeployed=false&agentId=0&agentMode=0&agentCanonical=false&agentExternal=false&agentActive=false&agentComplete=false"
             )
         );
         assertTrue(!EdenViewFacet(diamond).hasOpenOffers(positionKey));

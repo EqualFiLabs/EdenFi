@@ -108,6 +108,10 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             "position agent canonical link view cut"
         );
         _assertTrue(
+            IDiamondLoupe(diamond).facetAddress(PositionAgentViewFacet.isExternalAgentLink.selector) != address(0),
+            "position agent external link view cut"
+        );
+        _assertTrue(
             IDiamondLoupe(diamond).facetAddress(PositionAgentViewFacet.isRegistrationComplete.selector) != address(0),
             "position agent registration complete view cut"
         );
@@ -479,14 +483,21 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _assertTrue(agentView.tbaDeployed, "agent view deployed");
         _assertEq(agentView.agentId, agentId, "agent view id");
         _assertTrue(agentView.agentRegistered, "agent view registered");
+        _assertEq(agentView.registrationMode, 1, "agent view mode");
         _assertTrue(agentView.canonicalLink, "agent view canonical");
+        _assertTrue(!agentView.externalLink, "agent view external");
+        _assertTrue(agentView.linkActive, "agent view active");
+        _assertEqAddress(agentView.externalAuthorizer, address(0), "agent view authorizer");
         _assertTrue(agentView.registrationComplete, "agent view complete");
 
         EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(deployment.diamond).getPositionPortfolio(tokenId);
         _assertEqAddress(portfolio.owner, alice, "portfolio owner");
         _assertEqAddress(portfolio.agent.tbaAddress, deployedTba, "portfolio tba");
         _assertEq(portfolio.agent.agentId, agentId, "portfolio agent id");
+        _assertEq(portfolio.agentRegistrationMode, 1, "portfolio mode");
         _assertTrue(portfolio.agent.canonicalLink, "portfolio canonical");
+        _assertTrue(!portfolio.agent.externalLink, "portfolio external");
+        _assertTrue(portfolio.agent.linkActive, "portfolio active");
         _assertTrue(portfolio.agent.registrationComplete, "portfolio complete");
 
         string memory tokenUri = PositionNFT(deployment.positionNFT).tokenURI(tokenId);
@@ -497,7 +508,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             Strings.toHexString(uint160(deployedTba), 20),
             "&tbaDeployed=true&agentId=",
             Strings.toString(agentId),
-            "&agentCanonical=true&agentComplete=true"
+            "&agentMode=1&agentCanonical=true&agentExternal=false&agentActive=true&agentComplete=true"
         );
         _assertEqBytes32(keccak256(bytes(tokenUri)), keccak256(bytes(expectedUri)), "token uri agent state");
     }
