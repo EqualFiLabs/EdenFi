@@ -5,13 +5,13 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
 import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
-import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
 import {InvalidArrayLength, InvalidUnits, IndexPaused, NoPoolForAsset} from "src/libraries/Errors.sol";
 
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
+import {ILegacyEdenPositionFacet} from "test/utils/LegacyEdenPositionFacet.sol";
 import {ILegacyEdenWalletFacet} from "test/utils/LegacyEdenWalletFacet.sol";
 
 contract EdenBasketFlowsTest is EdenLaunchFixture {
@@ -68,7 +68,7 @@ contract EdenBasketFlowsTest is EdenLaunchFixture {
             _createBasket(_singleAssetParams("Position Basket", "PBASK", address(alt), "ipfs://pb", 0, 1000, 0));
 
         vm.prank(alice);
-        EdenBasketPositionFacet(diamond).mintBasketFromPosition(positionId, basketId, 50e18);
+        ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(positionId, basketId, 50e18);
 
         EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
         assertEq(portfolio.baskets.length, 1);
@@ -77,7 +77,7 @@ contract EdenBasketFlowsTest is EdenLaunchFixture {
         assertEq(portfolio.baskets[0].availableUnits, 50e18);
 
         vm.prank(alice);
-        EdenBasketPositionFacet(diamond).burnBasketFromPosition(positionId, basketId, 20e18);
+        ILegacyEdenPositionFacet(diamond).burnBasketFromPosition(positionId, basketId, 20e18);
 
         portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
         assertEq(portfolio.baskets.length, 1);

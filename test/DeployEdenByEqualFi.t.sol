@@ -36,6 +36,7 @@ import {
     MockERC6551RegistryLaunch,
     MockIdentityRegistryLaunch
 } from "test/utils/PositionAgentBootstrapMocks.sol";
+import {ILegacyEdenPositionFacet} from "test/utils/LegacyEdenPositionFacet.sol";
 import {ILegacyEdenWalletFacet} from "test/utils/LegacyEdenWalletFacet.sol";
 
 contract MockERC20Deploy is ERC20 {
@@ -154,6 +155,15 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         _assertTrue(
             IDiamondLoupe(diamond).facetAddress(EdenStEVEWalletFacet.mintStEVE.selector) != address(0),
             "eden stEVE wallet facet cut"
+        );
+        _assertTrue(
+            IDiamondLoupe(diamond).facetAddress(EdenBasketPositionFacet.mintStEVEFromPosition.selector) != address(0),
+            "eden stEVE position facet cut"
+        );
+        _assertEqAddress(
+            IDiamondLoupe(diamond).facetAddress(ILegacyEdenPositionFacet.mintBasketFromPosition.selector),
+            address(0),
+            "legacy eden position mint removed"
         );
         _assertTrue(
             IDiamondLoupe(diamond).facetAddress(EdenViewFacet.getPositionTokenURI.selector) != address(0),
@@ -311,7 +321,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
 
         uint256 altPositionId = PositionManagementFacet(diamond).mintPosition(2);
         PositionManagementFacet(diamond).depositToPosition(altPositionId, 2, 200e18, 200e18);
-        EdenBasketPositionFacet(diamond).mintBasketFromPosition(altPositionId, state.altBasketId, 100e18);
+        ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(altPositionId, state.altBasketId, 100e18);
         vm.stopPrank();
 
         EdenViewFacet.ActionCheck memory borrowCheck =

@@ -258,7 +258,7 @@ contract DeployEdenByEqualFi is Script {
         }
         {
             EdenBasketPositionFacet facet = new EdenBasketPositionFacet();
-            cuts[i++] = _cut(address(facet), _selectorsEdenBasketPosition());
+            cuts[i++] = _cut(address(facet), _selectorsEdenStEVEPosition());
         }
         {
             EdenStEVEWalletFacet facet = new EdenStEVEWalletFacet();
@@ -476,10 +476,10 @@ contract DeployEdenByEqualFi is Script {
         s[1] = EdenStEVEWalletFacet.burnStEVE.selector;
     }
 
-    function _selectorsEdenBasketPosition() internal pure returns (bytes4[] memory s) {
+    function _selectorsEdenStEVEPosition() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](2);
-        s[0] = EdenBasketPositionFacet.mintBasketFromPosition.selector;
-        s[1] = EdenBasketPositionFacet.burnBasketFromPosition.selector;
+        s[0] = EdenBasketPositionFacet.mintStEVEFromPosition.selector;
+        s[1] = EdenBasketPositionFacet.burnStEVEFromPosition.selector;
     }
 
     function _selectorsEdenBasketData() internal pure returns (bytes4[] memory s) {

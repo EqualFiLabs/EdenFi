@@ -12,6 +12,7 @@ import {InsufficientPrincipal, InvalidParameterRange, NotNFTOwner} from "src/lib
 import {BasketToken} from "src/tokens/BasketToken.sol";
 
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
+import {ILegacyEdenPositionFacet} from "test/utils/LegacyEdenPositionFacet.sol";
 
 contract EdenStEVEActionFacetTest is EdenLaunchFixture {
     function setUp() public override {
@@ -61,17 +62,32 @@ contract EdenStEVEActionFacetTest is EdenLaunchFixture {
         vm.startPrank(alice);
         eve.approve(diamond, 100e18);
         PositionManagementFacet(diamond).depositToPosition(positionId, 1, 100e18, 100e18);
-        EdenBasketPositionFacet(diamond).mintBasketFromPosition(positionId, steveBasketId, 50e18);
+        EdenBasketPositionFacet(diamond).mintStEVEFromPosition(positionId, 50e18);
         vm.stopPrank();
 
+        EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
         assertEq(EdenStEVEActionFacet(diamond).eligibleSupply(), 50e18);
         assertEq(EdenStEVEActionFacet(diamond).eligiblePrincipalOfPosition(positionId), 50e18);
+        assertEq(portfolio.baskets.length, 1);
+        assertEq(portfolio.baskets[0].basketId, steveBasketId);
+        assertEq(portfolio.baskets[0].units, 50e18);
 
         vm.prank(alice);
-        EdenBasketPositionFacet(diamond).burnBasketFromPosition(positionId, steveBasketId, 20e18);
+        EdenBasketPositionFacet(diamond).burnStEVEFromPosition(positionId, 20e18);
 
+        portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
         assertEq(EdenStEVEActionFacet(diamond).eligibleSupply(), 30e18);
         assertEq(EdenStEVEActionFacet(diamond).eligiblePrincipalOfPosition(positionId), 30e18);
+        assertEq(portfolio.baskets.length, 1);
+        assertEq(portfolio.baskets[0].units, 30e18);
+    }
+
+    function test_GenericPositionBasketEntrypoints_AreUnavailable() public {
+        vm.expectRevert(bytes("Diamond: selector not found"));
+        ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(1, steveBasketId, 1e18);
+
+        vm.expectRevert(bytes("Diamond: selector not found"));
+        ILegacyEdenPositionFacet(diamond).burnBasketFromPosition(1, steveBasketId, 1e18);
     }
 
     function test_WithdrawStEVE_RevertsForNonOwner() public {

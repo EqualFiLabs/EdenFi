@@ -15,23 +15,20 @@ import {Types} from "../libraries/Types.sol";
 import "../libraries/Errors.sol";
 
 contract EdenBasketPositionFacet is EdenBasketLogic, ReentrancyGuardModifiers {
-    function mintBasketFromPosition(uint256 positionId, uint256 basketId, uint256 units)
+    function mintStEVEFromPosition(uint256 positionId, uint256 units)
         external
         nonReentrant
-        basketExists(basketId)
         returns (uint256 minted)
     {
         if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
         LibPositionHelpers.requireOwnership(positionId);
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
+        uint256 basketId = _requireStEVEConfigured();
 
         LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         if (basket.paused) revert IndexPaused(basketId);
 
-        bool updatesEligible = _isStEveBasket(basketId);
-        if (updatesEligible) {
-            LibEdenRewards.settlePositionRewards(positionKey);
-        }
+        LibEdenRewards.settlePositionRewards(positionKey);
 
         PositionMintState memory state;
         state.required = new uint256[](basket.assets.length);
@@ -72,36 +69,31 @@ contract EdenBasketPositionFacet is EdenBasketLogic, ReentrancyGuardModifiers {
         basketPool.userFeeIndex[positionKey] = basketPool.feeIndex;
         basketPool.userMaintenanceIndex[positionKey] = basketPool.maintenanceIndex;
 
-        if (updatesEligible) {
-            LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
-            steve.eligiblePrincipal[positionKey] += minted;
-            steve.eligibleSupply += minted;
-        }
+        LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
+        steve.eligiblePrincipal[positionKey] += minted;
+        steve.eligibleSupply += minted;
     }
 
-    function burnBasketFromPosition(uint256 positionId, uint256 basketId, uint256 units)
+    function burnStEVEFromPosition(uint256 positionId, uint256 units)
         external
         nonReentrant
-        basketExists(basketId)
         returns (uint256[] memory assetsOut)
     {
         if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
         LibPositionHelpers.requireOwnership(positionId);
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
+        uint256 basketId = _requireStEVEConfigured();
 
         LibEdenBasketStorage.ProductConfig storage basket = LibEdenBasketStorage.s().product;
         if (basket.paused) revert IndexPaused(basketId);
         if (units > basket.totalUnits) revert InvalidUnits();
 
-        bool updatesEligible = _isStEveBasket(basketId);
-        if (updatesEligible) {
-            LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
-            uint256 eligible = steve.eligiblePrincipal[positionKey];
-            if (units > eligible) revert InsufficientPrincipal(units, eligible);
-            LibEdenRewards.settlePositionRewards(positionKey);
-            steve.eligiblePrincipal[positionKey] = eligible - units;
-            steve.eligibleSupply -= units;
-        }
+        LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
+        uint256 eligible = steve.eligiblePrincipal[positionKey];
+        if (units > eligible) revert InsufficientPrincipal(units, eligible);
+        LibEdenRewards.settlePositionRewards(positionKey);
+        steve.eligiblePrincipal[positionKey] = eligible - units;
+        steve.eligibleSupply -= units;
 
         LibAppStorage.AppStorage storage app = LibAppStorage.s();
         Types.PoolData storage basketPool = app.pools[basket.poolId];
@@ -133,8 +125,9 @@ contract EdenBasketPositionFacet is EdenBasketLogic, ReentrancyGuardModifiers {
         assetsOut = state.assetsOut;
     }
 
-    function _isStEveBasket(uint256 basketId) internal view returns (bool) {
+    function _requireStEVEConfigured() internal view returns (uint256 basketId) {
         LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
-        return steve.configured && basketId == steve.basketId;
+        if (!steve.configured) revert InvalidParameterRange("stEVE not configured");
+        return steve.basketId;
     }
 }

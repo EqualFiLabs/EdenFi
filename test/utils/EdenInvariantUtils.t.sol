@@ -18,7 +18,6 @@ import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
 import {EdenBasketDataFacet} from "src/eden/EdenBasketDataFacet.sol";
-import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
@@ -33,6 +32,7 @@ import {LibPositionHelpers} from "src/libraries/LibPositionHelpers.sol";
 import {Types} from "src/libraries/Types.sol";
 
 import {MockERC20Launch} from "test/utils/EdenLaunchFixture.t.sol";
+import {ILegacyEdenPositionFacet} from "test/utils/LegacyEdenPositionFacet.sol";
 import {ILegacyEdenWalletFacet} from "test/utils/LegacyEdenWalletFacet.sol";
 
 contract EdenInvariantInspector {
@@ -348,7 +348,7 @@ contract EdenInvariantHandler {
 
         address owner = positionNft.ownerOf(positionId);
         vm.prank(owner);
-        EdenBasketPositionFacet(diamond).burnBasketFromPosition(positionId, feeBasketId, units);
+        ILegacyEdenPositionFacet(diamond).burnBasketFromPosition(positionId, feeBasketId, units);
         _syncRewardIndex();
     }
 
@@ -677,7 +677,7 @@ contract EdenInvariantHandler {
 
         address owner = positionNft.ownerOf(positionId);
         vm.prank(owner);
-        EdenBasketPositionFacet(diamond).mintBasketFromPosition(positionId, altBasketId, units);
+        ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(positionId, altBasketId, units);
         _markJoined(positionId, altBasketPoolId);
         _syncRewardIndex();
     }
@@ -692,7 +692,7 @@ contract EdenInvariantHandler {
 
         address owner = positionNft.ownerOf(positionId);
         vm.prank(owner);
-        EdenBasketPositionFacet(diamond).mintBasketFromPosition(positionId, feeBasketId, units);
+        ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(positionId, feeBasketId, units);
         _markJoined(positionId, feeBasketPoolId);
         _syncRewardIndex();
     }

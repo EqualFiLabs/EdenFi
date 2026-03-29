@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
@@ -9,6 +8,7 @@ import {LibCurrency} from "src/libraries/LibCurrency.sol";
 import {InvalidArrayLength, InsufficientPrincipal} from "src/libraries/Errors.sol";
 
 import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
+import {ILegacyEdenPositionFacet} from "test/utils/LegacyEdenPositionFacet.sol";
 
 contract EdenLendingFacetTest is EdenLaunchFixture {
     function setUp() public override {
@@ -23,7 +23,7 @@ contract EdenLendingFacetTest is EdenLaunchFixture {
         vm.startPrank(alice);
         alt.approve(diamond, 200e18);
         PositionManagementFacet(diamond).depositToPosition(positionId, 2, 100e18, 100e18);
-        EdenBasketPositionFacet(diamond).mintBasketFromPosition(positionId, altBasketId, 50e18);
+        ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(positionId, altBasketId, 50e18);
         vm.stopPrank();
 
         EdenLendingFacet.BorrowPreview memory borrowPreview =
@@ -75,7 +75,7 @@ contract EdenLendingFacetTest is EdenLaunchFixture {
         vm.startPrank(alice);
         alt.approve(diamond, 300e18);
         PositionManagementFacet(diamond).depositToPosition(positionId, 2, 120e18, 120e18);
-        EdenBasketPositionFacet(diamond).mintBasketFromPosition(positionId, altBasketId, 60e18);
+        ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(positionId, altBasketId, 60e18);
         vm.stopPrank();
 
         vm.prank(alice);
@@ -128,7 +128,7 @@ contract EdenLendingFacetTest is EdenLaunchFixture {
         vm.startPrank(alice);
         fot.approve(diamond, 200e18);
         PositionManagementFacet(diamond).depositToPosition(positionId, 3, 100e18, 112e18);
-        EdenBasketPositionFacet(diamond).mintBasketFromPosition(positionId, basketId, 50e18);
+        ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(positionId, basketId, 50e18);
         uint256 loanId = EdenLendingFacet(diamond).borrow(positionId, basketId, 20e18, 7 days);
         fot.approve(diamond, 20e18);
         vm.expectRevert(abi.encodeWithSelector(LibCurrency.LibCurrency_InsufficientReceived.selector, 18e18, 20e18));
@@ -160,7 +160,7 @@ contract EdenLendingFacetTest is EdenLaunchFixture {
         vm.startPrank(alice);
         alt.approve(diamond, 200e18);
         PositionManagementFacet(diamond).depositToPosition(positionId, 2, 100e18, 100e18);
-        EdenBasketPositionFacet(diamond).mintBasketFromPosition(positionId, altBasketId, 50e18);
+        ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(positionId, altBasketId, 50e18);
 
         vm.expectRevert(abi.encodeWithSelector(EdenLendingFacet.InvalidDuration.selector, 12 hours, 1 days, 14 days));
         EdenLendingFacet(diamond).borrow(positionId, altBasketId, 20e18, 12 hours);
@@ -180,7 +180,7 @@ contract EdenLendingFacetTest is EdenLaunchFixture {
         vm.startPrank(alice);
         alt.approve(diamond, 300e18);
         PositionManagementFacet(diamond).depositToPosition(alicePositionId, 2, 120e18, 120e18);
-        EdenBasketPositionFacet(diamond).mintBasketFromPosition(alicePositionId, altBasketId, 60e18);
+        ILegacyEdenPositionFacet(diamond).mintBasketFromPosition(alicePositionId, altBasketId, 60e18);
         uint256 loanId = EdenLendingFacet(diamond).borrow(alicePositionId, altBasketId, 20e18, 7 days);
         vm.stopPrank();
 
