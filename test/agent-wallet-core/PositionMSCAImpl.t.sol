@@ -176,6 +176,23 @@ contract PositionMSCAImplTest {
         require(target.value() == 33, "bob exec failed");
     }
 
+    function test_positionOwnerCanTransferWithoutTBACustody_andTBAHasNoRawNFTTransferAuthority() external {
+        uint256 tokenId = _mintPosition(alice, 1);
+        address account = _createAccount(tokenId);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        IERC6900Account(account).execute(
+            address(positionNft), 0, abi.encodeWithSignature("transferFrom(address,address,uint256)", alice, bob, tokenId)
+        );
+
+        vm.prank(alice);
+        positionNft.transferFrom(alice, bob, tokenId);
+
+        require(positionNft.ownerOf(tokenId) == bob, "pnft owner did not move");
+        require(IERC6551Account(account).owner() == bob, "tba owner did not follow transfer");
+    }
+
     function test_validationInstallationIsDiscoverable_onERC6551DeployedAccount() external {
         uint256 tokenId = _mintPosition(alice, 1);
         address account = _createAccount(tokenId);

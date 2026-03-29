@@ -339,4 +339,30 @@ contract PositionAgentFacetTest {
         require(implementationAddr == address(implementation), "bad implementation getter");
         require(registryAddr == address(registry), "bad registry getter");
     }
+
+    function test_registrationStaysAttachedToTBA_afterPNFTTransfer() external {
+        _configure(owner);
+        uint256 tokenId = _tokenIdFor(owner, 1);
+
+        vm.prank(owner);
+        address tba = facet.deployTBA(tokenId);
+
+        identity.setOwner(7, tba);
+        vm.prank(owner);
+        facet.recordAgentRegistration(tokenId, 7);
+
+        vm.prank(owner);
+        positionNft.transferFrom(owner, bob, tokenId);
+
+        require(positionNft.ownerOf(tokenId) == bob, "token owner did not move");
+        require(facet.getTBAAddress(tokenId) == tba, "tba address changed");
+        require(facet.getAgentId(tokenId) == 7, "agent id changed");
+        require(facet.isAgentRegistered(tokenId), "registration lost");
+        require(facet.isCanonicalAgentLink(tokenId), "canonical link lost");
+        require(facet.isRegistrationComplete(tokenId), "registration no longer complete");
+
+        vm.prank(bob);
+        address deployedAgain = facet.deployTBA(tokenId);
+        require(deployedAgain == tba, "new owner lost wallet control");
+    }
 }
