@@ -229,6 +229,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
     address internal alice = address(0xA11CE);
     address internal bob = address(0xB0B);
     address internal carol = address(0xCA11);
+    address internal dave = address(0xDA7E);
     address internal treasuryWallet = address(0xCAFE);
     address internal bankrToken = address(0xBEEF);
 
@@ -1409,6 +1410,175 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(runoffLine.nextDueAt == restartTimestamp + PAYMENT_INTERVAL_SECS, "runoff due not reset");
     }
 
+    function test_enterRefinancing_isPermissionlessOnlyAtTermEnd() external {
+        uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.InvalidProposalTerms.selector, "facility term still active")
+        );
+        facet.enterRefinancing(lineId);
+
+        uint40 termEndAt = facet.line(lineId).termEndAt;
+        uint40 refinanceEndAt = facet.line(lineId).refinanceEndAt;
+
+        vm.warp(termEndAt);
+
+        vm.expectEmit(true, false, false, true, address(facet));
+        emit CreditLineEnteredRefinancing(lineId, refinanceEndAt, TARGET_LIMIT, 0);
+
+        vm.prank(dave);
+        facet.enterRefinancing(lineId);
+
+        require(
+            facet.line(lineId).status == LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing,
+            "line should enter refinancing"
+        );
+    }
+
+    function test_refinancing_allowsFullRenewalWithRolledAndNewPooledCommitments() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        (uint256 lineId, uint256 lenderPositionOne, uint256 lenderPositionTwo) =
+            _createPooledActivatedLine(params, 700e18, 300e18);
+        uint256 lenderPositionThree = _seedSettlementPosition(dave, 300e18);
+        bytes32 lenderOneKey = positionNft.getPositionKey(lenderPositionOne);
+        bytes32 lenderTwoKey = positionNft.getPositionKey(lenderPositionTwo);
+        bytes32 lenderThreeKey = positionNft.getPositionKey(lenderPositionThree);
+
+        vm.warp(facet.line(lineId).termEndAt);
+        facet.enterRefinancing(lineId);
+
+        vm.expectEmit(true, true, true, true, address(facet));
+        emit CommitmentRolled(lineId, lenderPositionOne, lenderOneKey, 700e18, TARGET_LIMIT);
+
+        vm.prank(bob);
+        facet.rollCommitment(lineId, lenderPositionOne);
+
+        vm.expectEmit(true, true, true, true, address(facet));
+        emit CommitmentExited(lineId, lenderPositionTwo, lenderTwoKey, 300e18, 700e18);
+
+        vm.prank(carol);
+        facet.exitCommitment(lineId, lenderPositionTwo);
+
+        vm.expectEmit(true, true, true, true, address(facet));
+        emit CommitmentAdded(lineId, lenderPositionThree, lenderThreeKey, 300e18, TARGET_LIMIT);
+
+        vm.prank(dave);
+        facet.commitPooled(lineId, lenderPositionThree, 300e18);
+
+        vm.warp(facet.line(lineId).refinanceEndAt);
+
+        vm.expectEmit(true, false, false, true, address(facet));
+        emit CreditLineRefinancingResolved(
+            lineId, LibEqualScaleAlphaStorage.CreditLineStatus.Active, TARGET_LIMIT, TARGET_LIMIT
+        );
+
+        facet.resolveRefinancing(lineId);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        LibEqualScaleAlphaStorage.Commitment memory rolled = facet.commitment(lineId, lenderPositionOne);
+        LibEqualScaleAlphaStorage.Commitment memory exited = facet.commitment(lineId, lenderPositionTwo);
+        LibEqualScaleAlphaStorage.Commitment memory added = facet.commitment(lineId, lenderPositionThree);
+
+        require(line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "line should renew active");
+        require(line.activeLimit == TARGET_LIMIT, "full renewal active limit mismatch");
+        require(line.currentCommittedAmount == TARGET_LIMIT, "full renewal commitment mismatch");
+        require(
+            rolled.status == LibEqualScaleAlphaStorage.CommitmentStatus.Rolled, "rolled commitment status mismatch"
+        );
+        require(exited.status == LibEqualScaleAlphaStorage.CommitmentStatus.Exited, "exited commitment status mismatch");
+        require(added.status == LibEqualScaleAlphaStorage.CommitmentStatus.Active, "new commitment status mismatch");
+        require(exited.committedAmount == 0, "exited commitment should release coverage");
+        require(facet.moduleEncumbranceForLine(lineId, lenderPositionOne) == 700e18, "rolled encumbrance mismatch");
+        require(facet.moduleEncumbranceForLine(lineId, lenderPositionTwo) == 0, "exited encumbrance mismatch");
+        require(facet.moduleEncumbranceForLine(lineId, lenderPositionThree) == 300e18, "new encumbrance mismatch");
+    }
+
+    function test_resolveRefinancing_renewsAtResizedCoveredLimit() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        (uint256 lineId,, uint256 lenderPositionTwo) = _createPooledActivatedLine(params, 700e18, 300e18);
+
+        vm.warp(facet.line(lineId).termEndAt);
+        facet.enterRefinancing(lineId);
+
+        vm.prank(carol);
+        facet.exitCommitment(lineId, lenderPositionTwo);
+
+        vm.warp(facet.line(lineId).refinanceEndAt);
+        facet.resolveRefinancing(lineId);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        require(line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "line should resize-renew");
+        require(line.activeLimit == 700e18, "resized active limit mismatch");
+        require(line.currentCommittedAmount == 700e18, "resized commitment mismatch");
+        require(line.nextDueAt == uint40(block.timestamp) + PAYMENT_INTERVAL_SECS, "resized due mismatch");
+    }
+
+    function test_resolveRefinancing_entersRunoffWhenCoverageFallsBelowOutstandingPrincipal() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+        (uint256 lineId, uint256 lenderPositionOne,) = _createPooledActivatedLine(params, 600e18, 400e18);
+
+        vm.prank(alice);
+        facet.draw(lineId, 500e18);
+
+        vm.warp(facet.line(lineId).termEndAt);
+        facet.enterRefinancing(lineId);
+
+        vm.prank(bob);
+        facet.exitCommitment(lineId, lenderPositionOne);
+
+        vm.warp(facet.line(lineId).refinanceEndAt);
+
+        vm.expectEmit(true, false, false, true, address(facet));
+        emit CreditLineEnteredRunoff(lineId, 500e18, 400e18);
+        vm.expectEmit(true, false, false, true, address(facet));
+        emit CreditLineRefinancingResolved(
+            lineId, LibEqualScaleAlphaStorage.CreditLineStatus.Runoff, 400e18, 400e18
+        );
+
+        facet.resolveRefinancing(lineId);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        require(line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Runoff, "line should enter runoff");
+        require(line.activeLimit == 400e18, "runoff active limit mismatch");
+        require(line.currentCommittedAmount == 400e18, "runoff commitment mismatch");
+    }
+
+    function test_repay_curesRunoffAfterRefinancingResolution() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.aprBps = 0;
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+
+        (uint256 lineId, uint256 lenderPositionOne,) = _createPooledActivatedLine(params, 600e18, 400e18);
+
+        vm.prank(alice);
+        facet.draw(lineId, 500e18);
+
+        vm.warp(facet.line(lineId).termEndAt);
+        facet.enterRefinancing(lineId);
+
+        vm.prank(bob);
+        facet.exitCommitment(lineId, lenderPositionOne);
+
+        vm.warp(facet.line(lineId).refinanceEndAt);
+        facet.resolveRefinancing(lineId);
+
+        _mintAndApprove(alice, 100e18);
+        uint40 cureTimestamp = uint40(block.timestamp);
+
+        vm.prank(alice);
+        facet.repay(lineId, 100e18);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        require(line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "runoff cure should reactivate");
+        require(line.outstandingPrincipal == 400e18, "runoff cure principal mismatch");
+        require(line.activeLimit == 400e18, "runoff cure active limit mismatch");
+        require(line.currentCommittedAmount == 400e18, "runoff cure committed amount mismatch");
+        require(line.currentPeriodStartedAt == cureTimestamp, "runoff cure period mismatch");
+        require(line.termStartedAt == cureTimestamp, "runoff cure term mismatch");
+        require(line.nextDueAt == cureTimestamp + PAYMENT_INTERVAL_SECS, "runoff cure due mismatch");
+    }
+
     function _registerBorrowerProfileForAlice() internal returns (uint256 positionId) {
         positionId = positionNft.mint(alice, 7);
         uint256 agentId = 17;
@@ -1461,6 +1631,36 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
             vm.prank(bob);
             facet.commitPooled(lineId, lenderPositionId, committedAmount);
         }
+
+        vm.prank(alice);
+        facet.activateLine(lineId);
+    }
+
+    function _createPooledActivatedLine(
+        EqualScaleAlphaFacet.LineProposalParams memory params,
+        uint256 firstCommittedAmount,
+        uint256 secondCommittedAmount
+    ) internal returns (uint256 lineId, uint256 lenderPositionOne, uint256 lenderPositionTwo) {
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+
+        facet.setPoolInitialized(params.settlementPoolId, true);
+        facet.setPoolUnderlying(params.settlementPoolId, address(settlementToken));
+        facet.setPoolTrackedBalance(params.settlementPoolId, params.requestedTargetLimit);
+        settlementToken.mint(address(facet), params.requestedTargetLimit);
+
+        vm.prank(alice);
+        lineId = facet.createLineProposal(borrowerPositionId, params);
+
+        vm.warp(block.timestamp + 3 days + 1);
+        facet.transitionToPooledOpen(lineId);
+
+        lenderPositionOne = _seedSettlementPosition(bob, firstCommittedAmount);
+        lenderPositionTwo = _seedSettlementPosition(carol, secondCommittedAmount);
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionOne, firstCommittedAmount);
+        vm.prank(carol);
+        facet.commitPooled(lineId, lenderPositionTwo, secondCommittedAmount);
 
         vm.prank(alice);
         facet.activateLine(lineId);

@@ -184,7 +184,10 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
 
     function commitPooled(uint256 lineId, uint256 lenderPositionId, uint256 amount) external {
         LibEqualScaleAlphaStorage.CreditLine storage line = LibEqualScaleAlphaStorage.s().lines[lineId];
-        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.PooledOpen) {
+        if (
+            line.status != LibEqualScaleAlphaStorage.CreditLineStatus.PooledOpen
+                && line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing
+        ) {
             revert InvalidProposalTerms("line not open to pooled commitments");
         }
         if (amount == 0) {
@@ -385,6 +388,104 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         _cureLineIfCovered(line, minimumDueSatisfied);
 
         _emitCreditPaymentMade(lineId, effectiveAmount, principalComponent, interestComponent, line);
+    }
+
+    function enterRefinancing(uint256 lineId) external {
+        LibEqualScaleAlphaStorage.CreditLine storage line = LibEqualScaleAlphaStorage.s().lines[lineId];
+        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Active) {
+            revert InvalidProposalTerms("line not active for refinancing");
+        }
+        if (block.timestamp < line.termEndAt) {
+            revert InvalidProposalTerms("facility term still active");
+        }
+
+        _accrueInterest(line);
+        line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing;
+
+        emit CreditLineEnteredRefinancing(
+            lineId, line.refinanceEndAt, line.currentCommittedAmount, line.outstandingPrincipal
+        );
+    }
+
+    function rollCommitment(uint256 lineId, uint256 lenderPositionId) external {
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
+        LibEqualScaleAlphaStorage.CreditLine storage line = store.lines[lineId];
+        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing) {
+            revert InvalidProposalTerms("line not in refinancing");
+        }
+
+        bytes32 lenderPositionKey = _requireLenderPositionOwner(lenderPositionId, line.settlementPoolId);
+        LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionId];
+        if (
+            commitment.committedAmount == 0 || commitment.lenderPositionKey != lenderPositionKey
+                || !_refinanceCommitmentMutable(commitment.status)
+        ) {
+            revert InvalidProposalTerms("no active commitment");
+        }
+
+        commitment.status = LibEqualScaleAlphaStorage.CommitmentStatus.Rolled;
+
+        emit CommitmentRolled(
+            lineId, lenderPositionId, lenderPositionKey, commitment.committedAmount, line.currentCommittedAmount
+        );
+    }
+
+    function exitCommitment(uint256 lineId, uint256 lenderPositionId) external {
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
+        LibEqualScaleAlphaStorage.CreditLine storage line = store.lines[lineId];
+        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing) {
+            revert InvalidProposalTerms("line not in refinancing");
+        }
+
+        bytes32 lenderPositionKey = _requireLenderPositionOwner(lenderPositionId, line.settlementPoolId);
+        LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionId];
+        if (
+            commitment.committedAmount == 0 || commitment.lenderPositionKey != lenderPositionKey
+                || !_refinanceCommitmentMutable(commitment.status)
+        ) {
+            revert InvalidProposalTerms("no active commitment");
+        }
+
+        uint256 exitedAmount = commitment.committedAmount;
+        commitment.committedAmount = 0;
+        commitment.status = LibEqualScaleAlphaStorage.CommitmentStatus.Exited;
+        line.currentCommittedAmount -= exitedAmount;
+
+        _settleSettlementPosition(line.settlementPoolId, lenderPositionKey);
+        LibModuleEncumbrance.unencumber(
+            lenderPositionKey, line.settlementPoolId, _settlementCommitmentModuleId(lineId), exitedAmount
+        );
+
+        emit CommitmentExited(lineId, lenderPositionId, lenderPositionKey, exitedAmount, line.currentCommittedAmount);
+    }
+
+    function resolveRefinancing(uint256 lineId) external {
+        LibEqualScaleAlphaStorage.CreditLine storage line = LibEqualScaleAlphaStorage.s().lines[lineId];
+        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing) {
+            revert InvalidProposalTerms("line not in refinancing");
+        }
+        if (block.timestamp < line.refinanceEndAt) {
+            revert InvalidProposalTerms("refinance window still active");
+        }
+
+        _accrueInterest(line);
+
+        if (line.currentCommittedAmount >= line.requestedTargetLimit) {
+            _restartLineTerm(line, line.requestedTargetLimit);
+        } else if (
+            line.currentCommittedAmount >= line.outstandingPrincipal
+                && line.currentCommittedAmount >= line.minimumViableLine
+        ) {
+            _restartLineTerm(line, line.currentCommittedAmount);
+        } else {
+            line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Runoff;
+            line.activeLimit = line.currentCommittedAmount;
+            line.currentPeriodDrawn = 0;
+
+            emit CreditLineEnteredRunoff(lineId, line.outstandingPrincipal, line.currentCommittedAmount);
+        }
+
+        emit CreditLineRefinancingResolved(lineId, line.status, line.activeLimit, line.currentCommittedAmount);
     }
 
     function _createLineProposal(
@@ -706,9 +807,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
 
         for (uint256 i = 0; i < len; i++) {
             LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionIds[i]];
-            if (
-                commitment.status == LibEqualScaleAlphaStorage.CommitmentStatus.Active && commitment.committedAmount != 0
-            ) {
+            if (_countsForFutureCoverage(commitment.status) && commitment.committedAmount != 0) {
                 totalCommitted += commitment.committedAmount;
                 activeCommitmentCount++;
             }
@@ -722,9 +821,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         uint256 seenActiveCommitments;
         for (uint256 i = 0; i < len; i++) {
             LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionIds[i]];
-            if (
-                commitment.status != LibEqualScaleAlphaStorage.CommitmentStatus.Active || commitment.committedAmount == 0
-            ) {
+            if (!_countsForFutureCoverage(commitment.status) || commitment.committedAmount == 0) {
                 continue;
             }
 
@@ -756,9 +853,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
 
         for (uint256 i = 0; i < len; i++) {
             LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionIds[i]];
-            if (
-                commitment.status == LibEqualScaleAlphaStorage.CommitmentStatus.Active && commitment.principalExposed != 0
-            ) {
+            if (commitment.principalExposed != 0) {
                 totalExposed += commitment.principalExposed;
                 activeCommitmentCount++;
             }
@@ -773,9 +868,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         uint256 seenActiveCommitments;
         for (uint256 i = 0; i < len; i++) {
             LibEqualScaleAlphaStorage.Commitment storage commitment = store.lineCommitments[lineId][lenderPositionIds[i]];
-            if (
-                commitment.status != LibEqualScaleAlphaStorage.CommitmentStatus.Active || commitment.principalExposed == 0
-            ) {
+            if (commitment.principalExposed == 0) {
                 continue;
             }
 
@@ -858,18 +951,25 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
             line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Runoff
                 && line.outstandingPrincipal <= line.currentCommittedAmount
         ) {
-            uint40 restartedAt = uint40(block.timestamp);
-            line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Active;
-            line.activeLimit = line.currentCommittedAmount;
-            line.currentPeriodDrawn = 0;
-            line.currentPeriodStartedAt = restartedAt;
-            line.nextDueAt = restartedAt + line.paymentIntervalSecs;
-            line.termStartedAt = restartedAt;
-            line.termEndAt = restartedAt + line.facilityTermSecs;
-            line.refinanceEndAt = line.termEndAt + line.refinanceWindowSecs;
-            line.interestAccruedSinceLastDue = 0;
-            line.paidSinceLastDue = 0;
+            _restartLineTerm(line, line.currentCommittedAmount);
         }
+    }
+
+    function _restartLineTerm(LibEqualScaleAlphaStorage.CreditLine storage line, uint256 activeLimit) internal {
+        uint40 restartedAt = uint40(block.timestamp);
+        line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Active;
+        line.activeLimit = activeLimit;
+        line.currentPeriodDrawn = 0;
+        line.currentPeriodStartedAt = restartedAt;
+        line.interestAccruedAt = restartedAt;
+        line.nextDueAt = restartedAt + line.paymentIntervalSecs;
+        line.termStartedAt = restartedAt;
+        line.termEndAt = restartedAt + line.facilityTermSecs;
+        line.refinanceEndAt = line.termEndAt + line.refinanceWindowSecs;
+        line.delinquentSince = 0;
+        line.missedPayments = 0;
+        line.interestAccruedSinceLastDue = 0;
+        line.paidSinceLastDue = 0;
     }
 
     function _reduceBorrowerDebt(
@@ -1008,5 +1108,15 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
             revert DirectError_InvalidPositionNFT();
         }
         positionNft = PositionNFT(positionNftAddress);
+    }
+
+    function _countsForFutureCoverage(LibEqualScaleAlphaStorage.CommitmentStatus status) internal pure returns (bool) {
+        return status == LibEqualScaleAlphaStorage.CommitmentStatus.Active
+            || status == LibEqualScaleAlphaStorage.CommitmentStatus.Rolled;
+    }
+
+    function _refinanceCommitmentMutable(LibEqualScaleAlphaStorage.CommitmentStatus status) internal pure returns (bool) {
+        return status == LibEqualScaleAlphaStorage.CommitmentStatus.Active
+            || status == LibEqualScaleAlphaStorage.CommitmentStatus.Rolled;
     }
 }
