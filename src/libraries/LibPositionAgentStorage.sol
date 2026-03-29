@@ -14,12 +14,21 @@ interface PositionNFTLike {
 library LibPositionAgentStorage {
     bytes32 internal constant STORAGE_POSITION = keccak256("equal.lend.erc6551.agent.storage");
 
+    enum AgentRegistrationMode {
+        None,
+        CanonicalOwned,
+        ExternalLinked
+    }
+
     struct AgentStorage {
         address erc6551Registry;
         address erc6551Implementation;
         address identityRegistry;
         bytes32 tbaSalt;
         mapping(uint256 => uint256) positionToAgentId;
+        mapping(uint256 => AgentRegistrationMode) positionRegistrationMode;
+        mapping(uint256 => address) externalAgentAuthorizer;
+        mapping(uint256 => uint256) externalLinkNonce;
         mapping(uint256 => bool) tbaDeployed;
         bool tbaConfigLocked;
     }
@@ -41,5 +50,11 @@ library LibPositionAgentStorage {
         if (owner != msg.sender) {
             revert PositionAgent_Unauthorized(msg.sender, positionTokenId);
         }
+    }
+
+    function useExternalLinkNonce(uint256 positionTokenId) internal returns (uint256 current) {
+        AgentStorage storage ds = s();
+        current = ds.externalLinkNonce[positionTokenId];
+        ds.externalLinkNonce[positionTokenId] = current + 1;
     }
 }

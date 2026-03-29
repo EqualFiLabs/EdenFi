@@ -35,6 +35,8 @@ contract PositionAgentRegistryFacet {
         }
 
         ds.positionToAgentId[positionTokenId] = agentId;
+        ds.positionRegistrationMode[positionTokenId] = LibPositionAgentStorage.AgentRegistrationMode.CanonicalOwned;
+        ds.externalAgentAuthorizer[positionTokenId] = address(0);
         emit AgentRegistered(positionTokenId, tbaAddress, agentId);
     }
 

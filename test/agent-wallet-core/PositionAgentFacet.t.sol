@@ -143,6 +143,22 @@ contract PositionAgentFacetHarness is
         return LibPositionAgentStorage.s().positionToAgentId[tokenId];
     }
 
+    function getRegistrationMode(uint256 tokenId) external view returns (uint8) {
+        return uint8(LibPositionAgentStorage.s().positionRegistrationMode[tokenId]);
+    }
+
+    function getExternalAgentAuthorizer(uint256 tokenId) external view returns (address) {
+        return LibPositionAgentStorage.s().externalAgentAuthorizer[tokenId];
+    }
+
+    function getExternalLinkNonce(uint256 tokenId) external view returns (uint256) {
+        return LibPositionAgentStorage.s().externalLinkNonce[tokenId];
+    }
+
+    function useExternalLinkNonceExternal(uint256 tokenId) external returns (uint256) {
+        return LibPositionAgentStorage.useExternalLinkNonce(tokenId);
+    }
+
     function isConfigLocked() external view returns (bool) {
         return LibPositionAgentStorage.s().tbaConfigLocked;
     }
@@ -159,6 +175,8 @@ contract PositionAgentFacetHarness is
 
 contract PositionAgentFacetTest {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint8 internal constant REGISTRATION_MODE_NONE = 0;
+    uint8 internal constant REGISTRATION_MODE_CANONICAL_OWNED = 1;
 
     event ERC6551RegistryUpdated(address indexed previous, address indexed current);
     event ERC6551ImplementationUpdated(address indexed previous, address indexed current);
@@ -279,6 +297,22 @@ contract PositionAgentFacetTest {
         facet.deployTBA(tokenId);
     }
 
+    function test_storageTracksRegistrationModeAuthorizerAndReplayNonce() external {
+        uint256 tokenId = _tokenIdFor(owner, 1);
+
+        require(facet.getRegistrationMode(tokenId) == REGISTRATION_MODE_NONE, "unexpected default mode");
+        require(facet.getExternalAgentAuthorizer(tokenId) == address(0), "unexpected default authorizer");
+        require(facet.getExternalLinkNonce(tokenId) == 0, "unexpected default nonce");
+
+        uint256 firstNonce = facet.useExternalLinkNonceExternal(tokenId);
+        require(firstNonce == 0, "bad first nonce");
+        require(facet.getExternalLinkNonce(tokenId) == 1, "nonce not incremented");
+
+        uint256 secondNonce = facet.useExternalLinkNonceExternal(tokenId);
+        require(secondNonce == 1, "bad second nonce");
+        require(facet.getExternalLinkNonce(tokenId) == 2, "second nonce not incremented");
+    }
+
     function test_registryFacet_recordsAgentRegistration_andRejectsBadStates() external {
         _configure(owner);
         uint256 tokenId = _tokenIdFor(owner, 1);
@@ -306,6 +340,10 @@ contract PositionAgentFacetTest {
         require(facet.isCanonicalAgentLink(tokenId), "canonical link missing");
         require(facet.isRegistrationComplete(tokenId), "registration incomplete");
         require(facet.getRegisteredAgentId(tokenId) == 7, "storage mapping missing");
+        require(
+            facet.getRegistrationMode(tokenId) == REGISTRATION_MODE_CANONICAL_OWNED, "canonical mode not recorded"
+        );
+        require(facet.getExternalAgentAuthorizer(tokenId) == address(0), "external authorizer unexpectedly set");
 
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(PositionAgent_AlreadyRegistered.selector, tokenId));
