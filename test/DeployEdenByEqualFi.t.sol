@@ -249,6 +249,14 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         );
     }
 
+    function test_DeployLaunch_SelectorSurfaceMatchesIntendedFinalBoundary() public view {
+        IDiamondLoupe loupe = IDiamondLoupe(diamond);
+        address[] memory facetAddresses = loupe.facetAddresses();
+
+        _assertEq(facetAddresses.length, TOTAL_FACET_COUNT, "facet count");
+        _assertExactSelectorSurfaceInstalled(loupe);
+    }
+
     function test_DeployLaunch_KeepsEqualScaleAlphaFacetsWithinEip170RuntimeLimit() public {
         LaunchDeployment memory deployment = deployLaunch(
             address(this),
@@ -519,6 +527,38 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
 
     function _assertCodeSizeLe(address account, uint256 limit, string memory message) internal view {
         _assertTrue(account.code.length <= limit, message);
+    }
+
+    function _assertExactSelectorSurfaceInstalled(IDiamondLoupe loupe) internal view {
+        address[] memory facetAddresses = new address[](TOTAL_FACET_COUNT);
+        uint256 i;
+
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsDiamondCut());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsDiamondLoupe());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsOwnership());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsPoolManagement());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsPositionManagement());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsFlashLoan());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEqualIndexAdmin());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEqualIndexActions());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEqualIndexPosition());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsPositionAgentConfig());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsPositionAgentTBA());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsPositionAgentView());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsPositionAgentRegistry());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEqualScaleAlpha());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEqualScaleAlphaAdmin());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEqualScaleAlphaView());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenAdmin());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenView());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenLending());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenReward());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVE());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVEPosition());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVEWallet());
+
+        _assertEq(i, TOTAL_FACET_COUNT, "expected facet groups");
+        _assertEq(_countDistinctNonZero(facetAddresses), TOTAL_FACET_COUNT, "exact facet surface count");
     }
 
     function _containsSelector(bytes4[] memory selectors, bytes4 target) internal pure returns (bool) {
