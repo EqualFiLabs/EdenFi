@@ -120,9 +120,23 @@ contract EdenRewardsFacetHarness is EdenRewardsFacet {
         LibAppStorage.s().pools[poolId].maintenanceIndex = maintenanceIndex;
     }
 
+    function setPoolMaintenanceRateBps(uint256 poolId, uint16 maintenanceRateBps) external {
+        LibAppStorage.s().pools[poolId].initialized = true;
+        LibAppStorage.s().pools[poolId].poolConfig.maintenanceRateBps = maintenanceRateBps;
+    }
+
+    function setPoolLastMaintenanceTimestamp(uint256 poolId, uint64 lastMaintenanceTimestamp) external {
+        LibAppStorage.s().pools[poolId].initialized = true;
+        LibAppStorage.s().pools[poolId].lastMaintenanceTimestamp = lastMaintenanceTimestamp;
+    }
+
     function setUserMaintenanceIndex(uint256 poolId, bytes32 positionKey, uint256 maintenanceIndex) external {
         LibAppStorage.s().pools[poolId].initialized = true;
         LibAppStorage.s().pools[poolId].userMaintenanceIndex[positionKey] = maintenanceIndex;
+    }
+
+    function setFoundationReceiver(address foundationReceiver) external {
+        LibAppStorage.s().foundationReceiver = foundationReceiver;
     }
 
     function accruedReward(bytes32 positionKey, uint256 programId) external view returns (uint256) {
@@ -917,6 +931,94 @@ contract EdenRewardsFacetTest is Test {
         assertEq(positionPreview.claimableRewards, 5e18);
         assertEq(programPreview.eligibleSupply, 5e18);
         assertEq(programPreview.globalRewardIndex, LibEdenRewardsStorage.REWARD_INDEX_SCALE);
+    }
+
+    function test_StEVEMaintenance_PreviewsAndClaimsStayBacked() public {
+        vm.prank(timelock);
+        uint256 programId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            0,
+            address(rewardAsset),
+            manager,
+            9e18,
+            block.timestamp,
+            0,
+            true
+        );
+
+        rewardAsset.mint(address(this), 90e18);
+        rewardAsset.approve(address(facet), 90e18);
+        facet.fundRewardProgram(programId, 90e18, 90e18);
+        facet.setProgramEligibleSupply(programId, 100e18);
+        facet.setStEVEEligiblePrincipal(alicePositionKey, 100e18);
+        facet.setFoundationReceiver(makeAddr("foundation"));
+        facet.setPoolMaintenanceRateBps(1, 1000);
+        facet.setPoolLastMaintenanceTimestamp(1, uint64(block.timestamp));
+
+        vm.warp(block.timestamp + 365 days + 10);
+        EdenRewardsFacet.RewardProgramPositionView memory preview =
+            facet.previewRewardProgramPosition(programId, alicePositionId);
+        LibEdenRewardsStorage.RewardProgramState memory previewState = facet.previewRewardProgramState(programId);
+
+        assertEq(preview.eligibleBalance, 90e18);
+        assertEq(preview.claimableRewards, 90e18);
+        assertEq(previewState.eligibleSupply, 90e18);
+        assertEq(previewState.fundedReserve, 0);
+        assertEq(previewState.globalRewardIndex, LibEdenRewardsStorage.REWARD_INDEX_SCALE);
+
+        vm.prank(alice);
+        uint256 claimed = facet.claimRewardProgram(programId, alicePositionId, alice);
+        (, LibEdenRewardsStorage.RewardProgramState memory settledState) = facet.getRewardProgram(programId);
+
+        assertEq(claimed, 90e18);
+        assertEq(rewardAsset.balanceOf(alice), 90e18);
+        assertEq(settledState.eligibleSupply, 90e18);
+        assertEq(settledState.fundedReserve, 0);
+    }
+
+    function test_EqualIndexMaintenance_PreviewsAndClaimsStayBacked() public {
+        facet.setEqualIndexPool(7, 9);
+
+        vm.prank(timelock);
+        uint256 programId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION,
+            7,
+            address(rewardAsset),
+            manager,
+            9e18,
+            block.timestamp,
+            0,
+            true
+        );
+
+        rewardAsset.mint(address(this), 90e18);
+        rewardAsset.approve(address(facet), 90e18);
+        facet.fundRewardProgram(programId, 90e18, 90e18);
+        facet.setProgramEligibleSupply(programId, 100e18);
+        facet.setPoolPrincipal(9, alicePositionKey, 100e18);
+        facet.setFoundationReceiver(makeAddr("foundation-eq"));
+        facet.setPoolMaintenanceRateBps(9, 1000);
+        facet.setPoolLastMaintenanceTimestamp(9, uint64(block.timestamp));
+
+        vm.warp(block.timestamp + 365 days + 10);
+        EdenRewardsFacet.RewardProgramPositionView memory preview =
+            facet.previewRewardProgramPosition(programId, alicePositionId);
+        LibEdenRewardsStorage.RewardProgramState memory previewState = facet.previewRewardProgramState(programId);
+
+        assertEq(preview.eligibleBalance, 90e18);
+        assertEq(preview.claimableRewards, 90e18);
+        assertEq(previewState.eligibleSupply, 90e18);
+        assertEq(previewState.fundedReserve, 0);
+        assertEq(previewState.globalRewardIndex, LibEdenRewardsStorage.REWARD_INDEX_SCALE);
+
+        vm.prank(alice);
+        uint256 claimed = facet.claimRewardProgram(programId, alicePositionId, alice);
+        (, LibEdenRewardsStorage.RewardProgramState memory settledState) = facet.getRewardProgram(programId);
+
+        assertEq(claimed, 90e18);
+        assertEq(rewardAsset.balanceOf(alice), 90e18);
+        assertEq(settledState.eligibleSupply, 90e18);
+        assertEq(settledState.fundedReserve, 0);
     }
 
     function test_PreviewRewardProgramsForPosition_AggregatesAcrossPrograms() public {

@@ -135,7 +135,9 @@ library LibEdenRewardsEngine {
             return 0;
         }
 
-        return LibAppStorage.s().pools[poolId].totalDeposits;
+        // Reward supply previews intentionally derive from authoritative pool state
+        // plus any pending maintenance accrual so views match the live settle path.
+        (eligibleSupply,) = LibMaintenance.previewState(poolId);
     }
 
     function _poolIdForTarget(LibEdenRewardsStorage.RewardTarget memory target) private view returns (uint256 poolId) {

@@ -150,7 +150,7 @@ library LibFeeIndex {
         principal = p.userPrincipal[user];
         if (principal == 0) return 0;
 
-        uint256 globalMaintenanceIndex = p.maintenanceIndex;
+        (, uint256 globalMaintenanceIndex) = LibMaintenance.previewState(pid);
         uint256 userMaintenanceIndex = p.userMaintenanceIndex[user];
         if (globalMaintenanceIndex <= userMaintenanceIndex) {
             return principal;

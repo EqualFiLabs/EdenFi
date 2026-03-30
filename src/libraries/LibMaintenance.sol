@@ -49,6 +49,70 @@ library LibMaintenance {
         }
     }
 
+    function previewState(uint256 pid)
+        internal
+        view
+        returns (uint256 totalDepositsAfterAccrual, uint256 maintenanceIndexAfterAccrual)
+    {
+        LibAppStorage.AppStorage storage store = LibAppStorage.s();
+        Types.PoolData storage p = store.pools[pid];
+        totalDepositsAfterAccrual = p.totalDeposits;
+        maintenanceIndexAfterAccrual = p.maintenanceIndex;
+
+        if (!p.initialized || store.foundationReceiver == address(0)) {
+            return (totalDepositsAfterAccrual, maintenanceIndexAfterAccrual);
+        }
+
+        uint16 rateBps = p.poolConfig.maintenanceRateBps;
+        if (rateBps == 0) {
+            rateBps = store.defaultMaintenanceRateBps;
+            if (rateBps == 0) {
+                rateBps = 100;
+            }
+        }
+
+        uint64 lastTimestamp = p.lastMaintenanceTimestamp;
+        uint64 nowTs = uint64(block.timestamp);
+        if (lastTimestamp == 0 || nowTs <= lastTimestamp) {
+            return (totalDepositsAfterAccrual, maintenanceIndexAfterAccrual);
+        }
+
+        uint256 epochs = (nowTs - lastTimestamp) / MAINTENANCE_EPOCH;
+        if (epochs == 0 || totalDepositsAfterAccrual == 0) {
+            return (totalDepositsAfterAccrual, maintenanceIndexAfterAccrual);
+        }
+
+        uint256 indexEncumbered = p.indexEncumberedTotal;
+        if (indexEncumbered >= totalDepositsAfterAccrual) {
+            return (totalDepositsAfterAccrual, maintenanceIndexAfterAccrual);
+        }
+
+        uint256 chargeableTvl = totalDepositsAfterAccrual - indexEncumbered;
+        uint256 amountAccrued = (chargeableTvl * rateBps * epochs) / (365 * 10_000);
+        if (amountAccrued == 0) {
+            return (totalDepositsAfterAccrual, maintenanceIndexAfterAccrual);
+        }
+
+        if (totalDepositsAfterAccrual >= amountAccrued) {
+            totalDepositsAfterAccrual -= amountAccrued;
+        } else {
+            amountAccrued = totalDepositsAfterAccrual;
+            totalDepositsAfterAccrual = 0;
+        }
+
+        uint256 oldTotal = totalDepositsAfterAccrual + amountAccrued;
+        if (oldTotal == 0) {
+            return (totalDepositsAfterAccrual, maintenanceIndexAfterAccrual);
+        }
+
+        uint256 scaledAmount = (amountAccrued * 1e18) / 1;
+        uint256 dividend = scaledAmount + p.maintenanceIndexRemainder;
+        uint256 delta = dividend / oldTotal;
+        if (delta > 0) {
+            maintenanceIndexAfterAccrual += delta;
+        }
+    }
+
     function _accrue(LibAppStorage.AppStorage storage store, Types.PoolData storage p)
         private
         returns (uint256 amountAccrued, uint256 epochs)
