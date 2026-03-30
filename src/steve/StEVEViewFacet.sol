@@ -84,6 +84,24 @@ contract StEVEViewFacet is StEVELendingLogic {
         bool rewardsConfigured;
     }
 
+    struct ProductRewardProgramView {
+        uint256 programId;
+        address rewardToken;
+        address manager;
+        uint16 outboundTransferBps;
+        uint256 rewardRatePerSecond;
+        uint256 startTime;
+        uint256 endTime;
+        bool enabled;
+        bool paused;
+        bool closed;
+        uint256 fundedReserve;
+        uint256 lastRewardUpdate;
+        uint256 globalRewardIndex;
+        uint256 eligibleSupply;
+        bool active;
+    }
+
     struct PositionProductView {
         bool active;
         uint256 productId;
@@ -103,6 +121,20 @@ contract StEVEViewFacet is StEVELendingLogic {
         uint256 rewardProgramCount;
         uint256 claimableProgramCount;
         bool rewardsAccrueToPosition;
+    }
+
+    struct PositionRewardProgramView {
+        uint256 programId;
+        address rewardToken;
+        uint256 rewardRatePerSecond;
+        uint256 fundedReserve;
+        bool active;
+        uint256 eligibleBalance;
+        uint256 rewardCheckpoint;
+        uint256 accruedRewards;
+        uint256 pendingRewards;
+        uint256 claimableRewards;
+        uint256 previewGlobalRewardIndex;
     }
 
     struct PositionAgentWalletView {
@@ -203,6 +235,64 @@ contract StEVEViewFacet is StEVELendingLogic {
         view_.rewardsConfigured = rewardProgramCount != 0;
     }
 
+    function getProductRewardPrograms() external view returns (ProductRewardProgramView[] memory programs) {
+        LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
+        uint256[] storage programIds = LibEdenRewardsStorage.programIdsForTarget(
+            store, LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION, LibEdenRewardsStorage.STEVE_TARGET_ID
+        );
+        uint256 len = programIds.length;
+        programs = new ProductRewardProgramView[](len);
+
+        for (uint256 i = 0; i < len; i++) {
+            uint256 programId = programIds[i];
+            LibEdenRewardsStorage.RewardProgramConfig storage config = store.programs[programId].config;
+            LibEdenRewardsStorage.RewardProgramState memory previewState = LibEdenRewardsEngine.previewProgramState(programId);
+            programs[i] = ProductRewardProgramView({
+                programId: programId,
+                rewardToken: config.rewardToken,
+                manager: config.manager,
+                outboundTransferBps: config.outboundTransferBps,
+                rewardRatePerSecond: config.rewardRatePerSecond,
+                startTime: config.startTime,
+                endTime: config.endTime,
+                enabled: config.enabled,
+                paused: config.paused,
+                closed: config.closed,
+                fundedReserve: previewState.fundedReserve,
+                lastRewardUpdate: previewState.lastRewardUpdate,
+                globalRewardIndex: previewState.globalRewardIndex,
+                eligibleSupply: previewState.eligibleSupply,
+                active: _isProgramActive(config)
+            });
+        }
+    }
+
+    function getActiveProductRewardProgramIds() external view returns (uint256[] memory programIds) {
+        LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
+        uint256[] storage storedIds = LibEdenRewardsStorage.programIdsForTarget(
+            store, LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION, LibEdenRewardsStorage.STEVE_TARGET_ID
+        );
+        uint256 len = storedIds.length;
+        uint256 activeCount;
+
+        for (uint256 i = 0; i < len; i++) {
+            if (_isProgramActive(store.programs[storedIds[i]].config)) {
+                activeCount++;
+            }
+        }
+
+        programIds = new uint256[](activeCount);
+        uint256 writeIndex;
+        for (uint256 i = 0; i < len; i++) {
+            uint256 programId = storedIds[i];
+            if (!_isProgramActive(store.programs[programId].config)) {
+                continue;
+            }
+
+            programIds[writeIndex++] = programId;
+        }
+    }
+
     function getProductVaultBalance(address asset) external view returns (uint256) {
         return LibStEVEStorage.s().accounting.vaultBalances[asset];
     }
@@ -271,6 +361,26 @@ contract StEVEViewFacet is StEVELendingLogic {
             claimableProgramCount: claimableProgramCount,
             rewardsAccrueToPosition: true
         });
+    }
+
+    function previewPositionRewardPrograms(uint256 positionId)
+        external
+        view
+        returns (PositionRewardProgramView[] memory programs, uint256 totalClaimableRewards)
+    {
+        bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
+        uint256 eligiblePrincipal = LibStEVERewards.previewEligibleBalance(positionKey);
+        LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
+        uint256[] storage programIds = LibEdenRewardsStorage.programIdsForTarget(
+            store, LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION, LibEdenRewardsStorage.STEVE_TARGET_ID
+        );
+        uint256 len = programIds.length;
+        programs = new PositionRewardProgramView[](len);
+
+        for (uint256 i = 0; i < len; i++) {
+            programs[i] = _previewPositionRewardProgramView(store, programIds[i], positionKey, eligiblePrincipal);
+            totalClaimableRewards += programs[i].claimableRewards;
+        }
     }
 
     function getPositionPortfolio(uint256 positionId) public view returns (PositionPortfolio memory portfolio) {
@@ -604,7 +714,8 @@ contract StEVEViewFacet is StEVELendingLogic {
         rewardProgramCount = programIds.length;
 
         for (uint256 i = 0; i < rewardProgramCount; i++) {
-            uint256 claimable = _previewProgramClaimable(store, programIds[i], positionKey, eligiblePrincipal);
+            uint256 claimable =
+                _previewPositionRewardProgramView(store, programIds[i], positionKey, eligiblePrincipal).claimableRewards;
             if (claimable == 0) {
                 continue;
             }
@@ -614,29 +725,47 @@ contract StEVEViewFacet is StEVELendingLogic {
         }
     }
 
-    function _previewProgramClaimable(
+    function _previewPositionRewardProgramView(
         LibEdenRewardsStorage.RewardsStorage storage store,
         uint256 programId,
         bytes32 positionKey,
         uint256 eligiblePrincipal
-    ) internal view returns (uint256 claimable) {
+    ) internal view returns (PositionRewardProgramView memory programView) {
+        LibEdenRewardsStorage.RewardProgramConfig storage config = store.programs[programId].config;
         LibEdenRewardsStorage.RewardProgramState memory previewState = LibEdenRewardsEngine.previewProgramState(programId);
         uint256 checkpoint = store.positionRewardIndex[programId][positionKey];
-        claimable = store.accruedRewards[programId][positionKey];
+        uint256 accrued = store.accruedRewards[programId][positionKey];
+        uint256 pending;
 
-        if (previewState.globalRewardIndex <= checkpoint || eligiblePrincipal == 0) {
-            return claimable;
+        if (previewState.globalRewardIndex > checkpoint && eligiblePrincipal > 0) {
+            pending = Math.mulDiv(
+                eligiblePrincipal,
+                previewState.globalRewardIndex - checkpoint,
+                LibEdenRewardsStorage.REWARD_INDEX_SCALE
+            );
         }
 
-        claimable += Math.mulDiv(
-            eligiblePrincipal,
-            previewState.globalRewardIndex - checkpoint,
-            LibEdenRewardsStorage.REWARD_INDEX_SCALE
-        );
+        programView = PositionRewardProgramView({
+            programId: programId,
+            rewardToken: config.rewardToken,
+            rewardRatePerSecond: config.rewardRatePerSecond,
+            fundedReserve: previewState.fundedReserve,
+            active: _isProgramActive(config),
+            eligibleBalance: eligiblePrincipal,
+            rewardCheckpoint: checkpoint,
+            accruedRewards: accrued,
+            pendingRewards: pending,
+            claimableRewards: accrued + pending,
+            previewGlobalRewardIndex: previewState.globalRewardIndex
+        });
     }
 
     function _isProgramActive(LibEdenRewardsStorage.RewardProgramConfig storage config) internal view returns (bool) {
         if (config.closed || !config.enabled || config.paused || config.rewardRatePerSecond == 0) {
+            return false;
+        }
+
+        if (config.startTime != 0 && config.startTime > block.timestamp) {
             return false;
         }
 

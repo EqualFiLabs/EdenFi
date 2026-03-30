@@ -556,29 +556,32 @@ contract DeployEqualFi is Script {
     }
 
     function _selectorsEdenView() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](25);
         s[0] = StEVEViewFacet.getProductConfig.selector;
         s[1] = StEVEViewFacet.getProductPoolId.selector;
         s[2] = StEVEViewFacet.getProductFeeConfig.selector;
         s[3] = StEVEViewFacet.getProductRewardState.selector;
-        s[4] = StEVEViewFacet.getProductVaultBalance.selector;
-        s[5] = StEVEViewFacet.getProductFeePot.selector;
-        s[6] = StEVEViewFacet.getPositionTokenURI.selector;
-        s[7] = StEVEViewFacet.hasOpenOffers.selector;
-        s[8] = StEVEViewFacet.cancelOffersForPosition.selector;
-        s[9] = StEVEViewFacet.getUserPositionIds.selector;
-        s[10] = StEVEViewFacet.getUserPositionIdsPaginated.selector;
-        s[11] = StEVEViewFacet.getPositionPortfolio.selector;
-        s[12] = StEVEViewFacet.getPositionProductView.selector;
-        s[13] = StEVEViewFacet.getPositionRewardView.selector;
-        s[14] = StEVEViewFacet.getPositionAgentView.selector;
-        s[15] = StEVEViewFacet.getUserPortfolio.selector;
-        s[16] = StEVEViewFacet.canMintStEVE.selector;
-        s[17] = StEVEViewFacet.canBurnStEVE.selector;
-        s[18] = StEVEViewFacet.canBorrow.selector;
-        s[19] = StEVEViewFacet.canRepay.selector;
-        s[20] = StEVEViewFacet.canExtend.selector;
-        s[21] = StEVEViewFacet.canClaimRewards.selector;
+        s[4] = StEVEViewFacet.getProductRewardPrograms.selector;
+        s[5] = StEVEViewFacet.getActiveProductRewardProgramIds.selector;
+        s[6] = StEVEViewFacet.getProductVaultBalance.selector;
+        s[7] = StEVEViewFacet.getProductFeePot.selector;
+        s[8] = StEVEViewFacet.getPositionTokenURI.selector;
+        s[9] = StEVEViewFacet.hasOpenOffers.selector;
+        s[10] = StEVEViewFacet.cancelOffersForPosition.selector;
+        s[11] = StEVEViewFacet.getUserPositionIds.selector;
+        s[12] = StEVEViewFacet.getUserPositionIdsPaginated.selector;
+        s[13] = StEVEViewFacet.getPositionPortfolio.selector;
+        s[14] = StEVEViewFacet.getPositionProductView.selector;
+        s[15] = StEVEViewFacet.getPositionRewardView.selector;
+        s[16] = StEVEViewFacet.previewPositionRewardPrograms.selector;
+        s[17] = StEVEViewFacet.getPositionAgentView.selector;
+        s[18] = StEVEViewFacet.getUserPortfolio.selector;
+        s[19] = StEVEViewFacet.canMintStEVE.selector;
+        s[20] = StEVEViewFacet.canBurnStEVE.selector;
+        s[21] = StEVEViewFacet.canBorrow.selector;
+        s[22] = StEVEViewFacet.canRepay.selector;
+        s[23] = StEVEViewFacet.canExtend.selector;
+        s[24] = StEVEViewFacet.canClaimRewards.selector;
     }
 
     function _selectorsEdenAdmin() internal pure returns (bytes4[] memory s) {

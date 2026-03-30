@@ -353,6 +353,73 @@ contract EqualIndexLaunchTest is StEVELaunchFixture {
         assertEq(bobClaimed, 250e18);
     }
 
+    function test_EqualIndexRewards_TargetScopedDiscoveryAndPreviewMatchClaims() public {
+        eve.mint(alice, 40e18);
+        uint256 alicePositionId = _mintPosition(alice, 1);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 40e18);
+        PositionManagementFacet(diamond).depositToPosition(alicePositionId, 1, 40e18, 40e18);
+        vm.stopPrank();
+
+        (uint256 targetIndexId,) =
+            _createIndexThroughTimelock(_singleAssetIndexParams("Target Reward Index", "TRI", address(eve), 0, 0));
+        (uint256 otherIndexId,) =
+            _createIndexThroughTimelock(_singleAssetIndexParams("Other Reward Index", "ORI", address(eve), 0, 0));
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, targetIndexId, 10e18);
+
+        uint256 targetProgramA =
+            _createEqualIndexRewardProgram(targetIndexId, address(alt), address(this), 10e18, 0, 0, true);
+        uint256 targetProgramB =
+            _createEqualIndexRewardProgram(targetIndexId, address(eve), address(this), 20e18, 0, 0, true);
+        uint256 otherProgram =
+            _createEqualIndexRewardProgram(otherIndexId, address(alt), address(this), 30e18, 0, 0, true);
+
+        alt.mint(address(this), 1_000e18);
+        eve.mint(address(this), 1_000e18);
+        _fundRewardProgram(address(this), targetProgramA, alt, 500e18);
+        _fundRewardProgram(address(this), targetProgramB, eve, 500e18);
+        _fundRewardProgram(address(this), otherProgram, alt, 500e18);
+
+        vm.warp(block.timestamp + 10);
+
+        uint256[] memory targetProgramIds = EdenRewardsFacet(diamond).getRewardProgramIdsByTarget(
+            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION, targetIndexId
+        );
+        assertEq(targetProgramIds.length, 2);
+        assertEq(targetProgramIds[0], targetProgramA);
+        assertEq(targetProgramIds[1], targetProgramB);
+
+        uint256[] memory otherProgramIds = EdenRewardsFacet(diamond).getRewardProgramIdsByTarget(
+            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION, otherIndexId
+        );
+        assertEq(otherProgramIds.length, 1);
+        assertEq(otherProgramIds[0], otherProgram);
+
+        (EdenRewardsFacet.RewardProgramClaimPreview[] memory previews, uint256 totalClaimable) =
+            EdenRewardsFacet(diamond).previewRewardProgramsForPosition(alicePositionId, targetProgramIds);
+
+        assertEq(previews.length, 2);
+        assertEq(previews[0].programId, targetProgramA);
+        assertEq(previews[0].rewardToken, address(alt));
+        assertEq(previews[0].claimableRewards, 100e18);
+        assertEq(previews[1].programId, targetProgramB);
+        assertEq(previews[1].rewardToken, address(eve));
+        assertEq(previews[1].claimableRewards, 200e18);
+        assertEq(totalClaimable, 300e18);
+
+        vm.startPrank(alice);
+        uint256 claimedA = EdenRewardsFacet(diamond).claimRewardProgram(targetProgramA, alicePositionId, alice);
+        uint256 claimedB = EdenRewardsFacet(diamond).claimRewardProgram(targetProgramB, alicePositionId, alice);
+        vm.stopPrank();
+
+        assertEq(claimedA + claimedB, totalClaimable);
+        assertEq(alt.balanceOf(alice), claimedA);
+        assertEq(eve.balanceOf(alice), claimedB);
+    }
+
     function test_CreateIndex_RevertsForInvalidDefinitionsAndMissingPoolsOnLiveDiamond() public {
         EqualIndexBaseV3.CreateIndexParams memory badLengths = _singleAssetIndexParams("Bad", "BAD", address(eve), 0, 0);
         badLengths.bundleAmounts = new uint256[](0);

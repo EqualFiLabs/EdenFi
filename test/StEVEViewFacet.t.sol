@@ -6,6 +6,8 @@ import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {PositionAgentRegistryFacet} from "src/agent-wallet/erc6551/PositionAgentRegistryFacet.sol";
 import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFacet.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
+import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
+import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
 import {StEVEViewFacet} from "src/steve/StEVEViewFacet.sol";
 
 import {StEVELaunchFixture} from "test/utils/StEVELaunchFixture.t.sol";
@@ -44,7 +46,7 @@ contract StEVEViewFacetTest is StEVELaunchFixture {
         vm.warp(block.timestamp + 10);
     }
 
-    function test_ProductReads_ExposeSingletonState() public view {
+    function test_ProductReads_ExposeProgramNativeState() public view {
         StEVEViewFacet.ProductConfigView memory config = StEVEViewFacet(diamond).getProductConfig();
         assertEq(config.productId, steveBasketId);
         assertEq(config.name, "stEVE");
@@ -85,7 +87,7 @@ contract StEVEViewFacetTest is StEVELaunchFixture {
         assertEq(StEVEViewFacet(diamond).getProductFeePot(address(eve)), 0);
     }
 
-    function test_PositionReads_ExposeSingletonProductAndRewardState() public view {
+    function test_PositionReads_ExposeProgramNativeProductAndRewardState() public view {
         uint256[] memory alicePositionIds = StEVEViewFacet(diamond).getUserPositionIds(alice);
         assertEq(alicePositionIds.length, 1);
         assertEq(alicePositionIds[0], alicePositionId);
@@ -293,5 +295,81 @@ contract StEVEViewFacetTest is StEVELaunchFixture {
         assertEq(positionRewards.rewardProgramCount, 1);
         assertEq(positionRewards.claimableProgramCount, 0);
         assertTrue(positionRewards.rewardsAccrueToPosition);
+    }
+
+    function test_ProductRewardPrograms_ExposeProgramNativeMetadataAndActiveIds() public {
+        uint256 secondProgramId = _createStEVERewardProgram(address(alt), address(this), 4e18, 0, 0, true);
+        alt.mint(address(this), 200e18);
+        _fundRewardProgram(address(this), secondProgramId, alt, 150e18);
+
+        StEVEViewFacet.ProductRewardProgramView[] memory programs =
+            StEVEViewFacet(diamond).getProductRewardPrograms();
+        LibEdenRewardsStorage.RewardProgramState memory firstState =
+            EdenRewardsFacet(diamond).previewRewardProgramState(rewardProgramId);
+        LibEdenRewardsStorage.RewardProgramState memory secondState =
+            EdenRewardsFacet(diamond).previewRewardProgramState(secondProgramId);
+        assertEq(programs.length, 2);
+
+        assertEq(programs[0].programId, rewardProgramId);
+        assertEq(programs[0].rewardToken, address(eve));
+        assertEq(programs[0].rewardRatePerSecond, 10e18);
+        assertEq(programs[0].fundedReserve, firstState.fundedReserve);
+        assertTrue(programs[0].active);
+
+        assertEq(programs[1].programId, secondProgramId);
+        assertEq(programs[1].rewardToken, address(alt));
+        assertEq(programs[1].rewardRatePerSecond, 4e18);
+        assertEq(programs[1].fundedReserve, secondState.fundedReserve);
+        assertTrue(programs[1].active);
+
+        uint256[] memory activeProgramIds = StEVEViewFacet(diamond).getActiveProductRewardProgramIds();
+        assertEq(activeProgramIds.length, 2);
+        assertEq(activeProgramIds[0], rewardProgramId);
+        assertEq(activeProgramIds[1], secondProgramId);
+
+        _setRewardProgramEnabled(secondProgramId, false);
+        activeProgramIds = StEVEViewFacet(diamond).getActiveProductRewardProgramIds();
+        assertEq(activeProgramIds.length, 1);
+        assertEq(activeProgramIds[0], rewardProgramId);
+    }
+
+    function test_PositionRewardPrograms_MatchAggregateAndEdenProgramViews() public {
+        uint256 secondProgramId = _createStEVERewardProgram(address(alt), address(this), 5e18, 0, 0, true);
+        alt.mint(address(this), 500e18);
+        _fundRewardProgram(address(this), secondProgramId, alt, 500e18);
+
+        vm.warp(block.timestamp + 5);
+
+        (StEVEViewFacet.PositionRewardProgramView[] memory programs, uint256 totalClaimableRewards) =
+            StEVEViewFacet(diamond).previewPositionRewardPrograms(alicePositionId);
+
+        StEVEViewFacet.PositionRewardView memory aggregateRewards =
+            StEVEViewFacet(diamond).getPositionRewardView(alicePositionId);
+        assertEq(programs.length, 2);
+        assertEq(totalClaimableRewards, aggregateRewards.claimableRewards);
+        assertEq(aggregateRewards.claimableProgramCount, 2);
+
+        EdenRewardsFacet.RewardProgramPositionView memory firstProgramPreview =
+            EdenRewardsFacet(diamond).previewRewardProgramPosition(rewardProgramId, alicePositionId);
+        EdenRewardsFacet.RewardProgramPositionView memory secondProgramPreview =
+            EdenRewardsFacet(diamond).previewRewardProgramPosition(secondProgramId, alicePositionId);
+
+        assertEq(programs[0].programId, rewardProgramId);
+        assertEq(programs[0].rewardToken, firstProgramPreview.rewardToken);
+        assertEq(programs[0].eligibleBalance, firstProgramPreview.eligibleBalance);
+        assertEq(programs[0].rewardCheckpoint, firstProgramPreview.rewardCheckpoint);
+        assertEq(programs[0].accruedRewards, firstProgramPreview.accruedRewards);
+        assertEq(programs[0].pendingRewards, firstProgramPreview.pendingRewards);
+        assertEq(programs[0].claimableRewards, firstProgramPreview.claimableRewards);
+        assertEq(programs[0].previewGlobalRewardIndex, firstProgramPreview.previewGlobalRewardIndex);
+
+        assertEq(programs[1].programId, secondProgramId);
+        assertEq(programs[1].rewardToken, secondProgramPreview.rewardToken);
+        assertEq(programs[1].eligibleBalance, secondProgramPreview.eligibleBalance);
+        assertEq(programs[1].rewardCheckpoint, secondProgramPreview.rewardCheckpoint);
+        assertEq(programs[1].accruedRewards, secondProgramPreview.accruedRewards);
+        assertEq(programs[1].pendingRewards, secondProgramPreview.pendingRewards);
+        assertEq(programs[1].claimableRewards, secondProgramPreview.claimableRewards);
+        assertEq(programs[1].previewGlobalRewardIndex, secondProgramPreview.previewGlobalRewardIndex);
     }
 }
