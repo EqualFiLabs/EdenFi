@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibAccess} from "../libraries/LibAccess.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
@@ -50,6 +51,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
     event RewardProgramResumed(uint256 indexed programId);
     event RewardProgramEnded(uint256 indexed programId, uint256 endTime);
     event RewardProgramClosed(uint256 indexed programId);
+    event RewardProgramTransferFeeUpdated(uint256 indexed programId, uint16 outboundTransferBps);
     event RewardProgramFunded(uint256 indexed programId, address indexed funder, uint256 amount);
     event RewardProgramAccrued(
         uint256 indexed programId, uint256 allocated, uint256 globalRewardIndex, uint256 fundedReserve, uint256 lastRewardUpdate
@@ -97,6 +99,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
             target: target,
             rewardToken: rewardToken,
             manager: manager,
+            outboundTransferBps: 0,
             rewardRatePerSecond: rewardRatePerSecond,
             startTime: startTime,
             endTime: endTime,
@@ -111,6 +114,21 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         emit RewardProgramCreated(
             programId, uint8(targetType), targetId, rewardToken, manager, rewardRatePerSecond, startTime, endTime, enabled
         );
+    }
+
+    function setRewardProgramTransferFeeBps(uint256 programId, uint16 outboundTransferBps) external nonReentrant {
+        LibCurrency.assertZeroMsgValue();
+        if (outboundTransferBps >= LibEdenRewardsStorage.TRANSFER_FEE_BPS_SCALE) {
+            revert InvalidParameterRange("outboundTransferBps");
+        }
+
+        LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
+        _enforceManagerOrGovernance(program.config.manager);
+        if (program.config.closed) revert InvalidParameterRange("programClosed");
+        if (program.state.globalRewardIndex != 0) revert InvalidParameterRange("programAccrued");
+
+        program.config.outboundTransferBps = outboundTransferBps;
+        emit RewardProgramTransferFeeUpdated(programId, outboundTransferBps);
     }
 
     function setRewardProgramEnabled(uint256 programId, bool enabled) external nonReentrant {
@@ -236,8 +254,23 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         if (claimed == 0) revert InvalidParameterRange("nothing claimable");
 
         LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
+        uint256 grossClaimAmount =
+            LibEdenRewardsEngine.grossUpNetAmount(claimed, program.config.outboundTransferBps);
+        uint256 availableGross = LibCurrency.balanceOfSelf(program.config.rewardToken);
+        if (grossClaimAmount > availableGross) {
+            grossClaimAmount = availableGross;
+        }
+        if (grossClaimAmount == 0) revert InvalidParameterRange("programBalance");
+
+        uint256 recipientBalanceBefore = IERC20(program.config.rewardToken).balanceOf(to);
         LibEdenRewardsStorage.s().accruedRewards[programId][positionKey] = 0;
-        LibCurrency.transfer(program.config.rewardToken, to, claimed);
+        LibCurrency.transfer(program.config.rewardToken, to, grossClaimAmount);
+        uint256 recipientBalanceAfter = IERC20(program.config.rewardToken).balanceOf(to);
+        uint256 netReceived = recipientBalanceAfter - recipientBalanceBefore;
+        if (netReceived < claimed) {
+            LibEdenRewardsStorage.s().accruedRewards[programId][positionKey] = claimed - netReceived;
+            claimed = netReceived;
+        }
 
         emit RewardProgramClaimed(programId, positionId, positionKey, to, claimed);
     }

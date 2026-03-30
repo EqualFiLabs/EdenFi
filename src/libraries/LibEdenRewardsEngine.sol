@@ -62,6 +62,37 @@ library LibEdenRewardsEngine {
         return _currentEligibleSupplyView(target);
     }
 
+    function netFromGross(uint256 grossAmount, uint16 outboundTransferBps) internal pure returns (uint256 netAmount) {
+        if (grossAmount == 0 || outboundTransferBps == 0) {
+            return grossAmount;
+        }
+
+        uint256 feeAmount =
+            Math.mulDiv(grossAmount, outboundTransferBps, LibEdenRewardsStorage.TRANSFER_FEE_BPS_SCALE);
+        return grossAmount - feeAmount;
+    }
+
+    function grossUpNetAmount(uint256 netAmount, uint16 outboundTransferBps)
+        internal
+        pure
+        returns (uint256 grossAmount)
+    {
+        if (netAmount == 0 || outboundTransferBps == 0) {
+            return netAmount;
+        }
+
+        uint256 denominator = uint256(LibEdenRewardsStorage.TRANSFER_FEE_BPS_SCALE) - outboundTransferBps;
+        grossAmount = Math.mulDiv(
+            netAmount, LibEdenRewardsStorage.TRANSFER_FEE_BPS_SCALE, denominator, Math.Rounding.Ceil
+        );
+
+        while (grossAmount > 0 && netFromGross(grossAmount - 1, outboundTransferBps) >= netAmount) {
+            unchecked {
+                grossAmount -= 1;
+            }
+        }
+    }
+
     function _previewAccrual(
         LibEdenRewardsStorage.RewardProgramConfig memory config,
         LibEdenRewardsStorage.RewardProgramState memory state,
@@ -92,12 +123,16 @@ library LibEdenRewardsEngine {
         }
 
         uint256 elapsed = effectiveNow - accrualStart;
-        uint256 maxRewards = elapsed * config.rewardRatePerSecond;
-        uint256 allocated = maxRewards > state.fundedReserve ? state.fundedReserve : maxRewards;
-        if (allocated > 0) {
-            state.fundedReserve -= allocated;
+        uint256 maxNetRewards = elapsed * config.rewardRatePerSecond;
+        uint256 requiredGross = grossUpNetAmount(maxNetRewards, config.outboundTransferBps);
+        uint256 allocatedGross = requiredGross > state.fundedReserve ? state.fundedReserve : requiredGross;
+        uint256 allocatedNet = requiredGross > state.fundedReserve
+            ? netFromGross(allocatedGross, config.outboundTransferBps)
+            : maxNetRewards;
+        if (allocatedNet > 0) {
+            state.fundedReserve -= allocatedGross;
             state.globalRewardIndex += Math.mulDiv(
-                allocated, LibEdenRewardsStorage.REWARD_INDEX_SCALE, state.eligibleSupply
+                allocatedNet, LibEdenRewardsStorage.REWARD_INDEX_SCALE, state.eligibleSupply
             );
         }
 

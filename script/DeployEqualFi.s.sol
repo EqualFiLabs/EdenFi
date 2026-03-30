@@ -512,22 +512,23 @@ contract DeployEqualFi is Script {
     }
 
     function _selectorsEdenRewards() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](15);
+        s = new bytes4[](16);
         s[0] = EdenRewardsFacet.createRewardProgram.selector;
-        s[1] = EdenRewardsFacet.setRewardProgramEnabled.selector;
-        s[2] = EdenRewardsFacet.pauseRewardProgram.selector;
-        s[3] = EdenRewardsFacet.resumeRewardProgram.selector;
-        s[4] = EdenRewardsFacet.endRewardProgram.selector;
-        s[5] = EdenRewardsFacet.closeRewardProgram.selector;
-        s[6] = EdenRewardsFacet.fundRewardProgram.selector;
-        s[7] = EdenRewardsFacet.accrueRewardProgram.selector;
-        s[8] = EdenRewardsFacet.settleRewardProgramPosition.selector;
-        s[9] = EdenRewardsFacet.claimRewardProgram.selector;
-        s[10] = EdenRewardsFacet.getRewardProgram.selector;
-        s[11] = EdenRewardsFacet.previewRewardProgramState.selector;
-        s[12] = EdenRewardsFacet.getRewardProgramIdsByTarget.selector;
-        s[13] = EdenRewardsFacet.previewRewardProgramPosition.selector;
-        s[14] = EdenRewardsFacet.previewRewardProgramsForPosition.selector;
+        s[1] = EdenRewardsFacet.setRewardProgramTransferFeeBps.selector;
+        s[2] = EdenRewardsFacet.setRewardProgramEnabled.selector;
+        s[3] = EdenRewardsFacet.pauseRewardProgram.selector;
+        s[4] = EdenRewardsFacet.resumeRewardProgram.selector;
+        s[5] = EdenRewardsFacet.endRewardProgram.selector;
+        s[6] = EdenRewardsFacet.closeRewardProgram.selector;
+        s[7] = EdenRewardsFacet.fundRewardProgram.selector;
+        s[8] = EdenRewardsFacet.accrueRewardProgram.selector;
+        s[9] = EdenRewardsFacet.settleRewardProgramPosition.selector;
+        s[10] = EdenRewardsFacet.claimRewardProgram.selector;
+        s[11] = EdenRewardsFacet.getRewardProgram.selector;
+        s[12] = EdenRewardsFacet.previewRewardProgramState.selector;
+        s[13] = EdenRewardsFacet.getRewardProgramIdsByTarget.selector;
+        s[14] = EdenRewardsFacet.previewRewardProgramPosition.selector;
+        s[15] = EdenRewardsFacet.previewRewardProgramsForPosition.selector;
     }
 
     function _selectorsEdenLending() internal pure returns (bytes4[] memory s) {

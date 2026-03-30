@@ -497,6 +497,65 @@ contract EdenRewardsFacetTest is Test {
         facet.fundRewardProgram(fotProgramId, 10e18, 10e18);
     }
 
+    function test_ClaimRewardProgram_SupportsFoTWithConfiguredGrossUp() public {
+        vm.prank(timelock);
+        uint256 programId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            0,
+            address(fotRewardAsset),
+            manager,
+            81e17,
+            0,
+            0,
+            true
+        );
+
+        vm.prank(manager);
+        facet.setRewardProgramTransferFeeBps(programId, 1000);
+
+        fotRewardAsset.mint(address(this), 20e18);
+        fotRewardAsset.approve(address(facet), 20e18);
+        facet.fundRewardProgram(programId, 9e18, 10e18);
+        facet.setProgramEligibleSupply(programId, 81e17);
+        facet.setStEVEEligiblePrincipal(alicePositionKey, 81e17);
+
+        vm.warp(block.timestamp + 1);
+        vm.prank(alice);
+        uint256 claimed = facet.claimRewardProgram(programId, alicePositionId, alice);
+
+        assertEq(claimed, 81e17);
+        assertEq(fotRewardAsset.balanceOf(alice), 81e17);
+        assertEq(facet.accruedReward(alicePositionKey, programId), 0);
+    }
+
+    function test_ClaimRewardProgram_FoTWithoutGrossUpPreservesResidualLiability() public {
+        vm.prank(timelock);
+        uint256 programId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            0,
+            address(fotRewardAsset),
+            manager,
+            9e18,
+            0,
+            0,
+            true
+        );
+
+        fotRewardAsset.mint(address(this), 20e18);
+        fotRewardAsset.approve(address(facet), 20e18);
+        facet.fundRewardProgram(programId, 9e18, 10e18);
+        facet.setProgramEligibleSupply(programId, 9e18);
+        facet.setStEVEEligiblePrincipal(alicePositionKey, 9e18);
+
+        vm.warp(block.timestamp + 1);
+        vm.prank(alice);
+        uint256 claimed = facet.claimRewardProgram(programId, alicePositionId, alice);
+
+        assertEq(claimed, 81e17);
+        assertEq(fotRewardAsset.balanceOf(alice), 81e17);
+        assertEq(facet.accruedReward(alicePositionKey, programId), 9e17);
+    }
+
     function test_AccrueRewardProgram_BoundsReserveAndRespectsWindows() public {
         vm.prank(timelock);
         uint256 boundedProgramId = facet.createRewardProgram(

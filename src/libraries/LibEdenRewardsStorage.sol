@@ -5,6 +5,7 @@ library LibEdenRewardsStorage {
     bytes32 internal constant STORAGE_POSITION = keccak256("equalfi.eden.rewards.engine.storage");
     uint256 internal constant REWARD_INDEX_SCALE = 1e27;
     uint256 internal constant STEVE_TARGET_ID = 0;
+    uint16 internal constant TRANSFER_FEE_BPS_SCALE = 10_000;
 
     enum RewardTargetType {
         STEVE_POSITION,
@@ -20,6 +21,7 @@ library LibEdenRewardsStorage {
         RewardTarget target;
         address rewardToken;
         address manager;
+        uint16 outboundTransferBps;
         uint256 rewardRatePerSecond;
         uint256 startTime;
         uint256 endTime;

@@ -28,6 +28,7 @@ contract EdenRewardsStorageHarness {
             target: target,
             rewardToken: rewardToken,
             manager: manager,
+            outboundTransferBps: 0,
             rewardRatePerSecond: rewardRatePerSecond,
             startTime: startTime,
             endTime: endTime,
