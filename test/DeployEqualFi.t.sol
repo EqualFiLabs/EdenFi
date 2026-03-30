@@ -63,6 +63,12 @@ contract DeployEqualFiTest is DeployEqualFi {
     bytes4 internal constant LEGACY_SET_BASKET_PAUSED_SELECTOR = bytes4(keccak256("setBasketPaused(uint256,bool)"));
     bytes4 internal constant LEGACY_SET_BASKET_FEES_SELECTOR =
         bytes4(keccak256("setBasketFees(uint256,uint16[],uint16[],uint16)"));
+    bytes4 internal constant LEGACY_CONFIGURE_REWARDS_SELECTOR =
+        bytes4(keccak256("configureRewards(address,uint256,uint256)"));
+    bytes4 internal constant LEGACY_FUND_REWARDS_SELECTOR = bytes4(keccak256("fundRewards(uint256,uint256)"));
+    bytes4 internal constant LEGACY_CLAIM_REWARDS_SELECTOR = bytes4(keccak256("claimRewards(uint256,address)"));
+    bytes4 internal constant LEGACY_GET_REWARD_CONFIG_SELECTOR = bytes4(keccak256("getRewardConfig()"));
+    bytes4 internal constant LEGACY_PREVIEW_CLAIM_REWARDS_SELECTOR = bytes4(keccak256("previewClaimRewards(uint256)"));
 
     struct StEVEDeploymentState {
         uint256 steveBasketId;
@@ -277,6 +283,20 @@ contract DeployEqualFiTest is DeployEqualFi {
         address[] memory facetAddresses = loupe.facetAddresses();
 
         _assertEq(facetAddresses.length, TOTAL_FACET_COUNT, "facet count");
+        _assertExactSelectorSurfaceInstalled(loupe);
+    }
+
+    function test_DeployLaunch_LegacyRewardSelectorsAreAbsentFromLiveDiamond() public view {
+        IDiamondLoupe loupe = IDiamondLoupe(diamond);
+
+        _assertEqAddress(loupe.facetAddress(LEGACY_CONFIGURE_REWARDS_SELECTOR), address(0), "legacy configure removed");
+        _assertEqAddress(loupe.facetAddress(LEGACY_FUND_REWARDS_SELECTOR), address(0), "legacy fund removed");
+        _assertEqAddress(loupe.facetAddress(LEGACY_CLAIM_REWARDS_SELECTOR), address(0), "legacy claim removed");
+        _assertEqAddress(loupe.facetAddress(LEGACY_GET_REWARD_CONFIG_SELECTOR), address(0), "legacy config view removed");
+        _assertEqAddress(
+            loupe.facetAddress(LEGACY_PREVIEW_CLAIM_REWARDS_SELECTOR), address(0), "legacy claim preview removed"
+        );
+
         _assertExactSelectorSurfaceInstalled(loupe);
     }
 
