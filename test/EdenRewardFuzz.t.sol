@@ -3,9 +3,9 @@ pragma solidity ^0.8.20;
 
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 
-import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
+import {StEVELaunchFixture} from "test/utils/StEVELaunchFixture.t.sol";
 
-contract EdenRewardFuzzTest is EdenLaunchFixture {
+contract EdenRewardFuzzTest is StEVELaunchFixture {
     function setUp() public override {
         super.setUp();
         _bootstrapCorePools();

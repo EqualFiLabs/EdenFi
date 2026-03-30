@@ -5,7 +5,7 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 
 import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockController.sol";
-import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
+import {StEVELaunchFixture} from "test/utils/StEVELaunchFixture.t.sol";
 
 contract TimelockTarget {
     uint256 public value;
@@ -15,7 +15,7 @@ contract TimelockTarget {
     }
 }
 
-contract FixedDelayTimelockControllerTest is EdenLaunchFixture {
+contract FixedDelayTimelockControllerTest is StEVELaunchFixture {
     FixedDelayTimelockController internal controller;
     TimelockTarget internal target;
 

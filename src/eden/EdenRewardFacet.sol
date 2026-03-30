@@ -5,7 +5,7 @@ import {LibAccess} from "../libraries/LibAccess.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEdenRewardStorage} from "../libraries/LibEdenRewardStorage.sol";
 import {LibEdenRewards} from "../libraries/LibEdenRewards.sol";
-import {LibEdenStEVEStorage} from "../libraries/LibEdenStEVEStorage.sol";
+import {LibStEVEEligibilityStorage} from "../libraries/LibStEVEEligibilityStorage.sol";
 import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
 import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
 import "../libraries/Errors.sol";
@@ -32,7 +32,7 @@ contract EdenRewardFacet is ReentrancyGuardModifiers {
     function configureRewards(address rewardToken, uint256 rewardRatePerSecond, bool enabled) external nonReentrant {
         LibAccess.enforceTimelockOrOwnerIfUnset();
         if (rewardToken == address(0)) revert InvalidUnderlying();
-        if (!LibEdenStEVEStorage.s().configured) revert InvalidParameterRange("stEVE not configured");
+        if (!LibStEVEEligibilityStorage.s().configured) revert InvalidParameterRange("stEVE not configured");
 
         LibEdenRewardStorage.RewardStorage storage rewards = LibEdenRewardStorage.s();
         LibEdenRewards.accrueGlobalRewards();
@@ -92,7 +92,7 @@ contract EdenRewardFacet is ReentrancyGuardModifiers {
 
     function getRewardConfig() external view returns (RewardView memory view_) {
         LibEdenRewardStorage.RewardStorage storage rewards = LibEdenRewardStorage.s();
-        LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
+        LibStEVEEligibilityStorage.EligibilityStorage storage steve = LibStEVEEligibilityStorage.s();
         view_.rewardToken = rewards.config.rewardToken;
         view_.rewardRatePerSecond = rewards.config.rewardRatePerSecond;
         view_.lastRewardUpdate = rewards.config.lastRewardUpdate;

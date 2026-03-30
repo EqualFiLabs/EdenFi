@@ -5,11 +5,11 @@ import {Vm} from "forge-std/Vm.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibDiamond} from "src/libraries/LibDiamond.sol";
-import {LibEdenAdminStorage} from "src/libraries/LibEdenAdminStorage.sol";
-import {LibEdenBasketStorage} from "src/libraries/LibEdenBasketStorage.sol";
-import {LibEdenLendingStorage} from "src/libraries/LibEdenLendingStorage.sol";
+import {LibStEVEAdminStorage} from "src/libraries/LibStEVEAdminStorage.sol";
+import {LibStEVEStorage} from "src/libraries/LibStEVEStorage.sol";
+import {LibStEVELendingStorage} from "src/libraries/LibStEVELendingStorage.sol";
 import {LibEdenRewardStorage} from "src/libraries/LibEdenRewardStorage.sol";
-import {LibEdenStEVEStorage} from "src/libraries/LibEdenStEVEStorage.sol";
+import {LibStEVEEligibilityStorage} from "src/libraries/LibStEVEEligibilityStorage.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
@@ -55,11 +55,11 @@ contract LibPositionAgentStorageTest {
         require(slot_ != LibPositionNFT.POSITION_NFT_STORAGE_POSITION, "collides with position nft storage");
         require(slot_ != LibPoolMembership.POOL_MEMBERSHIP_STORAGE_POSITION, "collides with pool membership");
         require(slot_ != LibEncumbrance.STORAGE_POSITION, "collides with encumbrance");
-        require(slot_ != LibEdenAdminStorage.STORAGE_POSITION, "collides with eden admin");
-        require(slot_ != LibEdenBasketStorage.STORAGE_POSITION, "collides with eden basket");
-        require(slot_ != LibEdenLendingStorage.STORAGE_POSITION, "collides with eden lending");
+        require(slot_ != LibStEVEAdminStorage.STORAGE_POSITION, "collides with eden admin");
+        require(slot_ != LibStEVEStorage.STORAGE_POSITION, "collides with eden basket");
+        require(slot_ != LibStEVELendingStorage.STORAGE_POSITION, "collides with eden lending");
         require(slot_ != LibEdenRewardStorage.STORAGE_POSITION, "collides with eden reward");
-        require(slot_ != LibEdenStEVEStorage.STORAGE_POSITION, "collides with eden steve");
+        require(slot_ != LibStEVEEligibilityStorage.STORAGE_POSITION, "collides with eden steve");
         require(slot_ != keccak256("equalscale.alpha.storage"), "collides with equalscale alpha");
     }
 

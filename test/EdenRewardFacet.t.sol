@@ -2,14 +2,14 @@
 pragma solidity ^0.8.20;
 
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
-import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
-import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
+import {StEVEActionFacet} from "src/steve/StEVEActionFacet.sol";
+import {StEVEViewFacet} from "src/steve/StEVEViewFacet.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
 import {InvalidParameterRange, NotNFTOwner} from "src/libraries/Errors.sol";
 
-import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
+import {StEVELaunchFixture} from "test/utils/StEVELaunchFixture.t.sol";
 
-contract EdenRewardFacetTest is EdenLaunchFixture {
+contract EdenRewardFacetTest is StEVELaunchFixture {
     function setUp() public override {
         super.setUp();
         _bootstrapCorePools();
@@ -34,7 +34,7 @@ contract EdenRewardFacetTest is EdenLaunchFixture {
         vm.warp(block.timestamp + 10);
 
         EdenRewardFacet.RewardView memory rewardConfig = EdenRewardFacet(diamond).getRewardConfig();
-        assertEq(EdenStEVEActionFacet(diamond).eligibleSupply(), 10e18);
+        assertEq(StEVEActionFacet(diamond).eligibleSupply(), 10e18);
         assertEq(rewardConfig.eligibleSupply, 10e18);
         assertTrue(rewardConfig.steveConfigured);
         assertTrue(rewardConfig.onlyPnftHeldStEVEEligible);
@@ -111,7 +111,7 @@ contract EdenRewardFacetTest is EdenLaunchFixture {
         vm.prank(alice);
         positionNft.transferFrom(alice, carol, positionId);
 
-        EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
+        StEVEViewFacet.PositionPortfolio memory portfolio = StEVEViewFacet(diamond).getPositionPortfolio(positionId);
         assertEq(portfolio.owner, carol);
         assertTrue(portfolio.rewards.rewardsAccrueToPosition);
 
@@ -165,7 +165,7 @@ contract EdenRewardFacetTest is EdenLaunchFixture {
     }
 }
 
-contract EdenRewardFacetConfigGuardTest is EdenLaunchFixture {
+contract EdenRewardFacetConfigGuardTest is StEVELaunchFixture {
     function setUp() public override {
         super.setUp();
         _bootstrapCorePools();

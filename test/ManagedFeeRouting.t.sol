@@ -8,10 +8,10 @@ import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {Types} from "src/libraries/Types.sol";
 
-import {EdenLaunchFixture, MockERC20Launch} from "test/utils/EdenLaunchFixture.t.sol";
+import {StEVELaunchFixture, MockERC20Launch} from "test/utils/StEVELaunchFixture.t.sol";
 import {ProtocolTestSupportFacet} from "test/utils/ProtocolTestSupport.sol";
 
-contract ManagedFeeRoutingTest is EdenLaunchFixture {
+contract ManagedFeeRoutingTest is StEVELaunchFixture {
     uint256 internal constant MANAGED_PID = 7;
     uint256 internal constant CREATION_FEE = 1 ether;
     bytes32 internal constant SOURCE = keccak256("managed-route-test");

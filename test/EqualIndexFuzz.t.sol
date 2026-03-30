@@ -8,9 +8,9 @@ import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 
-import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
+import {StEVELaunchFixture} from "test/utils/StEVELaunchFixture.t.sol";
 
-contract EqualIndexFuzzTest is EdenLaunchFixture {
+contract EqualIndexFuzzTest is StEVELaunchFixture {
     function setUp() public override {
         super.setUp();
         _bootstrapCorePools();

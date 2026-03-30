@@ -5,9 +5,9 @@ import {NoClaimableYield} from "src/libraries/Errors.sol";
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 
-import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
+import {StEVELaunchFixture} from "test/utils/StEVELaunchFixture.t.sol";
 
-contract PositionManagementFuzzTest is EdenLaunchFixture {
+contract PositionManagementFuzzTest is StEVELaunchFixture {
     function setUp() public override {
         super.setUp();
         _bootstrapCorePools();

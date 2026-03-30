@@ -9,7 +9,7 @@ import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
 import {EqualIndexLendingFacet} from "src/equalindex/EqualIndexLendingFacet.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
-import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
+import {StEVEViewFacet} from "src/steve/StEVEViewFacet.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
@@ -24,9 +24,9 @@ import {
     NoPoolForAsset
 } from "src/libraries/Errors.sol";
 
-import {EdenLaunchFixture, MockERC20Launch} from "test/utils/EdenLaunchFixture.t.sol";
+import {StEVELaunchFixture, MockERC20Launch} from "test/utils/StEVELaunchFixture.t.sol";
 
-contract EqualIndexLaunchTest is EdenLaunchFixture {
+contract EqualIndexLaunchTest is StEVELaunchFixture {
     function setUp() public override {
         super.setUp();
         _bootstrapCorePools();
@@ -99,7 +99,7 @@ contract EqualIndexLaunchTest is EdenLaunchFixture {
             _createIndexThroughTimelock(_singleAssetIndexParams("Equal EVE", "QEVE", address(eve), 1000, 1000));
 
         assertTrue(indexToken != steveToken);
-        assertEq(EdenViewFacet(diamond).getProductConfig().token, steveToken);
+        assertEq(StEVEViewFacet(diamond).getProductConfig().token, steveToken);
 
         vm.startPrank(bob);
         eve.approve(diamond, 30e18);
@@ -120,7 +120,7 @@ contract EqualIndexLaunchTest is EdenLaunchFixture {
         assertEq(ERC20(indexToken).balanceOf(bob), 0);
         assertEq(ERC20(indexToken).balanceOf(diamond), 0);
         assertEq(EqualIndexAdminFacetV3(diamond).getIndex(indexId).totalUnits, 0);
-        assertEq(EdenViewFacet(diamond).getProductConfig().token, steveToken);
+        assertEq(StEVEViewFacet(diamond).getProductConfig().token, steveToken);
     }
 
     function test_EqualIndexLending_BorrowAndRepay_WorksOnLiveDiamond() public {

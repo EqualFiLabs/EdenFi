@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibDiamond} from "src/libraries/LibDiamond.sol";
-import {LibEdenLendingStorage} from "src/libraries/LibEdenLendingStorage.sol";
+import {LibStEVELendingStorage} from "src/libraries/LibStEVELendingStorage.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
 import {LibPositionAgentStorage} from "src/libraries/LibPositionAgentStorage.sol";
@@ -56,11 +56,11 @@ contract EqualScaleAlphaStorageHarness {
     }
 
     function setLendingNextLoanId(uint256 nextLoanId) external {
-        LibEdenLendingStorage.s().nextLoanId = nextLoanId;
+        LibStEVELendingStorage.s().nextLoanId = nextLoanId;
     }
 
     function lendingNextLoanId() external view returns (uint256) {
-        return LibEdenLendingStorage.s().nextLoanId;
+        return LibStEVELendingStorage.s().nextLoanId;
     }
 
     function setPositionAgentId(uint256 positionId, uint256 agentId) external {
@@ -88,7 +88,7 @@ contract LibEqualScaleAlphaStorageTest {
         require(slot_ != LibPositionNFT.POSITION_NFT_STORAGE_POSITION, "collides with position nft storage");
         require(slot_ != LibPoolMembership.POOL_MEMBERSHIP_STORAGE_POSITION, "collides with pool membership");
         require(slot_ != LibEncumbrance.STORAGE_POSITION, "collides with encumbrance");
-        require(slot_ != LibEdenLendingStorage.STORAGE_POSITION, "collides with eden lending");
+        require(slot_ != LibStEVELendingStorage.STORAGE_POSITION, "collides with eden lending");
         require(slot_ != LibPositionAgentStorage.STORAGE_POSITION, "collides with position agent storage");
     }
 

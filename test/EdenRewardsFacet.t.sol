@@ -9,7 +9,7 @@ import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
 import {LibDiamond} from "src/libraries/LibDiamond.sol";
 import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
-import {LibEdenStEVEStorage} from "src/libraries/LibEdenStEVEStorage.sol";
+import {LibStEVEEligibilityStorage} from "src/libraries/LibStEVEEligibilityStorage.sol";
 import {LibEqualIndexStorage} from "src/libraries/LibEqualIndexStorage.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {InvalidParameterRange, InvalidUnderlying, Unauthorized} from "src/libraries/Errors.sol";
@@ -71,7 +71,7 @@ contract EdenRewardsFacetHarness is EdenRewardsFacet {
     }
 
     function setStEVEEligiblePrincipal(bytes32 positionKey, uint256 eligiblePrincipal) external {
-        LibEdenStEVEStorage.s().eligiblePrincipal[positionKey] = eligiblePrincipal;
+        LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey] = eligiblePrincipal;
     }
 
     function setEqualIndexPool(uint256 indexId, uint256 poolId) external {

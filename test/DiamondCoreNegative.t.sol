@@ -3,14 +3,14 @@ pragma solidity ^0.8.20;
 
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 
-import {DeployEdenByEqualFi} from "script/DeployEdenByEqualFi.s.sol";
+import {DeployEqualFi} from "script/DeployEqualFi.s.sol";
 import {DiamondInit} from "src/core/DiamondInit.sol";
 import {OwnershipFacet} from "src/core/OwnershipFacet.sol";
 import {IDiamondCut} from "src/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "src/interfaces/IDiamondLoupe.sol";
 import {InvalidTimelockController, InvalidTimelockDelay} from "src/libraries/Errors.sol";
 
-contract DiamondCoreNegativeTest is DeployEdenByEqualFi {
+contract DiamondCoreNegativeTest is DeployEqualFi {
     address internal treasury = _addr("treasury");
 
     function test_LoupeSelectorsRemainInternallyConsistent() public {

@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {LibAppStorage} from "./LibAppStorage.sol";
 import {LibEdenRewardsEngine} from "./LibEdenRewardsEngine.sol";
 import {LibEdenRewardsStorage} from "./LibEdenRewardsStorage.sol";
-import {LibEdenStEVEStorage} from "./LibEdenStEVEStorage.sol";
+import {LibStEVEEligibilityStorage} from "./LibStEVEEligibilityStorage.sol";
 import {LibEqualIndexStorage} from "./LibEqualIndexStorage.sol";
 import {InvalidParameterRange} from "./Errors.sol";
 
@@ -15,7 +15,7 @@ library LibEdenRewardsConsumer {
         returns (uint256 eligibleSupply)
     {
         if (target.targetType == LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION) {
-            return LibEdenStEVEStorage.s().eligibleSupply;
+            return LibStEVEEligibilityStorage.s().eligibleSupply;
         }
 
         if (target.targetType == LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION) {

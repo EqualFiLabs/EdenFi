@@ -13,7 +13,7 @@ import {IFlashLoanReceiver} from "src/interfaces/IFlashLoanReceiver.sol";
 import {IEqualIndexFlashReceiver} from "src/interfaces/IEqualIndexFlashReceiver.sol";
 import {FlashLoanUnderpaid} from "src/libraries/Errors.sol";
 
-import {EdenLaunchFixture} from "test/utils/EdenLaunchFixture.t.sol";
+import {StEVELaunchFixture} from "test/utils/StEVELaunchFixture.t.sol";
 
 contract PoolFlashLoanReceiverMock is IFlashLoanReceiver {
     bytes32 internal constant CALLBACK_SUCCESS = keccak256("IFlashLoanReceiver.onFlashLoan");
@@ -46,7 +46,7 @@ contract IndexFlashLoanReceiverMock is IEqualIndexFlashReceiver {
     }
 }
 
-contract FlashLoanFacetTest is EdenLaunchFixture {
+contract FlashLoanFacetTest is StEVELaunchFixture {
     struct IndexFlashExpectation {
         uint256 eveFee;
         uint256 altFee;

@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-import {DeployEdenByEqualFi} from "script/DeployEdenByEqualFi.s.sol";
+import {DeployEqualFi} from "script/DeployEqualFi.s.sol";
 import {IDiamondCut} from "src/interfaces/IDiamondCut.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
@@ -45,7 +45,7 @@ contract PositionNFTTransferHookStub {
     }
 }
 
-contract EqualScaleAlphaIntegrationTest is DeployEdenByEqualFi {
+contract EqualScaleAlphaIntegrationTest is DeployEqualFi {
     uint256 internal constant EVE_POOL_ID = 1;
     uint256 internal constant SETTLEMENT_POOL_ID = 2;
     uint256 internal constant TARGET_LIMIT = 1_000e18;

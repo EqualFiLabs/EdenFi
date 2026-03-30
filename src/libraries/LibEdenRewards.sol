@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibEdenRewardStorage} from "./LibEdenRewardStorage.sol";
-import {LibEdenStEVEStorage} from "./LibEdenStEVEStorage.sol";
+import {LibStEVEEligibilityStorage} from "./LibStEVEEligibilityStorage.sol";
 
 library LibEdenRewards {
     function settlePositionRewards(bytes32 positionKey) internal returns (uint256 claimable) {
@@ -12,7 +12,7 @@ library LibEdenRewards {
         LibEdenRewardStorage.RewardStorage storage rewards = LibEdenRewardStorage.s();
         uint256 checkpoint = rewards.positionRewardIndex[positionKey];
         uint256 globalIndex = rewards.config.globalRewardIndex;
-        uint256 eligiblePrincipal = LibEdenStEVEStorage.s().eligiblePrincipal[positionKey];
+        uint256 eligiblePrincipal = LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey];
 
         if (globalIndex > checkpoint && eligiblePrincipal > 0) {
             rewards.accruedRewards[positionKey] += Math.mulDiv(
@@ -41,7 +41,7 @@ library LibEdenRewards {
         uint256 elapsed = block.timestamp - rewards.config.lastRewardUpdate;
         if (elapsed == 0) return;
 
-        uint256 eligibleSupply = LibEdenStEVEStorage.s().eligibleSupply;
+        uint256 eligibleSupply = LibStEVEEligibilityStorage.s().eligibleSupply;
         if (eligibleSupply == 0 || rewards.config.rewardReserve == 0) {
             rewards.config.lastRewardUpdate = block.timestamp;
             return;
@@ -66,7 +66,7 @@ library LibEdenRewards {
         uint256 globalIndex = previewGlobalRewardIndex();
         uint256 checkpoint = rewards.positionRewardIndex[positionKey];
         uint256 accrued = rewards.accruedRewards[positionKey];
-        uint256 eligiblePrincipal = LibEdenStEVEStorage.s().eligiblePrincipal[positionKey];
+        uint256 eligiblePrincipal = LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey];
 
         if (globalIndex > checkpoint && eligiblePrincipal > 0) {
             accrued += Math.mulDiv(
@@ -90,7 +90,7 @@ library LibEdenRewards {
         uint256 elapsed = block.timestamp - rewards.config.lastRewardUpdate;
         if (elapsed == 0) return rewards.config.globalRewardIndex;
 
-        uint256 eligibleSupply = LibEdenStEVEStorage.s().eligibleSupply;
+        uint256 eligibleSupply = LibStEVEEligibilityStorage.s().eligibleSupply;
         if (eligibleSupply == 0 || rewards.config.rewardReserve == 0) {
             return rewards.config.globalRewardIndex;
         }
@@ -112,7 +112,7 @@ library LibEdenRewards {
         uint256 elapsed = block.timestamp - rewards.config.lastRewardUpdate;
         if (elapsed == 0) return rewards.config.rewardReserve;
 
-        uint256 eligibleSupply = LibEdenStEVEStorage.s().eligibleSupply;
+        uint256 eligibleSupply = LibStEVEEligibilityStorage.s().eligibleSupply;
         if (eligibleSupply == 0 || rewards.config.rewardReserve == 0) {
             return rewards.config.rewardReserve;
         }

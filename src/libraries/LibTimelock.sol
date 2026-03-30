@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.20;
 
-import {LibEdenAdminStorage} from "./LibEdenAdminStorage.sol";
+import {LibStEVEAdminStorage} from "./LibStEVEAdminStorage.sol";
 import {InvalidTimelockController, InvalidTimelockDelay} from "./Errors.sol";
 
 interface ITimelockControllerLike {
@@ -21,7 +21,7 @@ library LibTimelock {
             revert InvalidTimelockController(controller);
         }
 
-        uint256 expectedDelay = LibEdenAdminStorage.TIMELOCK_DELAY_SECONDS;
+        uint256 expectedDelay = LibStEVEAdminStorage.TIMELOCK_DELAY_SECONDS;
         if (delay != expectedDelay) {
             revert InvalidTimelockDelay(expectedDelay, delay);
         }

@@ -4,17 +4,17 @@ pragma solidity ^0.8.20;
 import {LibEdenRewards} from "./LibEdenRewards.sol";
 import {LibEdenRewardsConsumer} from "./LibEdenRewardsConsumer.sol";
 import {LibEdenRewardsStorage} from "./LibEdenRewardsStorage.sol";
-import {LibEdenStEVEStorage} from "./LibEdenStEVEStorage.sol";
+import {LibStEVEEligibilityStorage} from "./LibStEVEEligibilityStorage.sol";
 
 library LibStEVERewards {
     function settleBeforeEligibleBalanceChange(bytes32 positionKey) internal returns (uint256 eligibleBalance) {
-        eligibleBalance = LibEdenStEVEStorage.s().eligiblePrincipal[positionKey];
+        eligibleBalance = LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey];
         LibEdenRewards.settlePositionRewards(positionKey);
         LibEdenRewardsConsumer.beforeTargetBalanceChange(_target(), positionKey, eligibleBalance);
     }
 
     function syncEligibleBalanceChange(bytes32 positionKey, uint256 previousBalance, uint256 newBalance) internal {
-        LibEdenStEVEStorage.StEVEStorage storage store = LibEdenStEVEStorage.s();
+        LibStEVEEligibilityStorage.EligibilityStorage storage store = LibStEVEEligibilityStorage.s();
         store.eligiblePrincipal[positionKey] = newBalance;
         if (newBalance > previousBalance) {
             store.eligibleSupply += newBalance - previousBalance;
