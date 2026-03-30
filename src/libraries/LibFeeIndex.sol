@@ -132,20 +132,8 @@ library LibFeeIndex {
         Types.PoolData storage p = LibAppStorage.s().pools[pid];
         amount = p.userAccruedYield[user];
 
-        uint256 principal = p.userPrincipal[user];
+        uint256 principal = previewSettledPrincipal(pid, user);
         if (principal == 0) return amount;
-
-        uint256 globalMaintenanceIndex = p.maintenanceIndex;
-        uint256 userMaintenanceIndex = p.userMaintenanceIndex[user];
-        if (globalMaintenanceIndex > userMaintenanceIndex) {
-            uint256 maintenanceDelta = globalMaintenanceIndex - userMaintenanceIndex;
-            uint256 maintenanceFee = Math.mulDiv(principal, maintenanceDelta, INDEX_SCALE);
-            if (maintenanceFee >= principal) {
-                principal = 0;
-            } else {
-                principal -= maintenanceFee;
-            }
-        }
 
         uint256 globalIndex = p.feeIndex;
         uint256 userIndex = p.userFeeIndex[user];
@@ -155,6 +143,25 @@ library LibFeeIndex {
                 amount += Math.mulDiv(feeBase, globalIndex - userIndex, INDEX_SCALE);
             }
         }
+    }
+
+    function previewSettledPrincipal(uint256 pid, bytes32 user) internal view returns (uint256 principal) {
+        Types.PoolData storage p = LibAppStorage.s().pools[pid];
+        principal = p.userPrincipal[user];
+        if (principal == 0) return 0;
+
+        uint256 globalMaintenanceIndex = p.maintenanceIndex;
+        uint256 userMaintenanceIndex = p.userMaintenanceIndex[user];
+        if (globalMaintenanceIndex <= userMaintenanceIndex) {
+            return principal;
+        }
+
+        uint256 maintenanceDelta = globalMaintenanceIndex - userMaintenanceIndex;
+        uint256 maintenanceFee = Math.mulDiv(principal, maintenanceDelta, INDEX_SCALE);
+        if (maintenanceFee >= principal) {
+            return 0;
+        }
+        return principal - maintenanceFee;
     }
 
     function _feeBase(Types.PoolData storage p, bytes32 user, uint256 principal) private view returns (uint256) {

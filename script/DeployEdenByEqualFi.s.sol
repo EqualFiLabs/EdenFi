@@ -528,7 +528,7 @@ contract DeployEdenByEqualFi is Script {
     }
 
     function _selectorsEdenRewards() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
+        s = new bytes4[](15);
         s[0] = EdenRewardsFacet.createRewardProgram.selector;
         s[1] = EdenRewardsFacet.setRewardProgramEnabled.selector;
         s[2] = EdenRewardsFacet.pauseRewardProgram.selector;
@@ -542,6 +542,8 @@ contract DeployEdenByEqualFi is Script {
         s[10] = EdenRewardsFacet.getRewardProgram.selector;
         s[11] = EdenRewardsFacet.previewRewardProgramState.selector;
         s[12] = EdenRewardsFacet.getRewardProgramIdsByTarget.selector;
+        s[13] = EdenRewardsFacet.previewRewardProgramPosition.selector;
+        s[14] = EdenRewardsFacet.previewRewardProgramsForPosition.selector;
     }
 
     function _selectorsEdenLending() internal pure returns (bytes4[] memory s) {

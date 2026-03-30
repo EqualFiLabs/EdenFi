@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.20;
 
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibAccess} from "../libraries/LibAccess.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
@@ -16,6 +17,22 @@ import {Unauthorized, InvalidParameterRange, InvalidUnderlying} from "../librari
 
 contract EdenRewardsFacet is ReentrancyGuardModifiers {
     error RewardProgramNotFound(uint256 programId);
+
+    struct RewardProgramPositionView {
+        uint256 eligibleBalance;
+        uint256 rewardCheckpoint;
+        uint256 accruedRewards;
+        uint256 pendingRewards;
+        uint256 claimableRewards;
+        uint256 previewGlobalRewardIndex;
+        address rewardToken;
+    }
+
+    struct RewardProgramClaimPreview {
+        uint256 programId;
+        address rewardToken;
+        uint256 claimableRewards;
+    }
 
     event RewardProgramCreated(
         uint256 indexed programId,
@@ -256,6 +273,60 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         }
     }
 
+    function previewRewardProgramPosition(uint256 programId, uint256 positionId)
+        external
+        view
+        returns (RewardProgramPositionView memory view_)
+    {
+        LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
+        bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
+        LibEdenRewardsStorage.RewardProgramState memory previewState = LibEdenRewardsEngine.previewProgramState(programId);
+        uint256 checkpoint = LibEdenRewardsStorage.s().positionRewardIndex[programId][positionKey];
+        uint256 accrued = LibEdenRewardsStorage.s().accruedRewards[programId][positionKey];
+        uint256 eligibleBalance = _eligibleBalanceView(program.config.target, positionKey);
+        uint256 pending;
+
+        if (previewState.globalRewardIndex > checkpoint && eligibleBalance > 0) {
+            pending = Math.mulDiv(
+                eligibleBalance,
+                previewState.globalRewardIndex - checkpoint,
+                LibEdenRewardsStorage.REWARD_INDEX_SCALE
+            );
+        }
+
+        view_ = RewardProgramPositionView({
+            eligibleBalance: eligibleBalance,
+            rewardCheckpoint: checkpoint,
+            accruedRewards: accrued,
+            pendingRewards: pending,
+            claimableRewards: accrued + pending,
+            previewGlobalRewardIndex: previewState.globalRewardIndex,
+            rewardToken: program.config.rewardToken
+        });
+    }
+
+    function previewRewardProgramsForPosition(uint256 positionId, uint256[] calldata programIds)
+        external
+        view
+        returns (RewardProgramClaimPreview[] memory previews, uint256 totalClaimable)
+    {
+        bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
+        uint256 len = programIds.length;
+        previews = new RewardProgramClaimPreview[](len);
+
+        for (uint256 i = 0; i < len; i++) {
+            uint256 programId = programIds[i];
+            LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
+            uint256 claimable = _previewClaimableRewards(programId, positionKey, program.config.target);
+            previews[i] = RewardProgramClaimPreview({
+                programId: programId,
+                rewardToken: program.config.rewardToken,
+                claimableRewards: claimable
+            });
+            totalClaimable += claimable;
+        }
+    }
+
     function _validateTarget(LibEdenRewardsStorage.RewardTargetType targetType, uint256 targetId) private pure {
         if (targetType == LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION) {
             if (targetId != LibEdenRewardsStorage.STEVE_TARGET_ID) revert InvalidParameterRange("steveTargetId");
@@ -314,6 +385,48 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         }
 
         revert InvalidParameterRange("targetType");
+    }
+
+    function _eligibleBalanceView(LibEdenRewardsStorage.RewardTarget memory target, bytes32 positionKey)
+        private
+        view
+        returns (uint256 eligibleBalance)
+    {
+        if (target.targetType == LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION) {
+            return LibEdenStEVEStorage.s().eligiblePrincipal[positionKey];
+        }
+
+        if (target.targetType == LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION) {
+            uint256 poolId = LibEqualIndexStorage.poolIdForIndex(target.targetId);
+            if (poolId == 0) {
+                return 0;
+            }
+
+            return LibFeeIndex.previewSettledPrincipal(poolId, positionKey);
+        }
+
+        revert InvalidParameterRange("targetType");
+    }
+
+    function _previewClaimableRewards(
+        uint256 programId,
+        bytes32 positionKey,
+        LibEdenRewardsStorage.RewardTarget memory target
+    ) private view returns (uint256 claimable) {
+        LibEdenRewardsStorage.RewardProgramState memory previewState = LibEdenRewardsEngine.previewProgramState(programId);
+        uint256 checkpoint = LibEdenRewardsStorage.s().positionRewardIndex[programId][positionKey];
+        uint256 accrued = LibEdenRewardsStorage.s().accruedRewards[programId][positionKey];
+        uint256 eligibleBalance = _eligibleBalanceView(target, positionKey);
+
+        if (previewState.globalRewardIndex > checkpoint && eligibleBalance > 0) {
+            accrued += Math.mulDiv(
+                eligibleBalance,
+                previewState.globalRewardIndex - checkpoint,
+                LibEdenRewardsStorage.REWARD_INDEX_SCALE
+            );
+        }
+
+        return accrued;
     }
 
     function _emitAccrual(

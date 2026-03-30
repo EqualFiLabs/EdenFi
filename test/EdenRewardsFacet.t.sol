@@ -541,4 +541,98 @@ contract EdenRewardsFacetTest is Test {
         assertEq(facet.accruedReward(alicePositionKey, programId), 9_999_999_999_999_999_999);
         assertEq(facet.rewardCheckpoint(alicePositionKey, programId), (5 * LibEdenRewardsStorage.REWARD_INDEX_SCALE) / 3);
     }
+
+    function test_PreviewRewardProgramPosition_ExposesAccruedAndPendingState() public {
+        vm.prank(timelock);
+        uint256 programId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            0,
+            address(rewardAsset),
+            manager,
+            2e18,
+            0,
+            0,
+            true
+        );
+
+        rewardAsset.mint(address(this), 200e18);
+        rewardAsset.approve(address(facet), 200e18);
+        facet.fundRewardProgram(programId, 200e18, 200e18);
+        facet.setProgramEligibleSupply(programId, 10e18);
+        facet.setStEVEEligiblePrincipal(alicePositionKey, 4e18);
+
+        vm.warp(block.timestamp + 5);
+        facet.settleRewardProgramPosition(programId, alicePositionId);
+
+        vm.warp(block.timestamp + 5);
+        EdenRewardsFacet.RewardProgramPositionView memory view_ =
+            facet.previewRewardProgramPosition(programId, alicePositionId);
+
+        assertEq(view_.eligibleBalance, 4e18);
+        assertEq(view_.rewardCheckpoint, LibEdenRewardsStorage.REWARD_INDEX_SCALE);
+        assertEq(view_.accruedRewards, 4e18);
+        assertEq(view_.pendingRewards, 4e18);
+        assertEq(view_.claimableRewards, 8e18);
+        assertEq(view_.previewGlobalRewardIndex, 2 * LibEdenRewardsStorage.REWARD_INDEX_SCALE);
+        assertEq(view_.rewardToken, address(rewardAsset));
+    }
+
+    function test_PreviewRewardProgramsForPosition_AggregatesAcrossPrograms() public {
+        vm.prank(timelock);
+        uint256 firstProgramId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            0,
+            address(rewardAsset),
+            manager,
+            2e18,
+            0,
+            0,
+            true
+        );
+        vm.prank(timelock);
+        uint256 secondProgramId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            0,
+            address(altRewardAsset),
+            manager,
+            5e18,
+            0,
+            0,
+            true
+        );
+
+        rewardAsset.mint(address(this), 200e18);
+        rewardAsset.approve(address(facet), 200e18);
+        facet.fundRewardProgram(firstProgramId, 200e18, 200e18);
+
+        altRewardAsset.mint(address(this), 200e18);
+        altRewardAsset.approve(address(facet), 200e18);
+        facet.fundRewardProgram(secondProgramId, 200e18, 200e18);
+
+        facet.setProgramEligibleSupply(firstProgramId, 10e18);
+        facet.setProgramEligibleSupply(secondProgramId, 10e18);
+        facet.setStEVEEligiblePrincipal(alicePositionKey, 4e18);
+
+        vm.warp(block.timestamp + 5);
+        facet.settleRewardProgramPosition(firstProgramId, alicePositionId);
+
+        vm.warp(block.timestamp + 5);
+        uint256[] memory programIds = new uint256[](2);
+        programIds[0] = firstProgramId;
+        programIds[1] = secondProgramId;
+
+        (EdenRewardsFacet.RewardProgramClaimPreview[] memory previews, uint256 totalClaimable) =
+            facet.previewRewardProgramsForPosition(alicePositionId, programIds);
+
+        assertEq(previews.length, 2);
+        assertEq(previews[0].programId, firstProgramId);
+        assertEq(previews[0].rewardToken, address(rewardAsset));
+        assertEq(previews[0].claimableRewards, 8e18);
+
+        assertEq(previews[1].programId, secondProgramId);
+        assertEq(previews[1].rewardToken, address(altRewardAsset));
+        assertEq(previews[1].claimableRewards, 20e18);
+
+        assertEq(totalClaimable, 28e18);
+    }
 }
