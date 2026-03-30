@@ -16,8 +16,8 @@ library LibEqualIndexRewards {
         LibEdenRewardsConsumer.beforeTargetBalanceChange(_target(indexId), positionKey, eligibleBalance);
     }
 
-    function syncEligibleBalanceChange(uint256 indexId, uint256 previousBalance, uint256 newBalance) internal {
-        LibEdenRewardsConsumer.afterTargetBalanceChange(_target(indexId), previousBalance, newBalance);
+    function syncEligibleBalanceChange(uint256 indexId) internal {
+        LibEdenRewardsConsumer.afterTargetBalanceChange(_target(indexId));
     }
 
     function _target(uint256 indexId) private pure returns (LibEdenRewardsStorage.RewardTarget memory target) {

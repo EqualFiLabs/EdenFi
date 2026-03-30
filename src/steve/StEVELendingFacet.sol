@@ -175,7 +175,6 @@ contract StEVELendingFacet is StEVELendingLogic, ReentrancyGuardModifiers {
 
         LibPoolMembership._ensurePoolMembership(loan.borrowerPositionKey, basket.poolId, true);
         LibActiveCreditIndex.settle(basket.poolId, loan.borrowerPositionKey);
-        LibFeeIndex.settle(basket.poolId, loan.borrowerPositionKey);
         _settleRecoveredStEVE(loan.borrowerPositionKey, loan.collateralUnits);
 
         uint256 currentPrincipal = basketPool.userPrincipal[loan.borrowerPositionKey];

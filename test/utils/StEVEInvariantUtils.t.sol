@@ -26,8 +26,10 @@ import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
 import {LibStEVEEligibilityStorage} from "src/libraries/LibStEVEEligibilityStorage.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
+import {LibFeeIndex} from "src/libraries/LibFeeIndex.sol";
 import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
 import {LibPositionHelpers} from "src/libraries/LibPositionHelpers.sol";
+import {LibStEVEStorage} from "src/libraries/LibStEVEStorage.sol";
 import {Types} from "src/libraries/Types.sol";
 
 import {MockERC20Launch} from "test/utils/StEVELaunchFixture.t.sol";
@@ -102,11 +104,29 @@ contract StEVEInvariantInspector {
     }
 
     function eligibleSupply() external view returns (uint256) {
-        return LibStEVEEligibilityStorage.s().eligibleSupply;
+        if (!LibStEVEEligibilityStorage.s().configured) {
+            return 0;
+        }
+
+        uint256 poolId = LibStEVEStorage.s().product.poolId;
+        if (poolId == 0) {
+            return 0;
+        }
+
+        return LibAppStorage.s().pools[poolId].totalDeposits;
     }
 
     function eligiblePrincipal(bytes32 positionKey) external view returns (uint256) {
-        return LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey];
+        if (!LibStEVEEligibilityStorage.s().configured) {
+            return 0;
+        }
+
+        uint256 poolId = LibStEVEStorage.s().product.poolId;
+        if (poolId == 0) {
+            return 0;
+        }
+
+        return LibFeeIndex.previewSettledPrincipal(poolId, positionKey);
     }
 
 }

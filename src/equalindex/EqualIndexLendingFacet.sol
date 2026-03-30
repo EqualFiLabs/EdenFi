@@ -514,7 +514,7 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         }
         indexPool.userFeeIndex[loan.positionKey] = indexPool.feeIndex;
         indexPool.userMaintenanceIndex[loan.positionKey] = indexPool.maintenanceIndex;
-        LibEqualIndexRewards.syncEligibleBalanceChange(loan.indexId, principalBefore, principalAfter);
+        LibEqualIndexRewards.syncEligibleBalanceChange(loan.indexId);
 
         _unencumberWithAci(indexPool, loan.positionKey, indexPoolId, loan.collateralUnits);
     }

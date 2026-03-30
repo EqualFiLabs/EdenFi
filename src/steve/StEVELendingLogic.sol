@@ -407,14 +407,10 @@ abstract contract StEVELendingLogic is StEVEProductBase {
     }
 
     function _settleRecoveredStEVE(bytes32 positionKey, uint256 amount) internal {
-        LibStEVEEligibilityStorage.EligibilityStorage storage steve = LibStEVEEligibilityStorage.s();
-        if (!steve.configured) return;
-
-        uint256 eligible = steve.eligiblePrincipal[positionKey];
-        if (amount > eligible) revert InsufficientPrincipal(amount, eligible);
-
+        if (!LibStEVEEligibilityStorage.s().configured) return;
         uint256 eligibleBefore = LibStEVERewards.settleBeforeEligibleBalanceChange(positionKey);
-        LibStEVERewards.syncEligibleBalanceChange(positionKey, eligibleBefore, eligible - amount);
+        if (amount > eligibleBefore) revert InsufficientPrincipal(amount, eligibleBefore);
+        LibStEVERewards.syncEligibleBalanceChange();
     }
 
     function _loanModuleId(uint256 loanId) internal pure returns (uint256) {

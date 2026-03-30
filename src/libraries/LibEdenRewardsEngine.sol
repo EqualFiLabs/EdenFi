@@ -2,7 +2,13 @@
 pragma solidity ^0.8.20;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {LibAppStorage} from "./LibAppStorage.sol";
+import {LibEqualIndexStorage} from "./LibEqualIndexStorage.sol";
+import {LibMaintenance} from "./LibMaintenance.sol";
 import {LibEdenRewardsStorage} from "./LibEdenRewardsStorage.sol";
+import {LibStEVEEligibilityStorage} from "./LibStEVEEligibilityStorage.sol";
+import {LibStEVEStorage} from "./LibStEVEStorage.sol";
+import {InvalidParameterRange} from "./Errors.sol";
 
 library LibEdenRewardsEngine {
     function accrueProgram(uint256 programId)
@@ -10,7 +16,10 @@ library LibEdenRewardsEngine {
         returns (LibEdenRewardsStorage.RewardProgramState memory state)
     {
         LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
-        state = _previewAccrual(store.programs[programId].config, store.programs[programId].state, block.timestamp);
+        LibEdenRewardsStorage.RewardProgramConfig memory config = store.programs[programId].config;
+        state = store.programs[programId].state;
+        state.eligibleSupply = _currentEligibleSupply(config.target);
+        state = _previewAccrual(config, state, block.timestamp);
         store.programs[programId].state = state;
     }
 
@@ -20,7 +29,10 @@ library LibEdenRewardsEngine {
         returns (LibEdenRewardsStorage.RewardProgramState memory state)
     {
         LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
-        state = _previewAccrual(store.programs[programId].config, store.programs[programId].state, block.timestamp);
+        LibEdenRewardsStorage.RewardProgramConfig memory config = store.programs[programId].config;
+        state = store.programs[programId].state;
+        state.eligibleSupply = _currentEligibleSupplyView(config.target);
+        state = _previewAccrual(config, state, block.timestamp);
     }
 
     function settleProgramPosition(uint256 programId, bytes32 positionKey, uint256 eligibleBalance)
@@ -40,6 +52,14 @@ library LibEdenRewardsEngine {
 
         store.positionRewardIndex[programId][positionKey] = globalRewardIndex;
         claimable = store.accruedRewards[programId][positionKey];
+    }
+
+    function currentEligibleSupply(LibEdenRewardsStorage.RewardTarget memory target)
+        internal
+        view
+        returns (uint256 eligibleSupply)
+    {
+        return _currentEligibleSupplyView(target);
     }
 
     function _previewAccrual(
@@ -90,5 +110,46 @@ library LibEdenRewardsEngine {
             return endTime;
         }
         return timestamp;
+    }
+
+    function _currentEligibleSupply(LibEdenRewardsStorage.RewardTarget memory target)
+        private
+        returns (uint256 eligibleSupply)
+    {
+        uint256 poolId = _poolIdForTarget(target);
+        if (poolId == 0) {
+            return 0;
+        }
+
+        LibMaintenance.enforce(poolId);
+        return LibAppStorage.s().pools[poolId].totalDeposits;
+    }
+
+    function _currentEligibleSupplyView(LibEdenRewardsStorage.RewardTarget memory target)
+        private
+        view
+        returns (uint256 eligibleSupply)
+    {
+        uint256 poolId = _poolIdForTarget(target);
+        if (poolId == 0) {
+            return 0;
+        }
+
+        return LibAppStorage.s().pools[poolId].totalDeposits;
+    }
+
+    function _poolIdForTarget(LibEdenRewardsStorage.RewardTarget memory target) private view returns (uint256 poolId) {
+        if (target.targetType == LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION) {
+            if (!LibStEVEEligibilityStorage.s().configured) {
+                return 0;
+            }
+            return LibStEVEStorage.s().product.poolId;
+        }
+
+        if (target.targetType == LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION) {
+            return LibEqualIndexStorage.poolIdForIndex(target.targetId);
+        }
+
+        revert InvalidParameterRange("targetType");
     }
 }

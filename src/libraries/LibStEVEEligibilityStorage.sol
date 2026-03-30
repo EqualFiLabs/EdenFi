@@ -6,8 +6,6 @@ library LibStEVEEligibilityStorage {
 
     struct EligibilityStorage {
         bool configured;
-        uint256 eligibleSupply;
-        mapping(bytes32 => uint256) eligiblePrincipal;
     }
 
     function s() internal pure returns (EligibilityStorage storage store) {

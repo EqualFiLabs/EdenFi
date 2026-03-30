@@ -107,7 +107,7 @@ contract EqualIndexPositionFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         }
         indexPool.userFeeIndex[positionKey] = indexPool.feeIndex;
         indexPool.userMaintenanceIndex[positionKey] = indexPool.maintenanceIndex;
-        LibEqualIndexRewards.syncEligibleBalanceChange(indexId, currentPrincipal, newPrincipal);
+        LibEqualIndexRewards.syncEligibleBalanceChange(indexId);
     }
 
     function burnFromPosition(uint256 positionId, uint256 indexId, uint256 units)
@@ -163,7 +163,7 @@ contract EqualIndexPositionFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         }
         indexPool.userFeeIndex[positionKey] = indexPool.feeIndex;
         indexPool.userMaintenanceIndex[positionKey] = indexPool.maintenanceIndex;
-        LibEqualIndexRewards.syncEligibleBalanceChange(indexId, positionIndexBalance, newPrincipal);
+        LibEqualIndexRewards.syncEligibleBalanceChange(indexId);
     }
 
     function _quotePositionMintLeg(

@@ -4,9 +4,8 @@ pragma solidity ^0.8.20;
 import {BasketToken} from "../tokens/BasketToken.sol";
 import {StEVELogic} from "./StEVELogic.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
-import {LibStEVEStorage} from "../libraries/LibStEVEStorage.sol";
-import {LibStEVEEligibilityStorage} from "../libraries/LibStEVEEligibilityStorage.sol";
 import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
+import {LibStEVEStorage} from "../libraries/LibStEVEStorage.sol";
 import {LibPoolMembership} from "../libraries/LibPoolMembership.sol";
 import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
 import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
@@ -28,7 +27,7 @@ contract StEVEPositionFacet is StEVELogic, ReentrancyGuardModifiers {
         LibStEVEStorage.ProductConfig storage product = LibStEVEStorage.s().product;
         if (product.paused) revert IndexPaused(LibStEVEStorage.PRODUCT_ID);
 
-        uint256 eligibleBefore = LibStEVERewards.settleBeforeEligibleBalanceChange(positionKey);
+        LibStEVERewards.settleBeforeEligibleBalanceChange(positionKey);
 
         PositionMintState memory state;
         state.required = new uint256[](product.assets.length);
@@ -69,7 +68,7 @@ contract StEVEPositionFacet is StEVELogic, ReentrancyGuardModifiers {
         basketPool.userFeeIndex[positionKey] = basketPool.feeIndex;
         basketPool.userMaintenanceIndex[positionKey] = basketPool.maintenanceIndex;
 
-        LibStEVERewards.syncEligibleBalanceChange(positionKey, eligibleBefore, eligibleBefore + minted);
+        LibStEVERewards.syncEligibleBalanceChange();
     }
 
     function burnStEVEFromPosition(uint256 positionId, uint256 units)
@@ -86,15 +85,12 @@ contract StEVEPositionFacet is StEVELogic, ReentrancyGuardModifiers {
         if (product.paused) revert IndexPaused(LibStEVEStorage.PRODUCT_ID);
         if (units > product.totalUnits) revert InvalidUnits();
 
-        LibStEVEEligibilityStorage.EligibilityStorage storage steve = LibStEVEEligibilityStorage.s();
-        uint256 eligible = steve.eligiblePrincipal[positionKey];
-        if (units > eligible) revert InsufficientPrincipal(units, eligible);
         uint256 eligibleBefore = LibStEVERewards.settleBeforeEligibleBalanceChange(positionKey);
+        if (units > eligibleBefore) revert InsufficientPrincipal(units, eligibleBefore);
 
         LibAppStorage.AppStorage storage app = LibAppStorage.s();
         Types.PoolData storage basketPool = app.pools[product.poolId];
         LibPoolMembership._ensurePoolMembership(positionKey, product.poolId, true);
-        LibFeeIndex.settle(product.poolId, positionKey);
         uint256 positionBalance = basketPool.userPrincipal[positionKey];
         if (units > positionBalance) revert InsufficientIndexTokens(units, positionBalance);
 
@@ -116,7 +112,7 @@ contract StEVEPositionFacet is StEVELogic, ReentrancyGuardModifiers {
         }
         basketPool.userFeeIndex[positionKey] = basketPool.feeIndex;
         basketPool.userMaintenanceIndex[positionKey] = basketPool.maintenanceIndex;
-        LibStEVERewards.syncEligibleBalanceChange(positionKey, eligibleBefore, eligible - units);
+        LibStEVERewards.syncEligibleBalanceChange();
         assetsOut = state.assetsOut;
     }
 

@@ -11,7 +11,6 @@ import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibStEVEStorage} from "../libraries/LibStEVEStorage.sol";
 import {LibStEVEEligibilityStorage} from "../libraries/LibStEVEEligibilityStorage.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
-import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
 import {LibPoolMembership} from "../libraries/LibPoolMembership.sol";
 import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
 import {LibStEVERewards} from "../libraries/LibStEVERewards.sol";
@@ -65,8 +64,7 @@ contract StEVEActionFacet is StEVELogic, StEVEPoolHelpers, ReentrancyGuardModifi
         LibPoolMembership._ensurePoolMembership(positionKey, pid, true);
 
         LibActiveCreditIndex.settle(pid, positionKey);
-        LibFeeIndex.settle(pid, positionKey);
-        uint256 eligibleBefore = LibStEVERewards.settleBeforeEligibleBalanceChange(positionKey);
+        LibStEVERewards.settleBeforeEligibleBalanceChange(positionKey);
 
         uint256 currentPrincipal = pool.userPrincipal[positionKey];
         bool isNewUser = currentPrincipal == 0;
@@ -89,7 +87,7 @@ contract StEVEActionFacet is StEVELogic, StEVEPoolHelpers, ReentrancyGuardModifi
             pool.userCount += 1;
         }
 
-        LibStEVERewards.syncEligibleBalanceChange(positionKey, eligibleBefore, eligibleBefore + received);
+        LibStEVERewards.syncEligibleBalanceChange();
 
         emit StEVEDepositedToPosition(tokenId, positionKey, received);
     }
@@ -104,20 +102,18 @@ contract StEVEActionFacet is StEVELogic, StEVEPoolHelpers, ReentrancyGuardModifi
         if (!store.configured) revert InvalidParameterRange("stEVE not configured");
 
         bytes32 positionKey = _getPositionKey(tokenId);
-        uint256 eligible = store.eligiblePrincipal[positionKey];
-        if (amount > eligible) revert InsufficientPrincipal(amount, eligible);
-
         uint256 pid = LibStEVEStorage.s().product.poolId;
         _requireOwnership(tokenId);
         Types.PoolData storage pool = _pool(pid);
         LibPoolMembership._ensurePoolMembership(positionKey, pid, true);
 
         LibActiveCreditIndex.settle(pid, positionKey);
-        LibFeeIndex.settle(pid, positionKey);
         uint256 eligibleBefore = LibStEVERewards.settleBeforeEligibleBalanceChange(positionKey);
+        if (amount > eligibleBefore) revert InsufficientPrincipal(amount, eligibleBefore);
 
-        if (LibEncumbrance.total(positionKey, pid) > eligible - amount) {
-            revert InsufficientUnencumberedPrincipal(amount, eligible - amount);
+        uint256 newEligible = eligibleBefore - amount;
+        if (LibEncumbrance.total(positionKey, pid) > newEligible) {
+            revert InsufficientUnencumberedPrincipal(amount, newEligible);
         }
 
         if (amount > pool.trackedBalance) revert InsufficientPrincipal(amount, pool.trackedBalance);
@@ -133,17 +129,17 @@ contract StEVEActionFacet is StEVELogic, StEVEPoolHelpers, ReentrancyGuardModifi
             LibAppStorage.s().nativeTrackedTotal -= amount;
         }
 
-        LibStEVERewards.syncEligibleBalanceChange(positionKey, eligibleBefore, eligible - amount);
+        LibStEVERewards.syncEligibleBalanceChange();
         withdrawn = LibCurrency.transferWithMin(pool.underlying, msg.sender, amount, minReceived);
 
         emit StEVEWithdrawnFromPosition(tokenId, positionKey, withdrawn);
     }
 
     function eligibleSupply() external view returns (uint256) {
-        return LibStEVEEligibilityStorage.s().eligibleSupply;
+        return LibStEVERewards.currentEligibleSupply();
     }
 
     function eligiblePrincipalOfPosition(uint256 tokenId) external view returns (uint256) {
-        return LibStEVEEligibilityStorage.s().eligiblePrincipal[_getPositionKey(tokenId)];
+        return LibStEVERewards.previewEligibleBalance(_getPositionKey(tokenId));
     }
 }

@@ -8,10 +8,10 @@ import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEdenRewardsConsumer} from "../libraries/LibEdenRewardsConsumer.sol";
 import {LibEdenRewardsEngine} from "../libraries/LibEdenRewardsEngine.sol";
 import {LibEdenRewardsStorage} from "../libraries/LibEdenRewardsStorage.sol";
-import {LibStEVEEligibilityStorage} from "../libraries/LibStEVEEligibilityStorage.sol";
 import {LibEqualIndexStorage} from "../libraries/LibEqualIndexStorage.sol";
 import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
 import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
+import {LibStEVERewards} from "../libraries/LibStEVERewards.sol";
 import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
 import {Unauthorized, InvalidParameterRange, InvalidUnderlying} from "../libraries/Errors.sol";
 
@@ -376,7 +376,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         returns (uint256 eligibleBalance)
     {
         if (target.targetType == LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION) {
-            return LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey];
+            return LibStEVERewards.currentEligibleBalance(positionKey);
         }
 
         if (target.targetType == LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION) {
@@ -398,7 +398,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         returns (uint256 eligibleBalance)
     {
         if (target.targetType == LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION) {
-            return LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey];
+            return LibStEVERewards.previewEligibleBalance(positionKey);
         }
 
         if (target.targetType == LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION) {

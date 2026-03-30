@@ -20,6 +20,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibPositionAgentStorage} from "../libraries/LibPositionAgentStorage.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
+import {LibStEVERewards} from "../libraries/LibStEVERewards.sol";
 import {Types} from "../libraries/Types.sol";
 import "../libraries/Errors.sol";
 
@@ -192,7 +193,7 @@ contract StEVEViewFacet is StEVELendingLogic {
             _rewardProgramSummary();
 
         view_.steveConfigured = steve.configured;
-        view_.eligibleSupply = steve.eligibleSupply;
+        view_.eligibleSupply = LibStEVERewards.currentEligibleSupply();
         view_.rewardProgramCount = rewardProgramCount;
         view_.activeRewardProgramCount = activeRewardProgramCount;
         view_.totalRewardReserve = totalRewardReserve;
@@ -260,7 +261,7 @@ contract StEVEViewFacet is StEVELendingLogic {
 
     function getPositionRewardView(uint256 positionId) public view returns (PositionRewardView memory rewards_) {
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
-        uint256 eligiblePrincipal = LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey];
+        uint256 eligiblePrincipal = LibStEVERewards.previewEligibleBalance(positionKey);
         (uint256 claimableRewards, uint256 rewardProgramCount, uint256 claimableProgramCount) =
             _positionRewardSummary(positionKey, eligiblePrincipal);
         rewards_ = PositionRewardView({
@@ -500,7 +501,7 @@ contract StEVEViewFacet is StEVELendingLogic {
 
     function canClaimRewards(uint256 positionId) external view returns (ActionCheck memory) {
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
-        uint256 eligiblePrincipal = LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey];
+        uint256 eligiblePrincipal = LibStEVERewards.previewEligibleBalance(positionKey);
         (uint256 claimableRewards, uint256 rewardProgramCount,) = _positionRewardSummary(positionKey, eligiblePrincipal);
         if (claimableRewards != 0) {
             return _ok();
@@ -519,7 +520,7 @@ contract StEVEViewFacet is StEVELendingLogic {
         }
 
         LibStEVEStorage.ProductConfig storage basket = store.product;
-        uint256 principal = LibAppStorage.s().pools[basket.poolId].userPrincipal[positionKey];
+        uint256 principal = LibStEVERewards.previewEligibleBalance(positionKey);
         uint256 encumbered = LibEncumbrance.total(positionKey, basket.poolId);
         if (principal == 0 && encumbered == 0) {
             return product;
@@ -535,7 +536,7 @@ contract StEVEViewFacet is StEVELendingLogic {
             encumberedUnits: encumbered,
             availableUnits: principal > encumbered ? principal - encumbered : 0,
             paused: basket.paused,
-            rewardEligible: LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey] != 0
+            rewardEligible: principal != 0
         });
     }
 
