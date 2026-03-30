@@ -143,9 +143,6 @@ library Types {
         // Bounded-mutable: AUM fee (within immutable bounds)
         uint16 currentAumFeeBps;
         
-        // UI guidance flag (does not affect functionality)
-        bool deprecated;
-        
         // Operational state (always mutable)
         uint256 totalDeposits;
         uint256 indexEncumberedTotal;      // Aggregate index encumbrance excluded from maintenance fee base

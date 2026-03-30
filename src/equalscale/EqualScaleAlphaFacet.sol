@@ -9,10 +9,10 @@ import {LibEqualScaleAlphaShared} from "src/equalscale/LibEqualScaleAlphaShared.
 import {LibActiveCreditIndex} from "src/libraries/LibActiveCreditIndex.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
-import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
 import {LibModuleEncumbrance} from "src/libraries/LibModuleEncumbrance.sol";
 import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
+import {LibPositionHelpers} from "src/libraries/LibPositionHelpers.sol";
 import {InsufficientPoolLiquidity} from "src/libraries/Errors.sol";
 import {Types} from "src/libraries/Types.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
@@ -409,7 +409,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         if (!settlementPool.initialized) {
             revert InvalidProposalTerms("settlement pool not initialized");
         }
-        uint256 available = _availablePrincipal(settlementPool, lenderPositionKey, line.settlementPoolId);
+        uint256 available = LibPositionHelpers.availablePrincipal(settlementPool, lenderPositionKey, line.settlementPoolId);
         if (available < amount) {
             revert InsufficientLenderPrincipal(lenderPositionId, amount, available);
         }
@@ -628,7 +628,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
             revert InvalidProposalTerms("borrower collateral pool not initialized");
         }
 
-        uint256 available = _availablePrincipal(collateralPool, borrowerPositionKey, collateralPoolId);
+        uint256 available = LibPositionHelpers.availablePrincipal(collateralPool, borrowerPositionKey, collateralPoolId);
         if (available < line.borrowerCollateralAmount) {
             revert InvalidProposalTerms("insufficient borrower collateral");
         }
@@ -739,19 +739,6 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
             value /= 10;
         }
         return string(buffer);
-    }
-
-    function _availablePrincipal(Types.PoolData storage pool, bytes32 positionKey, uint256 pid)
-        internal
-        view
-        returns (uint256 available)
-    {
-        uint256 principal = pool.userPrincipal[positionKey];
-        uint256 totalEncumbered = LibEncumbrance.total(positionKey, pid);
-        if (totalEncumbered >= principal) {
-            return 0;
-        }
-        return principal - totalEncumbered;
     }
 
     function _settlementCommitmentModuleId(uint256 lineId) internal pure returns (uint256) {

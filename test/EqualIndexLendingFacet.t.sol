@@ -174,14 +174,13 @@ contract EqualIndexLendingFacetTest is Test {
         BorrowCtx memory ctx = _readyBorrowContext();
 
         vm.expectRevert(Unauthorized.selector);
-        harness.configureLending(ctx.indexId, 10_000, 100, 1 days, 30 days);
+        harness.configureLending(ctx.indexId, 10_000, 1 days, 30 days);
 
         vm.prank(TIMELOCK);
-        harness.configureLending(ctx.indexId, 10_000, 100, 1 days, 30 days);
+        harness.configureLending(ctx.indexId, 10_000, 1 days, 30 days);
 
         LibEqualIndexLending.LendingConfig memory cfg = harness.getLendingConfig(ctx.indexId);
         assertEq(cfg.ltvBps, 10_000);
-        assertEq(cfg.originationFeeBps, 100);
         assertEq(cfg.minDuration, 1 days);
         assertEq(cfg.maxDuration, 30 days);
     }
@@ -189,7 +188,7 @@ contract EqualIndexLendingFacetTest is Test {
     function test_borrowAndRepay_fromPosition() public {
         BorrowCtx memory ctx = _readyBorrowContext();
         vm.prank(TIMELOCK);
-        harness.configureLending(ctx.indexId, 10_000, 0, 1 days, 30 days);
+        harness.configureLending(ctx.indexId, 10_000, 1 days, 30 days);
 
         vm.prank(BORROWER);
         uint256 loanId = harness.borrowFromPosition(ctx.positionId, ctx.indexId, 1 ether, 7 days);
@@ -217,7 +216,7 @@ contract EqualIndexLendingFacetTest is Test {
     function test_recoverExpired_clearsLoanAndCollateral() public {
         BorrowCtx memory ctx = _readyBorrowContext();
         vm.prank(TIMELOCK);
-        harness.configureLending(ctx.indexId, 10_000, 0, 1 days, 30 days);
+        harness.configureLending(ctx.indexId, 10_000, 1 days, 30 days);
 
         vm.prank(BORROWER);
         uint256 loanId = harness.borrowFromPosition(ctx.positionId, ctx.indexId, 1 ether, 1 days);
@@ -238,7 +237,7 @@ contract EqualIndexLendingFacetTest is Test {
     function test_configureBorrowFeeTiers_and_quoteViews() public {
         BorrowCtx memory ctx = _readyBorrowContext();
         vm.prank(TIMELOCK);
-        harness.configureLending(ctx.indexId, 10_000, 0, 1 days, 30 days);
+        harness.configureLending(ctx.indexId, 10_000, 1 days, 30 days);
 
         uint256[] memory minUnits = new uint256[](2);
         minUnits[0] = 1 ether;
@@ -274,7 +273,7 @@ contract EqualIndexLendingFacetTest is Test {
     function test_flatFeeBorrow_requiresExactMsgValue_andPaysTreasury() public {
         BorrowCtx memory ctx = _readyBorrowContext();
         vm.prank(TIMELOCK);
-        harness.configureLending(ctx.indexId, 10_000, 0, 1 days, 30 days);
+        harness.configureLending(ctx.indexId, 10_000, 1 days, 30 days);
         _configureSingleTierFee(ctx.indexId, 1 ether, 0.02 ether);
 
         vm.deal(BORROWER, 1 ether);

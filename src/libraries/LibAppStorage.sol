@@ -38,7 +38,6 @@ library LibAppStorage {
         address foundationReceiver;
         uint16 defaultMaintenanceRateBps;
         uint16 maxMaintenanceRateBps;
-        uint256 __reservedIndexCreationFee; // preserves storage spacing for legacy slot assumptions
         uint256 indexCreationFee;
         uint256 poolCreationFee;
         uint8 rollingDelinquencyEpochs;
@@ -62,49 +61,16 @@ library LibAppStorage {
         }
     }
 
-    /// @notice Return timelock, honoring historical slot layout used in tests/scripts.
     function timelockAddress(AppStorage storage store) internal view returns (address tl) {
-        tl = store.timelock;
-        if (tl != address(0)) {
-            return tl;
-        }
-        bytes32 slot = APP_STORAGE_POSITION;
-        assembly {
-            tl := sload(add(slot, 8))
-        }
-        if (tl != address(0)) {
-            return tl;
-        }
-        assembly {
-            tl := shr(8, sload(add(slot, 3)))
-        }
+        return store.timelock;
     }
 
-    /// @notice Return index creation fee with backward-compatible slot lookup.
     function indexCreationFee(AppStorage storage store) internal view returns (uint256 fee) {
-        fee = store.indexCreationFee;
-        if (fee != 0) {
-            return fee;
-        }
-        bytes32 slot = APP_STORAGE_POSITION;
-        assembly {
-            fee := sload(add(slot, 9))
-        }
+        return store.indexCreationFee;
     }
 
-    /// @notice Return treasury, honoring historical slot layout used in tests/scripts.
     function treasuryAddress(AppStorage storage store) internal view returns (address treasury) {
-        treasury = store.treasury;
-        if (treasury != address(0)) {
-            return treasury;
-        }
-        if (store.defaultPoolConfigSet) {
-            return treasury;
-        }
-        bytes32 slot = APP_STORAGE_POSITION;
-        assembly {
-            treasury := sload(add(slot, 4))
-        }
+        return store.treasury;
     }
 
     function treasurySplitBps(AppStorage storage store) internal view returns (uint16) {

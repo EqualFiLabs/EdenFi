@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {PositionNFT} from "../nft/PositionNFT.sol";
 import {LibAppStorage} from "./LibAppStorage.sol";
+import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibPoolMembership} from "./LibPoolMembership.sol";
 import {Types} from "./Types.sol";
@@ -49,5 +50,18 @@ library LibPositionHelpers {
         returns (bool alreadyMember)
     {
         return LibPoolMembership._ensurePoolMembership(posKey, pid, allowAutoJoin);
+    }
+
+    function availablePrincipal(Types.PoolData storage poolData, bytes32 posKey, uint256 poolId)
+        internal
+        view
+        returns (uint256 available)
+    {
+        uint256 principal = poolData.userPrincipal[posKey];
+        uint256 totalEncumbered = LibEncumbrance.total(posKey, poolId);
+        if (totalEncumbered >= principal) {
+            return 0;
+        }
+        return principal - totalEncumbered;
     }
 }

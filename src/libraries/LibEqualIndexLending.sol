@@ -7,7 +7,6 @@ library LibEqualIndexLending {
 
     struct LendingConfig {
         uint16 ltvBps;
-        uint16 originationFeeBps; // legacy, not used for index borrow/repay math
         uint40 minDuration;
         uint40 maxDuration;
     }
@@ -50,9 +49,7 @@ library LibEqualIndexLending {
     event LoanRecovered(
         uint256 indexed loanId, uint256 indexed indexId, uint256 collateralUnits, uint256 writtenOffPrincipalTotal
     );
-    event LendingConfigured(
-        uint256 indexed indexId, uint16 ltvBps, uint16 originationFeeBps, uint40 minDuration, uint40 maxDuration
-    );
+    event LendingConfigured(uint256 indexed indexId, uint16 ltvBps, uint40 minDuration, uint40 maxDuration);
     event BorrowFeeTiersConfigured(uint256 indexed indexId, uint256[] minCollateralUnits, uint256[] flatFeeNative);
     event BorrowFlatFeePaid(
         uint256 indexed loanId, uint256 indexed indexId, uint256 collateralUnits, uint256 feeNative

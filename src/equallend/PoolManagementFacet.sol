@@ -68,7 +68,6 @@ contract PoolManagementFacet {
         bool isManagedPool;
         address manager;
         bool whitelistEnabled;
-        bool deprecated;
         uint256 totalDeposits;
         uint256 indexEncumberedTotal;
         uint256 trackedBalance;
@@ -104,21 +103,6 @@ contract PoolManagementFacet {
         LibAccess.enforceOwnerOrTimelock();
         Types.PoolConfig memory localConfig = config;
         _initPoolInternal(pid, underlying, localConfig, actionFees, false);
-    }
-
-    /// @notice Initialize a new pool with immutable configuration (backward compatibility)
-    /// @param pid Pool ID (must be unused)
-    /// @param underlying ERC20 token address
-    /// @param config Immutable pool configuration
-    function initPool(
-        uint256 pid,
-        address underlying,
-        Types.PoolConfig calldata config
-    ) external payable {
-        LibAccess.enforceOwnerOrTimelock();
-        Types.ActionFeeSet memory emptyFees; // All fees disabled by default
-        Types.PoolConfig memory localConfig = config;
-        _initPoolInternal(pid, underlying, localConfig, emptyFees, false);
     }
 
     /// @notice Initialize a new pool using global defaults (permissionless path).
@@ -348,7 +332,6 @@ contract PoolManagementFacet {
         view_.isManagedPool = p.isManagedPool;
         view_.manager = p.manager;
         view_.whitelistEnabled = p.whitelistEnabled;
-        view_.deprecated = p.deprecated;
         view_.totalDeposits = p.totalDeposits;
         view_.indexEncumberedTotal = p.indexEncumberedTotal;
         view_.trackedBalance = p.trackedBalance;

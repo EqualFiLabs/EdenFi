@@ -5,7 +5,6 @@ import {BasketToken} from "../tokens/BasketToken.sol";
 import {EdenStEVELogic} from "./EdenStEVELogic.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
-import {LibEdenStEVEStorage} from "../libraries/LibEdenStEVEStorage.sol";
 import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
 import "../libraries/Errors.sol";
 
@@ -64,9 +63,5 @@ contract EdenStEVEWalletFacet is EdenStEVELogic, ReentrancyGuardModifiers {
         BasketToken(product.token).burnIndexUnits(msg.sender, units);
         assetsOut = state.assetsOut;
         emit StEVEBurned(msg.sender, to, units);
-    }
-
-    function _requireStEVEConfigured() internal view {
-        if (!LibEdenStEVEStorage.s().configured) revert InvalidParameterRange("stEVE not configured");
     }
 }

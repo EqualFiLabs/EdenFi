@@ -123,8 +123,4 @@ contract EdenBasketPositionFacet is EdenStEVELogic, ReentrancyGuardModifiers {
         assetsOut = state.assetsOut;
     }
 
-    function _requireStEVEConfigured() internal view {
-        LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
-        if (!steve.configured) revert InvalidParameterRange("stEVE not configured");
-    }
 }

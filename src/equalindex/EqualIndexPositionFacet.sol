@@ -5,7 +5,6 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {EqualIndexBaseV3} from "./EqualIndexBaseV3.sol";
 import {IndexToken} from "./IndexToken.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
-import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibEqualIndexLending} from "../libraries/LibEqualIndexLending.sol";
 import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
 import {LibFeeRouter} from "../libraries/LibFeeRouter.sol";
@@ -166,19 +165,6 @@ contract EqualIndexPositionFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         indexPool.userMaintenanceIndex[positionKey] = indexPool.maintenanceIndex;
     }
 
-    function _availablePrincipal(Types.PoolData storage pool, bytes32 positionKey, uint256 pid)
-        internal
-        view
-        returns (uint256 available)
-    {
-        uint256 principal = pool.userPrincipal[positionKey];
-        uint256 totalEncumbered = LibEncumbrance.total(positionKey, pid);
-        if (totalEncumbered >= principal) {
-            return 0;
-        }
-        return principal - totalEncumbered;
-    }
-
     function _quotePositionMintLeg(
         Index storage idx,
         uint256 indexId,
@@ -235,7 +221,7 @@ contract EqualIndexPositionFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         }
 
         Types.PoolData storage pool = store.pools[leg.poolId];
-        uint256 available = _availablePrincipal(pool, positionKey, leg.poolId);
+        uint256 available = LibPositionHelpers.availablePrincipal(pool, positionKey, leg.poolId);
         if (available < leg.total) {
             revert InsufficientUnencumberedPrincipal(leg.total, available);
         }

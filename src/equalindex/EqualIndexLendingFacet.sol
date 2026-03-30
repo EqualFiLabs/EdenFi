@@ -7,7 +7,6 @@ import {IndexToken} from "./IndexToken.sol";
 import {LibActiveCreditIndex} from "../libraries/LibActiveCreditIndex.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
-import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibEqualIndexLending} from "../libraries/LibEqualIndexLending.sol";
 import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
 import {LibModuleEncumbrance} from "../libraries/LibModuleEncumbrance.sol";
@@ -32,19 +31,17 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
     function configureLending(
         uint256 indexId,
         uint16 ltvBps,
-        uint16 originationFeeBps,
         uint40 minDuration,
         uint40 maxDuration
     ) external onlyTimelock indexExists(indexId) {
         if (ltvBps != 10_000) revert InvalidParameterRange("ltvBps");
-        if (originationFeeBps > 10_000) revert InvalidParameterRange("originationFeeBps");
         if (minDuration > maxDuration) revert InvalidParameterRange("duration");
 
         LibEqualIndexLending.s().lendingConfigs[indexId] = LibEqualIndexLending.LendingConfig({
-            ltvBps: ltvBps, originationFeeBps: originationFeeBps, minDuration: minDuration, maxDuration: maxDuration
+            ltvBps: ltvBps, minDuration: minDuration, maxDuration: maxDuration
         });
 
-        emit LibEqualIndexLending.LendingConfigured(indexId, ltvBps, originationFeeBps, minDuration, maxDuration);
+        emit LibEqualIndexLending.LendingConfigured(indexId, ltvBps, minDuration, maxDuration);
     }
 
     function configureBorrowFeeTiers(
@@ -302,7 +299,7 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
 
     function _configuredLending(uint256 indexId) private view returns (LibEqualIndexLending.LendingConfig memory cfg) {
         cfg = LibEqualIndexLending.s().lendingConfigs[indexId];
-        if (cfg.ltvBps == 0 && cfg.originationFeeBps == 0 && cfg.minDuration == 0 && cfg.maxDuration == 0) {
+        if (cfg.ltvBps == 0) {
             revert LibEqualIndexLending.LendingNotConfigured(indexId);
         }
     }
@@ -377,26 +374,13 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         }
     }
 
-    function _availablePoolPrincipal(Types.PoolData storage pool, bytes32 positionKey, uint256 poolId)
-        private
-        view
-        returns (uint256 available)
-    {
-        uint256 principal = pool.userPrincipal[positionKey];
-        uint256 totalEncumbered = LibEncumbrance.total(positionKey, poolId);
-        if (totalEncumbered >= principal) {
-            return 0;
-        }
-        return principal - totalEncumbered;
-    }
-
     function _assertAvailableCollateral(
         Types.PoolData storage indexPool,
         bytes32 positionKey,
         uint256 indexPoolId,
         uint256 collateralUnits
     ) private view {
-        uint256 availableCollateral = _availablePoolPrincipal(indexPool, positionKey, indexPoolId);
+        uint256 availableCollateral = LibPositionHelpers.availablePrincipal(indexPool, positionKey, indexPoolId);
         if (availableCollateral < collateralUnits) {
             revert InsufficientUnencumberedPrincipal(collateralUnits, availableCollateral);
         }

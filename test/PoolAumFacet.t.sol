@@ -97,7 +97,6 @@ contract PoolAumFacetTest is EdenLaunchFixture {
         assertTrue(!info.isManagedPool);
         assertEq(info.manager, address(0));
         assertTrue(!info.whitelistEnabled);
-        assertTrue(!info.deprecated);
         assertEq(info.totalDeposits, 0);
         assertEq(info.indexEncumberedTotal, 0);
         assertEq(info.trackedBalance, 0);

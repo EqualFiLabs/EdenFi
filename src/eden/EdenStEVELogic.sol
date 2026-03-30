@@ -6,11 +6,12 @@ import {EdenBasketBase} from "./EdenBasketBase.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
-import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibEdenStEVEStorage} from "../libraries/LibEdenStEVEStorage.sol";
 import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
 import {LibFeeRouter} from "../libraries/LibFeeRouter.sol";
 import {LibModuleEncumbrance} from "../libraries/LibModuleEncumbrance.sol";
 import {LibPoolMembership} from "../libraries/LibPoolMembership.sol";
+import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
 import {Types} from "../libraries/Types.sol";
 import "../libraries/Errors.sol";
 
@@ -319,15 +320,16 @@ abstract contract EdenStEVELogic is EdenBasketBase {
         }
     }
 
+    function _requireStEVEConfigured() internal view {
+        if (!LibEdenStEVEStorage.s().configured) revert InvalidParameterRange("stEVE not configured");
+    }
+
     function _availablePrincipal(Types.PoolData storage pool, bytes32 positionKey, uint256 pid)
         internal
         view
         returns (uint256 available)
     {
-        uint256 principal = pool.userPrincipal[positionKey];
-        uint256 totalEncumbered = LibEncumbrance.total(positionKey, pid);
-        if (totalEncumbered >= principal) return 0;
-        return principal - totalEncumbered;
+        return LibPositionHelpers.availablePrincipal(pool, positionKey, pid);
     }
 
     function _stEVEFeeSource() internal pure returns (bytes32) {

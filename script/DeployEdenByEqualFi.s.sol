@@ -41,10 +41,6 @@ interface IPoolManagementFacetInitDefault {
     function initPool(address underlying) external payable returns (uint256);
 }
 
-interface IPoolManagementFacetInitConfig {
-    function initPool(uint256 pid, address underlying, Types.PoolConfig calldata config) external payable;
-}
-
 contract DeployEdenByEqualFi is Script {
     uint256 internal constant DIAMOND_CORE_FACET_COUNT = 3;
     uint256 internal constant NON_EDEN_LAUNCH_FACET_COUNT = 14;
@@ -323,32 +319,31 @@ contract DeployEdenByEqualFi is Script {
     }
 
     function _selectorsPoolManagement() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](25);
+        s = new bytes4[](24);
         s[0] = PoolManagementFacet.initPoolWithActionFees.selector;
-        s[1] = IPoolManagementFacetInitConfig.initPool.selector;
-        s[2] = IPoolManagementFacetInitDefault.initPool.selector;
-        s[3] = PoolManagementFacet.initManagedPool.selector;
-        s[4] = PoolManagementFacet.setDefaultPoolConfig.selector;
-        s[5] = PoolManagementFacet.setRollingApy.selector;
-        s[6] = PoolManagementFacet.setDepositorLTV.selector;
-        s[7] = PoolManagementFacet.setMinDepositAmount.selector;
-        s[8] = PoolManagementFacet.setMinLoanAmount.selector;
-        s[9] = PoolManagementFacet.setMinTopupAmount.selector;
-        s[10] = PoolManagementFacet.setDepositCap.selector;
-        s[11] = PoolManagementFacet.setIsCapped.selector;
-        s[12] = PoolManagementFacet.setMaxUserCount.selector;
-        s[13] = PoolManagementFacet.setMaintenanceRate.selector;
-        s[14] = PoolManagementFacet.setFlashLoanFee.selector;
-        s[15] = PoolManagementFacet.setActionFees.selector;
-        s[16] = PoolManagementFacet.addToWhitelist.selector;
-        s[17] = PoolManagementFacet.removeFromWhitelist.selector;
-        s[18] = PoolManagementFacet.setWhitelistEnabled.selector;
-        s[19] = PoolManagementFacet.transferManager.selector;
-        s[20] = PoolManagementFacet.renounceManager.selector;
-        s[21] = PoolManagementFacet.setAumFee.selector;
-        s[22] = PoolManagementFacet.getPoolConfigView.selector;
-        s[23] = PoolManagementFacet.getPoolInfoView.selector;
-        s[24] = PoolManagementFacet.getPoolMaintenanceView.selector;
+        s[1] = IPoolManagementFacetInitDefault.initPool.selector;
+        s[2] = PoolManagementFacet.initManagedPool.selector;
+        s[3] = PoolManagementFacet.setDefaultPoolConfig.selector;
+        s[4] = PoolManagementFacet.setRollingApy.selector;
+        s[5] = PoolManagementFacet.setDepositorLTV.selector;
+        s[6] = PoolManagementFacet.setMinDepositAmount.selector;
+        s[7] = PoolManagementFacet.setMinLoanAmount.selector;
+        s[8] = PoolManagementFacet.setMinTopupAmount.selector;
+        s[9] = PoolManagementFacet.setDepositCap.selector;
+        s[10] = PoolManagementFacet.setIsCapped.selector;
+        s[11] = PoolManagementFacet.setMaxUserCount.selector;
+        s[12] = PoolManagementFacet.setMaintenanceRate.selector;
+        s[13] = PoolManagementFacet.setFlashLoanFee.selector;
+        s[14] = PoolManagementFacet.setActionFees.selector;
+        s[15] = PoolManagementFacet.addToWhitelist.selector;
+        s[16] = PoolManagementFacet.removeFromWhitelist.selector;
+        s[17] = PoolManagementFacet.setWhitelistEnabled.selector;
+        s[18] = PoolManagementFacet.transferManager.selector;
+        s[19] = PoolManagementFacet.renounceManager.selector;
+        s[20] = PoolManagementFacet.setAumFee.selector;
+        s[21] = PoolManagementFacet.getPoolConfigView.selector;
+        s[22] = PoolManagementFacet.getPoolInfoView.selector;
+        s[23] = PoolManagementFacet.getPoolMaintenanceView.selector;
     }
 
     function _selectorsPositionManagement() internal pure returns (bytes4[] memory s) {
