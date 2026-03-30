@@ -2,9 +2,8 @@
 pragma solidity ^0.8.20;
 
 import {LibAccess} from "../libraries/LibAccess.sol";
-import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
-import {LibDiamond} from "../libraries/LibDiamond.sol";
+import {LibEdenRewardsEngine} from "../libraries/LibEdenRewardsEngine.sol";
 import {LibEdenRewardsStorage} from "../libraries/LibEdenRewardsStorage.sol";
 import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
 import {Unauthorized, InvalidParameterRange, InvalidUnderlying} from "../libraries/Errors.sol";
@@ -28,6 +27,10 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
     event RewardProgramResumed(uint256 indexed programId);
     event RewardProgramEnded(uint256 indexed programId, uint256 endTime);
     event RewardProgramClosed(uint256 indexed programId);
+    event RewardProgramFunded(uint256 indexed programId, address indexed funder, uint256 amount);
+    event RewardProgramAccrued(
+        uint256 indexed programId, uint256 allocated, uint256 globalRewardIndex, uint256 fundedReserve, uint256 lastRewardUpdate
+    );
 
     function createRewardProgram(
         LibEdenRewardsStorage.RewardTargetType targetType,
@@ -64,6 +67,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
             paused: false,
             closed: false
         });
+        store.programs[programId].state.lastRewardUpdate = block.timestamp;
         LibEdenRewardsStorage.registerProgramTarget(store, programId, target);
 
         emit RewardProgramCreated(
@@ -133,6 +137,40 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         emit RewardProgramClosed(programId);
     }
 
+    function fundRewardProgram(uint256 programId, uint256 amount, uint256 maxAmount)
+        external
+        payable
+        nonReentrant
+        returns (uint256 funded)
+    {
+        if (amount == 0) revert InvalidParameterRange("amount=0");
+
+        LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
+        if (program.config.closed) revert InvalidParameterRange("programClosed");
+
+        LibEdenRewardsStorage.RewardProgramState memory stateBefore = program.state;
+        LibEdenRewardsStorage.RewardProgramState memory stateAfterAccrual = LibEdenRewardsEngine.accrueProgram(programId);
+        funded = LibCurrency.pullAtLeast(program.config.rewardToken, msg.sender, amount, maxAmount);
+        program.state.fundedReserve = stateAfterAccrual.fundedReserve + funded;
+
+        _emitAccrual(programId, stateBefore, stateAfterAccrual);
+        emit RewardProgramFunded(programId, msg.sender, funded);
+    }
+
+    function accrueRewardProgram(uint256 programId)
+        external
+        nonReentrant
+        returns (LibEdenRewardsStorage.RewardProgramState memory state)
+    {
+        LibCurrency.assertZeroMsgValue();
+        _program(programId);
+
+        LibEdenRewardsStorage.RewardProgramState memory stateBefore =
+            LibEdenRewardsStorage.s().programs[programId].state;
+        state = LibEdenRewardsEngine.accrueProgram(programId);
+        _emitAccrual(programId, stateBefore, state);
+    }
+
     function getRewardProgram(uint256 programId)
         external
         view
@@ -144,6 +182,15 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
         config = program.config;
         state = program.state;
+    }
+
+    function previewRewardProgramState(uint256 programId)
+        external
+        view
+        returns (LibEdenRewardsStorage.RewardProgramState memory state)
+    {
+        _program(programId);
+        state = LibEdenRewardsEngine.previewProgramState(programId);
     }
 
     function getRewardProgramIdsByTarget(LibEdenRewardsStorage.RewardTargetType targetType, uint256 targetId)
@@ -184,5 +231,18 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
             return;
         }
         revert Unauthorized();
+    }
+
+    function _emitAccrual(
+        uint256 programId,
+        LibEdenRewardsStorage.RewardProgramState memory stateBefore,
+        LibEdenRewardsStorage.RewardProgramState memory stateAfter
+    ) private {
+        uint256 allocated = stateBefore.fundedReserve > stateAfter.fundedReserve
+            ? stateBefore.fundedReserve - stateAfter.fundedReserve
+            : 0;
+        emit RewardProgramAccrued(
+            programId, allocated, stateAfter.globalRewardIndex, stateAfter.fundedReserve, stateAfter.lastRewardUpdate
+        );
     }
 }
