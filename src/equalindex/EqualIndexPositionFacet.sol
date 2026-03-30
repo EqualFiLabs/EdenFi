@@ -5,6 +5,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {EqualIndexBaseV3} from "./EqualIndexBaseV3.sol";
 import {IndexToken} from "./IndexToken.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
+import {LibEqualIndexRewards} from "../libraries/LibEqualIndexRewards.sol";
 import {LibEqualIndexLending} from "../libraries/LibEqualIndexLending.sol";
 import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
 import {LibFeeRouter} from "../libraries/LibFeeRouter.sol";
@@ -81,9 +82,7 @@ contract EqualIndexPositionFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         if (indexPoolId == 0) revert PoolNotInitialized(indexPoolId);
         Types.PoolData storage indexPool = LibAppStorage.s().pools[indexPoolId];
         LibPoolMembership._ensurePoolMembership(positionKey, indexPoolId, true);
-        LibFeeIndex.settle(indexPoolId, positionKey);
-
-        uint256 currentPrincipal = indexPool.userPrincipal[positionKey];
+        uint256 currentPrincipal = LibEqualIndexRewards.settleBeforeEligibleBalanceChange(indexId, indexPoolId, positionKey);
         bool isNewUser = currentPrincipal == 0;
         if (isNewUser) {
             uint256 maxUsers = indexPool.poolConfig.maxUserCount;
@@ -108,6 +107,7 @@ contract EqualIndexPositionFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         }
         indexPool.userFeeIndex[positionKey] = indexPool.feeIndex;
         indexPool.userMaintenanceIndex[positionKey] = indexPool.maintenanceIndex;
+        LibEqualIndexRewards.syncEligibleBalanceChange(indexId, currentPrincipal, newPrincipal);
     }
 
     function burnFromPosition(uint256 positionId, uint256 indexId, uint256 units)
@@ -133,8 +133,8 @@ contract EqualIndexPositionFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         if (!indexPool.initialized) revert PoolNotInitialized(indexPoolId);
 
         LibPoolMembership._ensurePoolMembership(positionKey, indexPoolId, true);
-        LibFeeIndex.settle(indexPoolId, positionKey);
-        uint256 positionIndexBalance = indexPool.userPrincipal[positionKey];
+        uint256 positionIndexBalance =
+            LibEqualIndexRewards.settleBeforeEligibleBalanceChange(indexId, indexPoolId, positionKey);
         if (units > positionIndexBalance) {
             revert InsufficientIndexTokens(units, positionIndexBalance);
         }
@@ -163,6 +163,7 @@ contract EqualIndexPositionFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         }
         indexPool.userFeeIndex[positionKey] = indexPool.feeIndex;
         indexPool.userMaintenanceIndex[positionKey] = indexPool.maintenanceIndex;
+        LibEqualIndexRewards.syncEligibleBalanceChange(indexId, positionIndexBalance, newPrincipal);
     }
 
     function _quotePositionMintLeg(

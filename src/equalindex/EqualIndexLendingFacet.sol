@@ -7,8 +7,8 @@ import {IndexToken} from "./IndexToken.sol";
 import {LibActiveCreditIndex} from "../libraries/LibActiveCreditIndex.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
+import {LibEqualIndexRewards} from "../libraries/LibEqualIndexRewards.sol";
 import {LibEqualIndexLending} from "../libraries/LibEqualIndexLending.sol";
-import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
 import {LibModuleEncumbrance} from "../libraries/LibModuleEncumbrance.sol";
 import {LibPoolMembership} from "../libraries/LibPoolMembership.sol";
 import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
@@ -497,9 +497,8 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
 
         uint256 indexPoolId = s().indexToPoolId[loan.indexId];
         Types.PoolData storage indexPool = LibAppStorage.s().pools[indexPoolId];
-        LibFeeIndex.settle(indexPoolId, loan.positionKey);
-
-        uint256 principalBefore = indexPool.userPrincipal[loan.positionKey];
+        uint256 principalBefore =
+            LibEqualIndexRewards.settleBeforeEligibleBalanceChange(loan.indexId, indexPoolId, loan.positionKey);
         if (principalBefore < loan.collateralUnits) {
             revert InsufficientPrincipal(loan.collateralUnits, principalBefore);
         }
@@ -515,6 +514,7 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         }
         indexPool.userFeeIndex[loan.positionKey] = indexPool.feeIndex;
         indexPool.userMaintenanceIndex[loan.positionKey] = indexPool.maintenanceIndex;
+        LibEqualIndexRewards.syncEligibleBalanceChange(loan.indexId, principalBefore, principalAfter);
 
         _unencumberWithAci(indexPool, loan.positionKey, indexPoolId, loan.collateralUnits);
     }

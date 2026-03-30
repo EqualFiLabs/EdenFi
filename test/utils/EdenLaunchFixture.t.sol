@@ -236,6 +236,35 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
         programId = programIds[programIds.length - 1];
     }
 
+    function _createEqualIndexRewardProgram(
+        uint256 indexId,
+        address rewardToken,
+        address manager,
+        uint256 rewardRatePerSecond,
+        uint256 startTime,
+        uint256 endTime,
+        bool enabled
+    ) internal returns (uint256 programId) {
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(
+                EdenRewardsFacet.createRewardProgram.selector,
+                LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION,
+                indexId,
+                rewardToken,
+                manager,
+                rewardRatePerSecond,
+                startTime,
+                endTime,
+                enabled
+            )
+        );
+        uint256[] memory programIds = EdenRewardsFacet(diamond).getRewardProgramIdsByTarget(
+            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION, indexId
+        );
+        programId = programIds[programIds.length - 1];
+    }
+
     function _fundRewardProgram(address funder, uint256 programId, ERC20 rewardToken, uint256 amount) internal {
         vm.startPrank(funder);
         rewardToken.approve(diamond, amount);
