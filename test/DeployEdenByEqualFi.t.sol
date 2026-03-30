@@ -15,6 +15,7 @@ import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
+import {EqualIndexLendingFacet} from "src/equalindex/EqualIndexLendingFacet.sol";
 import {PositionAgentConfigFacet} from "src/agent-wallet/erc6551/PositionAgentConfigFacet.sol";
 import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFacet.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
@@ -113,6 +114,10 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         );
         _assertTrue(
             loupe.facetAddress(EqualIndexActionsFacetV3.flashLoan.selector) != address(0), "index flash action cut"
+        );
+        _assertTrue(
+            loupe.facetAddress(EqualIndexLendingFacet.borrowFromPosition.selector) != address(0),
+            "index lending facet cut"
         );
         _assertTrue(
             loupe.facetAddress(PositionAgentConfigFacet.setERC6551Registry.selector) != address(0),
@@ -235,9 +240,25 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
             "position-mode generic burn stays in EqualIndex"
         );
 
+        address equalIndexLendingFacet = loupe.facetAddress(EqualIndexLendingFacet.borrowFromPosition.selector);
+        _assertTrue(equalIndexLendingFacet != address(0), "index lending selector installed");
+        _assertEqAddress(
+            equalIndexLendingFacet,
+            loupe.facetAddress(EqualIndexLendingFacet.repayFromPosition.selector),
+            "index lending borrow and repay stay together"
+        );
+        _assertEqAddress(
+            equalIndexLendingFacet,
+            loupe.facetAddress(EqualIndexLendingFacet.recoverExpiredIndexLoan.selector),
+            "index lending recovery stays together"
+        );
+
         _assertTrue(poolFlashFacet != equalIndexActionsFacet, "pool and index flash lanes stay separate");
         _assertTrue(
             equalIndexActionsFacet != equalIndexPositionFacet, "EqualIndex action and position lanes stay explicit"
+        );
+        _assertTrue(
+            equalIndexPositionFacet != equalIndexLendingFacet, "EqualIndex position and lending lanes stay explicit"
         );
         _assertTrue(
             loupe.facetAddress(EdenStEVEWalletFacet.mintStEVE.selector) != equalIndexActionsFacet,
@@ -542,6 +563,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEqualIndexAdmin());
         facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEqualIndexActions());
         facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEqualIndexPosition());
+        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEqualIndexLending());
         facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsPositionAgentConfig());
         facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsPositionAgentTBA());
         facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsPositionAgentView());

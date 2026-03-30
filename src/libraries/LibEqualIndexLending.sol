@@ -7,7 +7,7 @@ library LibEqualIndexLending {
 
     struct LendingConfig {
         uint16 ltvBps;
-        uint16 originationFeeBps;
+        uint16 originationFeeBps; // legacy, not used for index borrow/repay math
         uint40 minDuration;
         uint40 maxDuration;
     }
@@ -33,6 +33,49 @@ library LibEqualIndexLending {
         mapping(uint256 => LendingConfig) lendingConfigs;
         mapping(uint256 => BorrowFeeTier[]) borrowFeeTiers;
     }
+
+    event LoanCreated(
+        uint256 indexed loanId,
+        bytes32 indexed positionKey,
+        uint256 indexed indexId,
+        uint256 collateralUnits,
+        uint16 ltvBps,
+        uint40 maturity
+    );
+    event LoanAssetDelta(
+        uint256 indexed loanId, address indexed borrowAsset, uint256 principal, uint256 fee, bool outgoing
+    );
+    event LoanRepaid(uint256 indexed loanId, uint256 indexed indexId);
+    event LoanExtended(uint256 indexed loanId, uint40 newMaturity, uint256 totalFee);
+    event LoanRecovered(
+        uint256 indexed loanId, uint256 indexed indexId, uint256 collateralUnits, uint256 writtenOffPrincipalTotal
+    );
+    event LendingConfigured(
+        uint256 indexed indexId, uint16 ltvBps, uint16 originationFeeBps, uint40 minDuration, uint40 maxDuration
+    );
+    event BorrowFeeTiersConfigured(uint256 indexed indexId, uint256[] minCollateralUnits, uint256[] flatFeeNative);
+    event BorrowFlatFeePaid(
+        uint256 indexed loanId, uint256 indexed indexId, uint256 collateralUnits, uint256 feeNative
+    );
+    event LoanExtendFlatFeePaid(
+        uint256 indexed loanId,
+        uint256 indexed indexId,
+        uint256 collateralUnits,
+        uint40 addedDuration,
+        uint256 feeNative
+    );
+
+    error LendingNotConfigured(uint256 indexId);
+    error LoanNotFound(uint256 loanId);
+    error LoanNotExpired(uint256 loanId, uint40 maturity);
+    error LoanExpired(uint256 loanId, uint40 maturity);
+    error RedeemabilityViolation(address asset, uint256 required, uint256 available);
+    error InvalidDuration(uint40 duration, uint40 min, uint40 max);
+    error InvalidAsset(address asset);
+    error MaxDurationExceeded(uint40 newMaturity, uint40 maxAllowed);
+    error PositionMismatch(bytes32 loanPositionKey, bytes32 callerPositionKey);
+    error FlatFeePaymentMismatch(uint256 required, uint256 provided);
+    error FlatFeeTreasuryNotSet();
 
     function s() internal pure returns (LendingStorage storage ls) {
         bytes32 position = STORAGE_POSITION;

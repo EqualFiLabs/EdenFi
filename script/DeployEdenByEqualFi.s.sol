@@ -19,6 +19,7 @@ import {FlashLoanFacet} from "src/equallend/FlashLoanFacet.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
+import {EqualIndexLendingFacet} from "src/equalindex/EqualIndexLendingFacet.sol";
 import {PositionAgentConfigFacet} from "src/agent-wallet/erc6551/PositionAgentConfigFacet.sol";
 import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFacet.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
@@ -46,7 +47,7 @@ interface IPoolManagementFacetInitConfig {
 
 contract DeployEdenByEqualFi is Script {
     uint256 internal constant DIAMOND_CORE_FACET_COUNT = 3;
-    uint256 internal constant NON_EDEN_LAUNCH_FACET_COUNT = 13;
+    uint256 internal constant NON_EDEN_LAUNCH_FACET_COUNT = 14;
     uint256 internal constant EDEN_SINGLETON_FACET_COUNT = 7;
     uint256 internal constant LAUNCH_FACET_COUNT = NON_EDEN_LAUNCH_FACET_COUNT + EDEN_SINGLETON_FACET_COUNT;
     uint256 internal constant TOTAL_FACET_COUNT = DIAMOND_CORE_FACET_COUNT + LAUNCH_FACET_COUNT;
@@ -200,6 +201,10 @@ contract DeployEdenByEqualFi is Script {
         {
             EqualIndexPositionFacet facet = new EqualIndexPositionFacet();
             cuts[i++] = _cut(address(facet), _selectorsEqualIndexPosition());
+        }
+        {
+            EqualIndexLendingFacet facet = new EqualIndexLendingFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualIndexLending());
         }
         {
             PositionAgentConfigFacet facet = new PositionAgentConfigFacet();
@@ -383,6 +388,26 @@ contract DeployEdenByEqualFi is Script {
         s = new bytes4[](2);
         s[0] = EqualIndexPositionFacet.mintFromPosition.selector;
         s[1] = EqualIndexPositionFacet.burnFromPosition.selector;
+    }
+
+    function _selectorsEqualIndexLending() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](16);
+        s[0] = EqualIndexLendingFacet.configureLending.selector;
+        s[1] = EqualIndexLendingFacet.configureBorrowFeeTiers.selector;
+        s[2] = EqualIndexLendingFacet.borrowFromPosition.selector;
+        s[3] = EqualIndexLendingFacet.repayFromPosition.selector;
+        s[4] = EqualIndexLendingFacet.extendFromPosition.selector;
+        s[5] = EqualIndexLendingFacet.recoverExpiredIndexLoan.selector;
+        s[6] = EqualIndexLendingFacet.getLoan.selector;
+        s[7] = EqualIndexLendingFacet.getOutstandingPrincipal.selector;
+        s[8] = EqualIndexLendingFacet.getLockedCollateralUnits.selector;
+        s[9] = EqualIndexLendingFacet.getLendingConfig.selector;
+        s[10] = EqualIndexLendingFacet.economicBalance.selector;
+        s[11] = EqualIndexLendingFacet.maxBorrowable.selector;
+        s[12] = EqualIndexLendingFacet.quoteBorrowBasket.selector;
+        s[13] = EqualIndexLendingFacet.quoteBorrowFee.selector;
+        s[14] = EqualIndexLendingFacet.getBorrowFeeTiers.selector;
+        s[15] = EqualIndexLendingFacet.lendingModuleId.selector;
     }
 
     function _selectorsPositionAgentConfig() internal pure returns (bytes4[] memory s) {

@@ -6,6 +6,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
+import {EqualIndexLendingFacet} from "src/equalindex/EqualIndexLendingFacet.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
@@ -119,9 +120,47 @@ contract EqualIndexLaunchTest is EdenLaunchFixture {
         assertEq(EdenViewFacet(diamond).getProductConfig().token, steveToken);
     }
 
+    function test_EqualIndexLending_BorrowAndRepay_WorksOnLiveDiamond() public {
+        eve.mint(alice, 200e18);
+        uint256 positionId = _mintPosition(alice, 1);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 200e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 200e18, 200e18);
+        vm.stopPrank();
+
+        (uint256 indexId,) =
+            _createIndexThroughTimelock(_singleAssetIndexParams("Lending Index", "LIDX", address(eve), 0, 0));
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(positionId, indexId, 2e18);
+
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(
+                EqualIndexLendingFacet.configureLending.selector, indexId, 10_000, 0, 1 days, 30 days
+            )
+        );
+
+        vm.prank(alice);
+        uint256 loanId = EqualIndexLendingFacet(diamond).borrowFromPosition(positionId, indexId, 1e18, 7 days);
+
+        assertEq(EqualIndexLendingFacet(diamond).getLockedCollateralUnits(indexId), 1e18);
+        assertEq(EqualIndexLendingFacet(diamond).getOutstandingPrincipal(indexId, address(eve)), 1e18);
+        assertEq(EqualIndexLendingFacet(diamond).getLoan(loanId).collateralUnits, 1e18);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 1e18);
+        EqualIndexLendingFacet(diamond).repayFromPosition(positionId, loanId);
+        vm.stopPrank();
+
+        assertEq(EqualIndexLendingFacet(diamond).getLockedCollateralUnits(indexId), 0);
+        assertEq(EqualIndexLendingFacet(diamond).getOutstandingPrincipal(indexId, address(eve)), 0);
+        assertEq(EqualIndexLendingFacet(diamond).getLoan(loanId).collateralUnits, 0);
+    }
+
     function test_CreateIndex_RevertsForInvalidDefinitionsAndMissingPoolsOnLiveDiamond() public {
-        EqualIndexBaseV3.CreateIndexParams memory badLengths =
-            _singleAssetIndexParams("Bad", "BAD", address(eve), 0, 0);
+        EqualIndexBaseV3.CreateIndexParams memory badLengths = _singleAssetIndexParams("Bad", "BAD", address(eve), 0, 0);
         badLengths.bundleAmounts = new uint256[](0);
         _scheduleCreateIndexExpectRevert(
             badLengths, keccak256("bad-length-index"), abi.encodeWithSelector(InvalidArrayLength.selector)
