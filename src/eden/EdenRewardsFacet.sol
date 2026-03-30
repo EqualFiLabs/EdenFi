@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.20;
 
+import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibAccess} from "../libraries/LibAccess.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEdenRewardsEngine} from "../libraries/LibEdenRewardsEngine.sol";
 import {LibEdenRewardsStorage} from "../libraries/LibEdenRewardsStorage.sol";
+import {LibEdenStEVEStorage} from "../libraries/LibEdenStEVEStorage.sol";
+import {LibEqualIndexStorage} from "../libraries/LibEqualIndexStorage.sol";
+import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
+import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
 import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
 import {Unauthorized, InvalidParameterRange, InvalidUnderlying} from "../libraries/Errors.sol";
 
@@ -30,6 +35,20 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
     event RewardProgramFunded(uint256 indexed programId, address indexed funder, uint256 amount);
     event RewardProgramAccrued(
         uint256 indexed programId, uint256 allocated, uint256 globalRewardIndex, uint256 fundedReserve, uint256 lastRewardUpdate
+    );
+    event RewardProgramPositionSettled(
+        uint256 indexed programId,
+        bytes32 indexed positionKey,
+        uint256 eligibleBalance,
+        uint256 claimable,
+        uint256 rewardCheckpoint
+    );
+    event RewardProgramClaimed(
+        uint256 indexed programId,
+        uint256 indexed positionId,
+        bytes32 indexed positionKey,
+        address to,
+        uint256 amount
     );
 
     function createRewardProgram(
@@ -171,6 +190,34 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         _emitAccrual(programId, stateBefore, state);
     }
 
+    function settleRewardProgramPosition(uint256 programId, uint256 positionId)
+        external
+        nonReentrant
+        returns (uint256 claimable)
+    {
+        LibCurrency.assertZeroMsgValue();
+        bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
+        claimable = _settleRewardProgramPosition(programId, positionKey);
+    }
+
+    function claimRewardProgram(uint256 programId, uint256 positionId, address to)
+        external
+        nonReentrant
+        returns (uint256 claimed)
+    {
+        LibCurrency.assertZeroMsgValue();
+        LibPositionHelpers.requireOwnership(positionId);
+        bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
+        claimed = _settleRewardProgramPosition(programId, positionKey);
+        if (claimed == 0) revert InvalidParameterRange("nothing claimable");
+
+        LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
+        LibEdenRewardsStorage.s().accruedRewards[programId][positionKey] = 0;
+        LibCurrency.transfer(program.config.rewardToken, to, claimed);
+
+        emit RewardProgramClaimed(programId, positionId, positionKey, to, claimed);
+    }
+
     function getRewardProgram(uint256 programId)
         external
         view
@@ -231,6 +278,40 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
             return;
         }
         revert Unauthorized();
+    }
+
+    function _settleRewardProgramPosition(uint256 programId, bytes32 positionKey) private returns (uint256 claimable) {
+        LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
+        LibEdenRewardsStorage.RewardProgramState memory stateBefore = program.state;
+        uint256 eligibleBalance = _eligibleBalance(program.config.target, positionKey);
+        claimable = LibEdenRewardsEngine.settleProgramPosition(programId, positionKey, eligibleBalance);
+        LibEdenRewardsStorage.RewardProgramState memory stateAfter = program.state;
+
+        _emitAccrual(programId, stateBefore, stateAfter);
+        emit RewardProgramPositionSettled(
+            programId, positionKey, eligibleBalance, claimable, stateAfter.globalRewardIndex
+        );
+    }
+
+    function _eligibleBalance(LibEdenRewardsStorage.RewardTarget memory target, bytes32 positionKey)
+        private
+        returns (uint256 eligibleBalance)
+    {
+        if (target.targetType == LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION) {
+            return LibEdenStEVEStorage.s().eligiblePrincipal[positionKey];
+        }
+
+        if (target.targetType == LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION) {
+            uint256 poolId = LibEqualIndexStorage.poolIdForIndex(target.targetId);
+            if (poolId == 0) {
+                return 0;
+            }
+
+            LibFeeIndex.settle(poolId, positionKey);
+            return LibAppStorage.s().pools[poolId].userPrincipal[positionKey];
+        }
+
+        revert InvalidParameterRange("targetType");
     }
 
     function _emitAccrual(

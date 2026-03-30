@@ -23,6 +23,25 @@ library LibEdenRewardsEngine {
         state = _previewAccrual(store.programs[programId].config, store.programs[programId].state, block.timestamp);
     }
 
+    function settleProgramPosition(uint256 programId, bytes32 positionKey, uint256 eligibleBalance)
+        internal
+        returns (uint256 claimable)
+    {
+        LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
+        LibEdenRewardsStorage.RewardProgramState memory state = accrueProgram(programId);
+
+        uint256 checkpoint = store.positionRewardIndex[programId][positionKey];
+        uint256 globalRewardIndex = state.globalRewardIndex;
+        if (globalRewardIndex > checkpoint && eligibleBalance > 0) {
+            store.accruedRewards[programId][positionKey] += Math.mulDiv(
+                eligibleBalance, globalRewardIndex - checkpoint, LibEdenRewardsStorage.REWARD_INDEX_SCALE
+            );
+        }
+
+        store.positionRewardIndex[programId][positionKey] = globalRewardIndex;
+        claimable = store.accruedRewards[programId][positionKey];
+    }
+
     function _previewAccrual(
         LibEdenRewardsStorage.RewardProgramConfig memory config,
         LibEdenRewardsStorage.RewardProgramState memory state,
