@@ -7,10 +7,10 @@ import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
 import {LibEdenLendingStorage} from "../libraries/LibEdenLendingStorage.sol";
-import {LibEdenRewards} from "../libraries/LibEdenRewards.sol";
 import {LibEdenStEVEStorage} from "../libraries/LibEdenStEVEStorage.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
+import {LibStEVERewards} from "../libraries/LibStEVERewards.sol";
 import {Types} from "../libraries/Types.sol";
 import "../libraries/Errors.sol";
 
@@ -413,9 +413,8 @@ abstract contract EdenLendingLogic is EdenBasketBase {
         uint256 eligible = steve.eligiblePrincipal[positionKey];
         if (amount > eligible) revert InsufficientPrincipal(amount, eligible);
 
-        LibEdenRewards.settlePositionRewards(positionKey);
-        steve.eligiblePrincipal[positionKey] = eligible - amount;
-        steve.eligibleSupply -= amount;
+        uint256 eligibleBefore = LibStEVERewards.settleBeforeEligibleBalanceChange(positionKey);
+        LibStEVERewards.syncEligibleBalanceChange(positionKey, eligibleBefore, eligible - amount);
     }
 
     function _loanModuleId(uint256 loanId) internal pure returns (uint256) {

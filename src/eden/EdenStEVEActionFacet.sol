@@ -9,12 +9,12 @@ import {LibAccess} from "../libraries/LibAccess.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
-import {LibEdenRewards} from "../libraries/LibEdenRewards.sol";
 import {LibEdenStEVEStorage} from "../libraries/LibEdenStEVEStorage.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
 import {LibPoolMembership} from "../libraries/LibPoolMembership.sol";
 import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
+import {LibStEVERewards} from "../libraries/LibStEVERewards.sol";
 import {StEVEToken} from "../tokens/StEVEToken.sol";
 import {Types} from "../libraries/Types.sol";
 import "../libraries/Errors.sol";
@@ -66,7 +66,7 @@ contract EdenStEVEActionFacet is EdenStEVELogic, EdenPositionPoolHelpers, Reentr
 
         LibActiveCreditIndex.settle(pid, positionKey);
         LibFeeIndex.settle(pid, positionKey);
-        LibEdenRewards.settlePositionRewards(positionKey);
+        uint256 eligibleBefore = LibStEVERewards.settleBeforeEligibleBalanceChange(positionKey);
 
         uint256 currentPrincipal = pool.userPrincipal[positionKey];
         bool isNewUser = currentPrincipal == 0;
@@ -89,8 +89,7 @@ contract EdenStEVEActionFacet is EdenStEVELogic, EdenPositionPoolHelpers, Reentr
             pool.userCount += 1;
         }
 
-        store.eligiblePrincipal[positionKey] += received;
-        store.eligibleSupply += received;
+        LibStEVERewards.syncEligibleBalanceChange(positionKey, eligibleBefore, eligibleBefore + received);
 
         emit StEVEDepositedToPosition(tokenId, positionKey, received);
     }
@@ -115,7 +114,7 @@ contract EdenStEVEActionFacet is EdenStEVELogic, EdenPositionPoolHelpers, Reentr
 
         LibActiveCreditIndex.settle(pid, positionKey);
         LibFeeIndex.settle(pid, positionKey);
-        LibEdenRewards.settlePositionRewards(positionKey);
+        uint256 eligibleBefore = LibStEVERewards.settleBeforeEligibleBalanceChange(positionKey);
 
         if (LibEncumbrance.total(positionKey, pid) > eligible - amount) {
             revert InsufficientUnencumberedPrincipal(amount, eligible - amount);
@@ -134,9 +133,8 @@ contract EdenStEVEActionFacet is EdenStEVELogic, EdenPositionPoolHelpers, Reentr
             LibAppStorage.s().nativeTrackedTotal -= amount;
         }
 
+        LibStEVERewards.syncEligibleBalanceChange(positionKey, eligibleBefore, eligible - amount);
         withdrawn = LibCurrency.transferWithMin(pool.underlying, msg.sender, amount, minReceived);
-        store.eligiblePrincipal[positionKey] = eligible - amount;
-        store.eligibleSupply -= amount;
 
         emit StEVEWithdrawnFromPosition(tokenId, positionKey, withdrawn);
     }

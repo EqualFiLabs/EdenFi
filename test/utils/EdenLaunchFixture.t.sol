@@ -17,10 +17,12 @@ import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
 import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
 import {EdenStEVEWalletFacet} from "src/eden/EdenStEVEWalletFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
+import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {BasketToken} from "src/tokens/BasketToken.sol";
 import {IDiamondCut} from "src/interfaces/IDiamondCut.sol";
+import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
 import {Types} from "src/libraries/Types.sol";
 import {ProtocolTestSupportFacet} from "test/utils/ProtocolTestSupport.sol";
 import {
@@ -204,6 +206,41 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
             diamond,
             abi.encodeWithSelector(EdenRewardFacet.configureRewards.selector, rewardToken, rewardRatePerSecond, enabled)
         );
+    }
+
+    function _createStEVERewardProgram(
+        address rewardToken,
+        address manager,
+        uint256 rewardRatePerSecond,
+        uint256 startTime,
+        uint256 endTime,
+        bool enabled
+    ) internal returns (uint256 programId) {
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(
+                EdenRewardsFacet.createRewardProgram.selector,
+                LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+                LibEdenRewardsStorage.STEVE_TARGET_ID,
+                rewardToken,
+                manager,
+                rewardRatePerSecond,
+                startTime,
+                endTime,
+                enabled
+            )
+        );
+        uint256[] memory programIds = EdenRewardsFacet(diamond).getRewardProgramIdsByTarget(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION, LibEdenRewardsStorage.STEVE_TARGET_ID
+        );
+        programId = programIds[programIds.length - 1];
+    }
+
+    function _fundRewardProgram(address funder, uint256 programId, ERC20 rewardToken, uint256 amount) internal {
+        vm.startPrank(funder);
+        rewardToken.approve(diamond, amount);
+        EdenRewardsFacet(diamond).fundRewardProgram(programId, amount, amount);
+        vm.stopPrank();
     }
 
     function _configureLending(uint40 minDuration, uint40 maxDuration) internal {

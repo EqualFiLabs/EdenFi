@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibAccess} from "../libraries/LibAccess.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
+import {LibEdenRewardsConsumer} from "../libraries/LibEdenRewardsConsumer.sol";
 import {LibEdenRewardsEngine} from "../libraries/LibEdenRewardsEngine.sol";
 import {LibEdenRewardsStorage} from "../libraries/LibEdenRewardsStorage.sol";
 import {LibEdenStEVEStorage} from "../libraries/LibEdenStEVEStorage.sol";
@@ -87,6 +88,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
             closed: false
         });
         store.programs[programId].state.lastRewardUpdate = block.timestamp;
+        store.programs[programId].state.eligibleSupply = LibEdenRewardsConsumer.currentEligibleSupply(target);
         LibEdenRewardsStorage.registerProgramTarget(store, programId, target);
 
         emit RewardProgramCreated(

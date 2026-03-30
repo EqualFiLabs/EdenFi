@@ -5,9 +5,11 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
 import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
+import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
+import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
 import {InsufficientPrincipal, InvalidParameterRange, NotNFTOwner} from "src/libraries/Errors.sol";
 import {BasketToken} from "src/tokens/BasketToken.sol";
 
@@ -131,5 +133,136 @@ contract EdenStEVEActionFacetTest is EdenLaunchFixture {
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(InsufficientPrincipal.selector, 11e18, 10e18));
         EdenStEVEActionFacet(diamond).withdrawStEVEFromPosition(positionId, 11e18, 11e18);
+    }
+
+    function test_StEVERewardProgram_WalletHeldUnitsDoNotEarnButPnftHeldUnitsDo() public {
+        eve.mint(bob, 20e18);
+        _mintWalletBasket(bob, steveBasketId, eve, 10e18);
+
+        uint256 positionId = _mintPosition(bob, 1);
+        uint256 programId = _createStEVERewardProgram(address(alt), address(this), 10e18, 0, 0, true);
+
+        alt.mint(address(this), 200e18);
+        _fundRewardProgram(address(this), programId, alt, 100e18);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory state) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(state.eligibleSupply, 0);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "nothing claimable"));
+        EdenRewardsFacet(diamond).claimRewardProgram(programId, positionId, bob);
+
+        _depositWalletStEVEToPosition(bob, positionId, 10e18);
+        (, state) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(state.eligibleSupply, 10e18);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(bob);
+        uint256 claimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, positionId, bob);
+
+        assertEq(claimed, 100e18);
+        assertEq(alt.balanceOf(bob), 100e18);
+    }
+
+    function test_WithdrawStEVE_SettlesProgramRewardsBeforeBalanceDecrease() public {
+        eve.mint(alice, 20e18);
+        eve.mint(bob, 20e18);
+        _mintWalletBasket(alice, steveBasketId, eve, 10e18);
+        _mintWalletBasket(bob, steveBasketId, eve, 10e18);
+
+        uint256 alicePositionId = _mintPosition(alice, 1);
+        uint256 bobPositionId = _mintPosition(bob, 1);
+        _depositWalletStEVEToPosition(alice, alicePositionId, 10e18);
+        _depositWalletStEVEToPosition(bob, bobPositionId, 10e18);
+
+        uint256 programId = _createStEVERewardProgram(address(alt), address(this), 30e18, 0, 0, true);
+        alt.mint(address(this), 1_000e18);
+        _fundRewardProgram(address(this), programId, alt, 1_000e18);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory state) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(state.eligibleSupply, 20e18);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(bob);
+        EdenStEVEActionFacet(diamond).withdrawStEVEFromPosition(bobPositionId, 5e18, 5e18);
+
+        (, state) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(state.eligibleSupply, 15e18);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(bob);
+        uint256 bobClaimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, bobPositionId, bob);
+        vm.prank(alice);
+        uint256 aliceClaimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, alicePositionId, alice);
+
+        assertEq(bobClaimed, 250e18);
+        assertEq(aliceClaimed, 350e18);
+        assertEq(alt.balanceOf(bob), 250e18);
+        assertEq(alt.balanceOf(alice), 350e18);
+    }
+
+    function test_MintAndBurnStEVEFromPosition_SettleProgramRewardsBeforeBalanceChange() public {
+        eve.mint(alice, 20e18);
+        eve.mint(bob, 20e18);
+        uint256 alicePositionId = _mintPosition(alice, 1);
+        uint256 bobPositionId = _mintPosition(bob, 1);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 20e18);
+        PositionManagementFacet(diamond).depositToPosition(alicePositionId, 1, 20e18, 20e18);
+        EdenBasketPositionFacet(diamond).mintStEVEFromPosition(alicePositionId, 10e18);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        eve.approve(diamond, 20e18);
+        PositionManagementFacet(diamond).depositToPosition(bobPositionId, 1, 20e18, 20e18);
+        EdenBasketPositionFacet(diamond).mintStEVEFromPosition(bobPositionId, 10e18);
+        vm.stopPrank();
+
+        uint256 programId = _createStEVERewardProgram(address(alt), address(this), 30e18, 0, 0, true);
+        alt.mint(address(this), 1_000e18);
+        _fundRewardProgram(address(this), programId, alt, 1_000e18);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(alice);
+        EdenBasketPositionFacet(diamond).burnStEVEFromPosition(alicePositionId, 5e18);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory state) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(state.eligibleSupply, 15e18);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(alice);
+        uint256 aliceClaimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, alicePositionId, alice);
+        vm.prank(bob);
+        uint256 bobClaimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, bobPositionId, bob);
+
+        assertEq(aliceClaimed, 250e18);
+        assertEq(bobClaimed, 350e18);
+    }
+
+    function test_StEVERewardClaims_FollowCurrentPositionOwner() public {
+        eve.mint(alice, 20e18);
+        _mintWalletBasket(alice, steveBasketId, eve, 10e18);
+
+        uint256 positionId = _mintPosition(alice, 1);
+        _depositWalletStEVEToPosition(alice, positionId, 10e18);
+
+        uint256 programId = _createStEVERewardProgram(address(alt), address(this), 10e18, 0, 0, true);
+        alt.mint(address(this), 200e18);
+        _fundRewardProgram(address(this), programId, alt, 100e18);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(alice);
+        positionNft.transferFrom(alice, bob, positionId);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(NotNFTOwner.selector, alice, positionId));
+        EdenRewardsFacet(diamond).claimRewardProgram(programId, positionId, alice);
+
+        vm.prank(bob);
+        uint256 claimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, positionId, bob);
+        assertEq(claimed, 100e18);
+        assertEq(alt.balanceOf(bob), 100e18);
     }
 }

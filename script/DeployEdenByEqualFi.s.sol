@@ -32,6 +32,7 @@ import {EdenBasketPositionFacet} from "src/eden/EdenBasketPositionFacet.sol";
 import {EdenStEVEActionFacet} from "src/eden/EdenStEVEActionFacet.sol";
 import {EdenStEVEWalletFacet} from "src/eden/EdenStEVEWalletFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
+import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
 import {EdenAdminFacet} from "src/eden/EdenAdminFacet.sol";
@@ -44,7 +45,7 @@ interface IPoolManagementFacetInitDefault {
 contract DeployEdenByEqualFi is Script {
     uint256 internal constant DIAMOND_CORE_FACET_COUNT = 3;
     uint256 internal constant NON_EDEN_LAUNCH_FACET_COUNT = 14;
-    uint256 internal constant EDEN_SINGLETON_FACET_COUNT = 7;
+    uint256 internal constant EDEN_SINGLETON_FACET_COUNT = 8;
     uint256 internal constant LAUNCH_FACET_COUNT = NON_EDEN_LAUNCH_FACET_COUNT + EDEN_SINGLETON_FACET_COUNT;
     uint256 internal constant TOTAL_FACET_COUNT = DIAMOND_CORE_FACET_COUNT + LAUNCH_FACET_COUNT;
     uint256 internal constant CUT_BATCH_SIZE = 3;
@@ -257,6 +258,10 @@ contract DeployEdenByEqualFi is Script {
         {
             EdenRewardFacet facet = new EdenRewardFacet();
             cuts[nextIndex++] = _cut(address(facet), _selectorsEdenReward());
+        }
+        {
+            EdenRewardsFacet facet = new EdenRewardsFacet();
+            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenRewards());
         }
         {
             EdenStEVEActionFacet facet = new EdenStEVEActionFacet();
@@ -520,6 +525,23 @@ contract DeployEdenByEqualFi is Script {
         s[4] = EdenRewardFacet.accruedRewardsOfPosition.selector;
         s[5] = EdenRewardFacet.rewardCheckpointOfPosition.selector;
         s[6] = EdenRewardFacet.getRewardConfig.selector;
+    }
+
+    function _selectorsEdenRewards() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](13);
+        s[0] = EdenRewardsFacet.createRewardProgram.selector;
+        s[1] = EdenRewardsFacet.setRewardProgramEnabled.selector;
+        s[2] = EdenRewardsFacet.pauseRewardProgram.selector;
+        s[3] = EdenRewardsFacet.resumeRewardProgram.selector;
+        s[4] = EdenRewardsFacet.endRewardProgram.selector;
+        s[5] = EdenRewardsFacet.closeRewardProgram.selector;
+        s[6] = EdenRewardsFacet.fundRewardProgram.selector;
+        s[7] = EdenRewardsFacet.accrueRewardProgram.selector;
+        s[8] = EdenRewardsFacet.settleRewardProgramPosition.selector;
+        s[9] = EdenRewardsFacet.claimRewardProgram.selector;
+        s[10] = EdenRewardsFacet.getRewardProgram.selector;
+        s[11] = EdenRewardsFacet.previewRewardProgramState.selector;
+        s[12] = EdenRewardsFacet.getRewardProgramIdsByTarget.selector;
     }
 
     function _selectorsEdenLending() internal pure returns (bytes4[] memory s) {

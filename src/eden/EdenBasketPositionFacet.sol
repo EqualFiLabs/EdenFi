@@ -4,13 +4,13 @@ pragma solidity ^0.8.20;
 import {BasketToken} from "../tokens/BasketToken.sol";
 import {EdenStEVELogic} from "./EdenStEVELogic.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
-import {LibEdenRewards} from "../libraries/LibEdenRewards.sol";
 import {LibEdenBasketStorage} from "../libraries/LibEdenBasketStorage.sol";
 import {LibEdenStEVEStorage} from "../libraries/LibEdenStEVEStorage.sol";
 import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
 import {LibPoolMembership} from "../libraries/LibPoolMembership.sol";
 import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
 import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
+import {LibStEVERewards} from "../libraries/LibStEVERewards.sol";
 import {Types} from "../libraries/Types.sol";
 import "../libraries/Errors.sol";
 
@@ -28,7 +28,7 @@ contract EdenBasketPositionFacet is EdenStEVELogic, ReentrancyGuardModifiers {
         LibEdenBasketStorage.ProductConfig storage product = LibEdenBasketStorage.s().product;
         if (product.paused) revert IndexPaused(LibEdenBasketStorage.PRODUCT_ID);
 
-        LibEdenRewards.settlePositionRewards(positionKey);
+        uint256 eligibleBefore = LibStEVERewards.settleBeforeEligibleBalanceChange(positionKey);
 
         PositionMintState memory state;
         state.required = new uint256[](product.assets.length);
@@ -69,9 +69,7 @@ contract EdenBasketPositionFacet is EdenStEVELogic, ReentrancyGuardModifiers {
         basketPool.userFeeIndex[positionKey] = basketPool.feeIndex;
         basketPool.userMaintenanceIndex[positionKey] = basketPool.maintenanceIndex;
 
-        LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
-        steve.eligiblePrincipal[positionKey] += minted;
-        steve.eligibleSupply += minted;
+        LibStEVERewards.syncEligibleBalanceChange(positionKey, eligibleBefore, eligibleBefore + minted);
     }
 
     function burnStEVEFromPosition(uint256 positionId, uint256 units)
@@ -91,9 +89,7 @@ contract EdenBasketPositionFacet is EdenStEVELogic, ReentrancyGuardModifiers {
         LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
         uint256 eligible = steve.eligiblePrincipal[positionKey];
         if (units > eligible) revert InsufficientPrincipal(units, eligible);
-        LibEdenRewards.settlePositionRewards(positionKey);
-        steve.eligiblePrincipal[positionKey] = eligible - units;
-        steve.eligibleSupply -= units;
+        uint256 eligibleBefore = LibStEVERewards.settleBeforeEligibleBalanceChange(positionKey);
 
         LibAppStorage.AppStorage storage app = LibAppStorage.s();
         Types.PoolData storage basketPool = app.pools[product.poolId];
@@ -120,6 +116,7 @@ contract EdenBasketPositionFacet is EdenStEVELogic, ReentrancyGuardModifiers {
         }
         basketPool.userFeeIndex[positionKey] = basketPool.feeIndex;
         basketPool.userMaintenanceIndex[positionKey] = basketPool.maintenanceIndex;
+        LibStEVERewards.syncEligibleBalanceChange(positionKey, eligibleBefore, eligible - units);
         assetsOut = state.assetsOut;
     }
 
