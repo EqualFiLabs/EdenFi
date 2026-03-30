@@ -118,6 +118,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
         _enforceManagerOrGovernance(program.config.manager);
         if (program.config.closed) revert InvalidParameterRange("programClosed");
+        _accrueBeforeLifecycleMutation(programId, program);
         program.config.enabled = enabled;
         emit RewardProgramEnabledUpdated(programId, enabled);
     }
@@ -128,6 +129,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         _enforceManagerOrGovernance(program.config.manager);
         if (program.config.closed) revert InvalidParameterRange("programClosed");
         if (program.config.paused) revert InvalidParameterRange("programPaused");
+        _accrueBeforeLifecycleMutation(programId, program);
         program.config.paused = true;
         emit RewardProgramPaused(programId);
     }
@@ -138,6 +140,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         _enforceManagerOrGovernance(program.config.manager);
         if (program.config.closed) revert InvalidParameterRange("programClosed");
         if (!program.config.paused) revert InvalidParameterRange("programNotPaused");
+        _accrueBeforeLifecycleMutation(programId, program);
         program.config.paused = false;
         emit RewardProgramResumed(programId);
     }
@@ -151,6 +154,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         uint256 currentEndTime = program.config.endTime;
         if (currentEndTime != 0 && currentEndTime <= block.timestamp) revert InvalidParameterRange("programEnded");
 
+        _accrueBeforeLifecycleMutation(programId, program);
         program.config.endTime = block.timestamp;
         program.config.enabled = false;
         program.config.paused = false;
@@ -163,6 +167,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
         _enforceManagerOrGovernance(program.config.manager);
         if (program.config.closed) revert InvalidParameterRange("programClosed");
+        _accrueBeforeLifecycleMutation(programId, program);
         if (program.state.fundedReserve != 0) revert InvalidParameterRange("programReserve");
 
         uint256 endTime = program.config.endTime;
@@ -440,5 +445,13 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         emit RewardProgramAccrued(
             programId, allocated, stateAfter.globalRewardIndex, stateAfter.fundedReserve, stateAfter.lastRewardUpdate
         );
+    }
+
+    function _accrueBeforeLifecycleMutation(uint256 programId, LibEdenRewardsStorage.RewardProgram storage program)
+        private
+    {
+        LibEdenRewardsStorage.RewardProgramState memory stateBefore = program.state;
+        LibEdenRewardsStorage.RewardProgramState memory stateAfter = LibEdenRewardsEngine.accrueProgram(programId);
+        _emitAccrual(programId, stateBefore, stateAfter);
     }
 }

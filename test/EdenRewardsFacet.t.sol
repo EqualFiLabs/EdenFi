@@ -220,6 +220,134 @@ contract EdenRewardsFacetTest is Test {
         assertFalse(config.paused);
     }
 
+    function test_LifecycleMutations_AccrueBeforeDisablePauseAndEnd() public {
+        uint256 currentTime = block.timestamp;
+
+        vm.prank(timelock);
+        uint256 disableProgramId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            LibEdenRewardsStorage.STEVE_TARGET_ID,
+            address(rewardAsset),
+            manager,
+            1e18,
+            0,
+            0,
+            true
+        );
+        facet.setProgramEligibleSupply(disableProgramId, 10e18);
+        rewardAsset.mint(address(this), 30e18);
+        rewardAsset.approve(address(facet), 30e18);
+        facet.fundRewardProgram(disableProgramId, 10e18, 10e18);
+
+        vm.warp(currentTime + 5);
+        vm.prank(manager);
+        facet.setRewardProgramEnabled(disableProgramId, false);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory disableState) = facet.getRewardProgram(disableProgramId);
+        assertEq(disableState.lastRewardUpdate, currentTime + 5);
+        assertEq(disableState.fundedReserve, 5e18);
+        assertEq(disableState.globalRewardIndex, 5e26);
+
+        currentTime = block.timestamp;
+        vm.prank(timelock);
+        uint256 pauseProgramId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            LibEdenRewardsStorage.STEVE_TARGET_ID,
+            address(rewardAsset),
+            manager,
+            1e18,
+            0,
+            0,
+            true
+        );
+        facet.setProgramEligibleSupply(pauseProgramId, 10e18);
+        facet.fundRewardProgram(pauseProgramId, 10e18, 10e18);
+
+        vm.warp(currentTime + 6);
+        vm.prank(manager);
+        facet.pauseRewardProgram(pauseProgramId);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory pauseState) = facet.getRewardProgram(pauseProgramId);
+        assertEq(pauseState.lastRewardUpdate, currentTime + 6);
+        assertEq(pauseState.fundedReserve, 4e18);
+        assertEq(pauseState.globalRewardIndex, 6e26);
+
+        currentTime = block.timestamp;
+        vm.prank(timelock);
+        uint256 endProgramId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            LibEdenRewardsStorage.STEVE_TARGET_ID,
+            address(rewardAsset),
+            manager,
+            1e18,
+            0,
+            1000,
+            true
+        );
+        facet.setProgramEligibleSupply(endProgramId, 10e18);
+        facet.fundRewardProgram(endProgramId, 10e18, 10e18);
+
+        vm.warp(currentTime + 7);
+        vm.prank(manager);
+        facet.endRewardProgram(endProgramId);
+
+        (
+            LibEdenRewardsStorage.RewardProgramConfig memory endConfig,
+            LibEdenRewardsStorage.RewardProgramState memory endState
+        ) = facet.getRewardProgram(endProgramId);
+        assertEq(endConfig.endTime, currentTime + 7);
+        assertFalse(endConfig.enabled);
+        assertFalse(endConfig.paused);
+        assertEq(endState.lastRewardUpdate, currentTime + 7);
+        assertEq(endState.fundedReserve, 3e18);
+        assertEq(endState.globalRewardIndex, 7e26);
+    }
+
+    function test_CloseRewardProgram_PreservesLaterClaimsAfterFinalAccrual() public {
+        uint256 currentTime = block.timestamp;
+
+        vm.prank(timelock);
+        uint256 programId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            LibEdenRewardsStorage.STEVE_TARGET_ID,
+            address(rewardAsset),
+            manager,
+            1e18,
+            currentTime,
+            0,
+            true
+        );
+
+        facet.setProgramEligibleSupply(programId, 10e18);
+        facet.setStEVEEligiblePrincipal(alicePositionKey, 10e18);
+        rewardAsset.mint(address(this), 10e18);
+        rewardAsset.approve(address(facet), 10e18);
+        facet.fundRewardProgram(programId, 10e18, 10e18);
+
+        vm.prank(manager);
+        vm.warp(currentTime + 10);
+        facet.endRewardProgram(programId);
+
+        vm.prank(manager);
+        facet.closeRewardProgram(programId);
+
+        (LibEdenRewardsStorage.RewardProgramConfig memory config, LibEdenRewardsStorage.RewardProgramState memory state) =
+            facet.getRewardProgram(programId);
+        assertTrue(config.closed);
+        assertEq(config.endTime, currentTime + 10);
+        assertEq(state.lastRewardUpdate, currentTime + 10);
+        assertEq(state.fundedReserve, 0);
+        assertEq(state.globalRewardIndex, LibEdenRewardsStorage.REWARD_INDEX_SCALE);
+
+        uint256 preview = facet.previewRewardProgramPosition(programId, alicePositionId).claimableRewards;
+        assertEq(preview, 10e18);
+
+        vm.prank(alice);
+        uint256 claimed = facet.claimRewardProgram(programId, alicePositionId, alice);
+        assertEq(claimed, 10e18);
+        assertEq(rewardAsset.balanceOf(alice), 10e18);
+    }
+
     function test_LifecycleRevertsForUnauthorizedOrUnsafeClose() public {
         vm.prank(timelock);
         uint256 programId = facet.createRewardProgram(
