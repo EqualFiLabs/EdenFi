@@ -18,12 +18,12 @@ import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {StEVEAdminFacet} from "src/steve/StEVEAdminFacet.sol";
 import {StEVELendingFacet} from "src/steve/StEVELendingFacet.sol";
-import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
+import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {StEVEActionFacet} from "src/steve/StEVEActionFacet.sol";
 import {StEVEWalletFacet} from "src/steve/StEVEWalletFacet.sol";
 import {StEVEViewFacet} from "src/steve/StEVEViewFacet.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
-import {LibEdenRewardStorage} from "src/libraries/LibEdenRewardStorage.sol";
+import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
 import {LibStEVEEligibilityStorage} from "src/libraries/LibStEVEEligibilityStorage.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
@@ -109,21 +109,6 @@ contract StEVEInvariantInspector {
         return LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey];
     }
 
-    function rewardGlobalIndex() external view returns (uint256) {
-        return LibEdenRewardStorage.s().config.globalRewardIndex;
-    }
-
-    function rewardReserve() external view returns (uint256) {
-        return LibEdenRewardStorage.s().config.rewardReserve;
-    }
-
-    function positionRewardIndex(bytes32 positionKey) external view returns (uint256) {
-        return LibEdenRewardStorage.s().positionRewardIndex[positionKey];
-    }
-
-    function positionAccruedRewards(bytes32 positionKey) external view returns (uint256) {
-        return LibEdenRewardStorage.s().accruedRewards[positionKey];
-    }
 }
 
 contract StEVEInvariantHandler {
@@ -147,6 +132,7 @@ contract StEVEInvariantHandler {
         address feeBasketToken;
         uint256 feeIndexId;
         address feeIndexToken;
+        uint256 rewardProgramId;
     }
 
     address public immutable diamond;
@@ -165,6 +151,7 @@ contract StEVEInvariantHandler {
     address public immutable feeBasketToken;
     uint256 public immutable feeIndexId;
     address public immutable feeIndexToken;
+    uint256 public immutable rewardProgramId;
 
     uint256 public immutable stevePoolId;
     uint256 public immutable altBasketPoolId;
@@ -201,6 +188,7 @@ contract StEVEInvariantHandler {
         feeBasketToken = cfg.feeBasketToken;
         feeIndexId = cfg.feeIndexId;
         feeIndexToken = cfg.feeIndexToken;
+        rewardProgramId = cfg.rewardProgramId;
 
         stevePoolId = StEVEViewFacet(cfg.diamond).getProductPoolId();
         altBasketPoolId = EqualIndexAdminFacetV3(cfg.diamond).getIndexPoolId(cfg.altBasketId);
@@ -211,7 +199,7 @@ contract StEVEInvariantHandler {
             actors.push(actors_[i]);
         }
 
-        maxObservedRewardIndex = cfg.inspector.rewardGlobalIndex();
+        maxObservedRewardIndex = EdenRewardsFacet(cfg.diamond).previewRewardProgramState(cfg.rewardProgramId).globalRewardIndex;
     }
 
     function seedInitialState() external {
@@ -447,12 +435,13 @@ contract StEVEInvariantHandler {
         uint256 positionId = _pickTrackedPosition(positionSeed);
         if (positionId == 0) return;
 
-        uint256 claimable = EdenRewardFacet(diamond).previewClaimRewards(positionId);
+        uint256 claimable = EdenRewardsFacet(diamond).previewRewardProgramPosition(rewardProgramId, positionId)
+            .claimableRewards;
         if (claimable == 0) return;
 
         address owner = positionNft.ownerOf(positionId);
         vm.prank(owner);
-        uint256 claimed = EdenRewardFacet(diamond).claimRewards(positionId, owner);
+        uint256 claimed = EdenRewardsFacet(diamond).claimRewardProgram(rewardProgramId, positionId, owner);
         totalRewardClaimed += claimed;
         _syncRewardIndex();
     }
@@ -748,7 +737,7 @@ contract StEVEInvariantHandler {
         eve.mint(actor, amount);
         vm.startPrank(actor);
         eve.approve(diamond, amount);
-        uint256 funded = EdenRewardFacet(diamond).fundRewards(amount, amount);
+        uint256 funded = EdenRewardsFacet(diamond).fundRewardProgram(rewardProgramId, amount, amount);
         vm.stopPrank();
         totalRewardFunded += funded;
         _syncRewardIndex();
@@ -759,7 +748,7 @@ contract StEVEInvariantHandler {
     }
 
     function _syncRewardIndex() internal {
-        uint256 current = inspector.rewardGlobalIndex();
+        uint256 current = EdenRewardsFacet(diamond).previewRewardProgramState(rewardProgramId).globalRewardIndex;
         if (current > maxObservedRewardIndex) {
             maxObservedRewardIndex = current;
         }

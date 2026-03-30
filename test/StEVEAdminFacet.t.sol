@@ -6,11 +6,12 @@ import {Vm} from "forge-std/Vm.sol";
 import {OwnershipFacet} from "src/core/OwnershipFacet.sol";
 import {StEVEAdminFacet} from "src/steve/StEVEAdminFacet.sol";
 import {StEVEProductBase} from "src/steve/StEVEProductBase.sol";
-import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
+import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {StEVELendingFacet} from "src/steve/StEVELendingFacet.sol";
 import {StEVEViewFacet} from "src/steve/StEVEViewFacet.sol";
 import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockController.sol";
 import {IDiamondCut} from "src/interfaces/IDiamondCut.sol";
+import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
 import {StEVELaunchFixture} from "test/utils/StEVELaunchFixture.t.sol";
 
 contract StEVEAdminFacetTest is StEVELaunchFixture {
@@ -33,7 +34,17 @@ contract StEVEAdminFacetTest is StEVELaunchFixture {
         uint16 flashFeeBps
     );
     event PoolFeeShareUpdated(uint16 oldBps, uint16 newBps);
-    event RewardConfigUpdated(address indexed rewardToken, uint256 rewardRatePerSecond, bool enabled);
+    event RewardProgramCreated(
+        uint256 indexed programId,
+        uint8 indexed targetType,
+        uint256 indexed targetId,
+        address rewardToken,
+        address manager,
+        uint256 rewardRatePerSecond,
+        uint256 startTime,
+        uint256 endTime,
+        bool enabled
+    );
     event LendingConfigUpdated(uint256 indexed productId, uint40 minDuration, uint40 maxDuration, uint16 ltvBps);
 
     function setUp() public override {
@@ -104,14 +115,25 @@ contract StEVEAdminFacetTest is StEVELaunchFixture {
         (uint256 productId,) = _createStEVE(_stEveParams(address(eve)));
 
         vm.expectRevert(bytes("LibAccess: not timelock"));
-        EdenRewardFacet(diamond).configureRewards(address(eve), 10e18, true);
+        EdenRewardsFacet(diamond).createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            LibEdenRewardsStorage.STEVE_TARGET_ID,
+            address(eve),
+            address(this),
+            10e18,
+            0,
+            0,
+            true
+        );
 
         vm.expectRevert(bytes("LibAccess: not timelock"));
         StEVELendingFacet(diamond).configureLending(1 days, 14 days);
 
         vm.recordLogs();
-        _configureRewards(address(eve), 10e18, true);
-        _assertIndexedEventEmitted(keccak256("RewardConfigUpdated(address,uint256,bool)"), bytes32(uint256(uint160(address(eve)))));
+        _createStEVERewardProgram(address(eve), address(this), 10e18, 0, 0, true);
+        _assertEventEmitted(
+            keccak256("RewardProgramCreated(uint256,uint8,uint256,address,address,uint256,uint256,uint256,bool)")
+        );
 
         vm.recordLogs();
         _configureLending(1 days, 14 days);
@@ -120,7 +142,7 @@ contract StEVEAdminFacetTest is StEVELaunchFixture {
         StEVEViewFacet.ProductConfigView memory config = StEVEViewFacet(diamond).getProductConfig();
         assertEq(config.timelockDelaySeconds, 7 days);
         assertEq(config.timelock, address(timelockController));
-        assertEq(config.rewardToken, address(eve));
+        assertEq(config.rewardProgramCount, 1);
     }
 
     function test_SetTimelockController_RotatesThroughGovernance() public {

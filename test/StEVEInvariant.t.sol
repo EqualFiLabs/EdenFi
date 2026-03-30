@@ -9,8 +9,9 @@ import {OwnershipFacet} from "src/core/OwnershipFacet.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
 import {StEVELendingFacet} from "src/steve/StEVELendingFacet.sol";
-import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
+import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {StEVEViewFacet} from "src/steve/StEVEViewFacet.sol";
+import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
 
 import {StEVELaunchFixture} from "test/utils/StEVELaunchFixture.t.sol";
 import {StEVEInvariantHandler, StEVEInvariantInspector} from "test/utils/StEVEInvariantUtils.t.sol";
@@ -23,11 +24,12 @@ contract StEVEInvariantTest is StdInvariant, StEVELaunchFixture {
     address internal feeBasketToken;
     uint256 internal feeIndexId;
     address internal feeIndexToken;
+    uint256 internal rewardProgramId;
 
     function setUp() public override {
         super.setUp();
         _bootstrapStEVEProduct();
-        _configureRewards(address(eve), 1e18, true);
+        rewardProgramId = _createStEVERewardProgram(address(eve), address(this), 1e18, 0, 0, true);
 
         (altBasketId, altBasketToken) =
             _createIndexThroughTimelock(_singleAssetIndexParams("ALT Index", "eALT", address(alt), 0, 0));
@@ -37,7 +39,7 @@ contract StEVEInvariantTest is StdInvariant, StEVELaunchFixture {
             _createIndexThroughTimelock(_singleAssetIndexParams("EVE Index", "eEVE", address(eve), 100, 100));
 
         StEVEInvariantInspector inspectorFacet = new StEVEInvariantInspector();
-        bytes4[] memory inspectorSelectors = new bytes4[](16);
+        bytes4[] memory inspectorSelectors = new bytes4[](12);
         inspectorSelectors[0] = StEVEInvariantInspector.poolCount.selector;
         inspectorSelectors[1] = StEVEInvariantInspector.nativeTrackedTotal.selector;
         inspectorSelectors[2] = StEVEInvariantInspector.poolSnapshot.selector;
@@ -50,10 +52,6 @@ contract StEVEInvariantTest is StdInvariant, StEVELaunchFixture {
         inspectorSelectors[9] = StEVEInvariantInspector.moduleEncumbrance.selector;
         inspectorSelectors[10] = StEVEInvariantInspector.indexEncumbrance.selector;
         inspectorSelectors[11] = StEVEInvariantInspector.eligiblePrincipal.selector;
-        inspectorSelectors[12] = StEVEInvariantInspector.rewardGlobalIndex.selector;
-        inspectorSelectors[13] = StEVEInvariantInspector.rewardReserve.selector;
-        inspectorSelectors[14] = StEVEInvariantInspector.positionRewardIndex.selector;
-        inspectorSelectors[15] = StEVEInvariantInspector.positionAccruedRewards.selector;
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({
@@ -78,7 +76,8 @@ contract StEVEInvariantTest is StdInvariant, StEVELaunchFixture {
             feeBasketId: feeBasketId,
             feeBasketToken: feeBasketToken,
             feeIndexId: feeIndexId,
-            feeIndexToken: feeIndexToken
+            feeIndexToken: feeIndexToken,
+            rewardProgramId: rewardProgramId
         });
         address[] memory actors = new address[](4);
         actors[0] = alice;
@@ -186,7 +185,8 @@ contract StEVEInvariantTest is StdInvariant, StEVELaunchFixture {
     }
 
     function invariant_RewardsRemainConservativeAndPNFTScoped() public view {
-        EdenRewardFacet.RewardView memory rewardView = EdenRewardFacet(diamond).getRewardConfig();
+        LibEdenRewardsStorage.RewardProgramState memory rewardState =
+            EdenRewardsFacet(diamond).previewRewardProgramState(rewardProgramId);
         uint256 trackedCount = handler.positionCount();
         uint256 sumEligible;
         uint256 sumClaimable;
@@ -196,14 +196,15 @@ contract StEVEInvariantTest is StdInvariant, StEVELaunchFixture {
             bytes32 positionKey = positionNft.getPositionKey(tokenId);
             uint256 eligible = inspector.eligiblePrincipal(positionKey);
             sumEligible += eligible;
-            sumClaimable += EdenRewardFacet(diamond).previewClaimRewards(tokenId);
+            sumClaimable +=
+                EdenRewardsFacet(diamond).previewRewardProgramPosition(rewardProgramId, tokenId).claimableRewards;
 
             assertLe(eligible, inspector.userPrincipal(StEVEViewFacet(diamond).getProductPoolId(), positionKey));
         }
 
         assertEq(sumEligible, inspector.eligibleSupply());
-        assertGe(rewardView.globalRewardIndex, handler.maxObservedRewardIndex());
-        assertLe(sumClaimable + rewardView.rewardReserve + handler.totalRewardClaimed(), handler.totalRewardFunded());
+        assertGe(rewardState.globalRewardIndex, handler.maxObservedRewardIndex());
+        assertLe(sumClaimable + rewardState.fundedReserve + handler.totalRewardClaimed(), handler.totalRewardFunded());
     }
 
     function invariant_LendingLifecycleAndCollateralStayConsistent() public view {
@@ -280,7 +281,8 @@ contract StEVEInvariantTest is StdInvariant, StEVELaunchFixture {
     }
 
     function test_InvariantSeedRewardSanity() public view {
-        EdenRewardFacet.RewardView memory rewardView = EdenRewardFacet(diamond).getRewardConfig();
+        LibEdenRewardsStorage.RewardProgramState memory rewardState =
+            EdenRewardsFacet(diamond).previewRewardProgramState(rewardProgramId);
         uint256 trackedCount = handler.positionCount();
         uint256 sumEligible;
         uint256 sumClaimable;
@@ -290,13 +292,14 @@ contract StEVEInvariantTest is StdInvariant, StEVELaunchFixture {
             bytes32 positionKey = positionNft.getPositionKey(tokenId);
             uint256 eligible = inspector.eligiblePrincipal(positionKey);
             sumEligible += eligible;
-            sumClaimable += EdenRewardFacet(diamond).previewClaimRewards(tokenId);
+            sumClaimable +=
+                EdenRewardsFacet(diamond).previewRewardProgramPosition(rewardProgramId, tokenId).claimableRewards;
         }
 
         require(sumEligible == inspector.eligibleSupply(), "seed eligible supply mismatch");
-        require(rewardView.globalRewardIndex >= handler.maxObservedRewardIndex(), "seed reward index mismatch");
+        require(rewardState.globalRewardIndex >= handler.maxObservedRewardIndex(), "seed reward index mismatch");
         require(
-            sumClaimable + rewardView.rewardReserve + handler.totalRewardClaimed() <= handler.totalRewardFunded(),
+            sumClaimable + rewardState.fundedReserve + handler.totalRewardClaimed() <= handler.totalRewardFunded(),
             "seed reward conservation mismatch"
         );
     }

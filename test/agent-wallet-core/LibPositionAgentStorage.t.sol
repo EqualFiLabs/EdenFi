@@ -8,7 +8,7 @@ import {LibDiamond} from "src/libraries/LibDiamond.sol";
 import {LibStEVEAdminStorage} from "src/libraries/LibStEVEAdminStorage.sol";
 import {LibStEVEStorage} from "src/libraries/LibStEVEStorage.sol";
 import {LibStEVELendingStorage} from "src/libraries/LibStEVELendingStorage.sol";
-import {LibEdenRewardStorage} from "src/libraries/LibEdenRewardStorage.sol";
+import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
 import {LibStEVEEligibilityStorage} from "src/libraries/LibStEVEEligibilityStorage.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
@@ -58,7 +58,7 @@ contract LibPositionAgentStorageTest {
         require(slot_ != LibStEVEAdminStorage.STORAGE_POSITION, "collides with eden admin");
         require(slot_ != LibStEVEStorage.STORAGE_POSITION, "collides with eden basket");
         require(slot_ != LibStEVELendingStorage.STORAGE_POSITION, "collides with eden lending");
-        require(slot_ != LibEdenRewardStorage.STORAGE_POSITION, "collides with eden reward");
+        require(slot_ != LibEdenRewardsStorage.STORAGE_POSITION, "collides with eden rewards");
         require(slot_ != LibStEVEEligibilityStorage.STORAGE_POSITION, "collides with eden steve");
         require(slot_ != keccak256("equalscale.alpha.storage"), "collides with equalscale alpha");
     }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.20;
 
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {StEVEProductBase} from "./StEVEProductBase.sol";
 import {StEVELendingLogic} from "./StEVELendingLogic.sol";
@@ -12,8 +13,8 @@ import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibStEVEAdminStorage} from "../libraries/LibStEVEAdminStorage.sol";
 import {LibStEVEStorage} from "../libraries/LibStEVEStorage.sol";
 import {LibStEVELendingStorage} from "../libraries/LibStEVELendingStorage.sol";
-import {LibEdenRewards} from "../libraries/LibEdenRewards.sol";
-import {LibEdenRewardStorage} from "../libraries/LibEdenRewardStorage.sol";
+import {LibEdenRewardsEngine} from "../libraries/LibEdenRewardsEngine.sol";
+import {LibEdenRewardsStorage} from "../libraries/LibEdenRewardsStorage.sol";
 import {LibStEVEEligibilityStorage} from "../libraries/LibStEVEEligibilityStorage.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibPositionAgentStorage} from "../libraries/LibPositionAgentStorage.sol";
@@ -59,10 +60,8 @@ contract StEVEViewFacet is StEVELendingLogic {
         uint256 poolId;
         uint256 totalUnits;
         bool steveConfigured;
-        address rewardToken;
-        uint256 rewardRatePerSecond;
-        uint256 rewardReserve;
-        bool rewardsEnabled;
+        uint256 rewardProgramCount;
+        uint256 activeRewardProgramCount;
     }
 
     struct ProductFeeConfigView {
@@ -75,14 +74,13 @@ contract StEVEViewFacet is StEVELendingLogic {
     struct ProductRewardStateView {
         bool steveConfigured;
         uint256 eligibleSupply;
-        address rewardToken;
-        uint256 rewardRatePerSecond;
-        uint256 rewardReserve;
-        uint256 globalRewardIndex;
+        uint256 rewardProgramCount;
+        uint256 activeRewardProgramCount;
+        uint256 totalRewardReserve;
         bool onlyPnftHeldStEVEEligible;
         bool walletHeldStEVERewardEligible;
         bool rewardsAccrueToPosition;
-        bool rewardsEnabled;
+        bool rewardsConfigured;
     }
 
     struct PositionProductView {
@@ -100,9 +98,9 @@ contract StEVEViewFacet is StEVELendingLogic {
 
     struct PositionRewardView {
         uint256 eligiblePrincipal;
-        uint256 accruedRewards;
         uint256 claimableRewards;
-        uint256 rewardCheckpoint;
+        uint256 rewardProgramCount;
+        uint256 claimableProgramCount;
         bool rewardsAccrueToPosition;
     }
 
@@ -148,8 +146,8 @@ contract StEVEViewFacet is StEVELendingLogic {
         LibStEVEStorage.ProductStorage storage store = LibStEVEStorage.s();
         LibStEVEStorage.ProductConfig storage product = store.product;
         LibStEVEStorage.ProductMetadata storage metadata = store.productMetadata;
-        LibEdenRewardStorage.RewardStorage storage rewards = LibEdenRewardStorage.s();
         LibStEVEEligibilityStorage.EligibilityStorage storage steve = LibStEVEEligibilityStorage.s();
+        (uint256 rewardProgramCount, uint256 activeRewardProgramCount,) = _rewardProgramSummary();
 
         view_.productId = LibStEVEStorage.PRODUCT_ID;
         view_.treasury = LibAppStorage.treasuryAddress(app);
@@ -172,10 +170,8 @@ contract StEVEViewFacet is StEVELendingLogic {
         view_.poolId = product.poolId;
         view_.totalUnits = product.totalUnits;
         view_.steveConfigured = steve.configured;
-        view_.rewardToken = rewards.config.rewardToken;
-        view_.rewardRatePerSecond = rewards.config.rewardRatePerSecond;
-        view_.rewardReserve = LibEdenRewards.previewRewardReserve();
-        view_.rewardsEnabled = rewards.config.enabled;
+        view_.rewardProgramCount = rewardProgramCount;
+        view_.activeRewardProgramCount = activeRewardProgramCount;
     }
 
     function getProductPoolId() external view returns (uint256) {
@@ -191,19 +187,19 @@ contract StEVEViewFacet is StEVELendingLogic {
     }
 
     function getProductRewardState() external view returns (ProductRewardStateView memory view_) {
-        LibEdenRewardStorage.RewardStorage storage rewards = LibEdenRewardStorage.s();
         LibStEVEEligibilityStorage.EligibilityStorage storage steve = LibStEVEEligibilityStorage.s();
+        (uint256 rewardProgramCount, uint256 activeRewardProgramCount, uint256 totalRewardReserve) =
+            _rewardProgramSummary();
 
         view_.steveConfigured = steve.configured;
         view_.eligibleSupply = steve.eligibleSupply;
-        view_.rewardToken = rewards.config.rewardToken;
-        view_.rewardRatePerSecond = rewards.config.rewardRatePerSecond;
-        view_.rewardReserve = LibEdenRewards.previewRewardReserve();
-        view_.globalRewardIndex = LibEdenRewards.previewGlobalRewardIndex();
+        view_.rewardProgramCount = rewardProgramCount;
+        view_.activeRewardProgramCount = activeRewardProgramCount;
+        view_.totalRewardReserve = totalRewardReserve;
         view_.onlyPnftHeldStEVEEligible = true;
         view_.walletHeldStEVERewardEligible = false;
         view_.rewardsAccrueToPosition = true;
-        view_.rewardsEnabled = rewards.config.enabled;
+        view_.rewardsConfigured = rewardProgramCount != 0;
     }
 
     function getProductVaultBalance(address asset) external view returns (uint256) {
@@ -264,11 +260,14 @@ contract StEVEViewFacet is StEVELendingLogic {
 
     function getPositionRewardView(uint256 positionId) public view returns (PositionRewardView memory rewards_) {
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
+        uint256 eligiblePrincipal = LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey];
+        (uint256 claimableRewards, uint256 rewardProgramCount, uint256 claimableProgramCount) =
+            _positionRewardSummary(positionKey, eligiblePrincipal);
         rewards_ = PositionRewardView({
-            eligiblePrincipal: LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey],
-            accruedRewards: LibEdenRewardStorage.s().accruedRewards[positionKey],
-            claimableRewards: LibEdenRewards.previewPositionRewards(positionKey),
-            rewardCheckpoint: LibEdenRewardStorage.s().positionRewardIndex[positionKey],
+            eligiblePrincipal: eligiblePrincipal,
+            claimableRewards: claimableRewards,
+            rewardProgramCount: rewardProgramCount,
+            claimableProgramCount: claimableProgramCount,
             rewardsAccrueToPosition: true
         });
     }
@@ -500,14 +499,17 @@ contract StEVEViewFacet is StEVELendingLogic {
     }
 
     function canClaimRewards(uint256 positionId) external view returns (ActionCheck memory) {
-        LibEdenRewardStorage.RewardStorage storage rewards = LibEdenRewardStorage.s();
-        if (!rewards.config.enabled || rewards.config.rewardToken == address(0)) {
+        bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
+        uint256 eligiblePrincipal = LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey];
+        (uint256 claimableRewards, uint256 rewardProgramCount,) = _positionRewardSummary(positionKey, eligiblePrincipal);
+        if (claimableRewards != 0) {
+            return _ok();
+        }
+        (, uint256 activeRewardProgramCount,) = _rewardProgramSummary();
+        if (rewardProgramCount == 0 || activeRewardProgramCount == 0) {
             return _fail(ACTION_REWARDS_DISABLED, "rewards disabled");
         }
-        if (LibEdenRewards.previewPositionRewards(LibPositionHelpers.positionKey(positionId)) == 0) {
-            return _fail(ACTION_NOTHING_CLAIMABLE, "nothing claimable");
-        }
-        return _ok();
+        return _fail(ACTION_NOTHING_CLAIMABLE, "nothing claimable");
     }
 
     function _positionProduct(bytes32 positionKey) internal view returns (PositionProductView memory product) {
@@ -566,6 +568,82 @@ contract StEVEViewFacet is StEVELendingLogic {
 
     function _boolString(bool value) internal pure returns (string memory) {
         return value ? "true" : "false";
+    }
+
+    function _rewardProgramSummary()
+        internal
+        view
+        returns (uint256 rewardProgramCount, uint256 activeRewardProgramCount, uint256 totalRewardReserve)
+    {
+        LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
+        uint256[] storage programIds = LibEdenRewardsStorage.programIdsForTarget(
+            store, LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION, LibEdenRewardsStorage.STEVE_TARGET_ID
+        );
+        rewardProgramCount = programIds.length;
+
+        for (uint256 i = 0; i < rewardProgramCount; i++) {
+            uint256 programId = programIds[i];
+            LibEdenRewardsStorage.RewardProgramConfig storage config = store.programs[programId].config;
+            if (_isProgramActive(config)) {
+                activeRewardProgramCount++;
+            }
+            totalRewardReserve += LibEdenRewardsEngine.previewProgramState(programId).fundedReserve;
+        }
+    }
+
+    function _positionRewardSummary(bytes32 positionKey, uint256 eligiblePrincipal)
+        internal
+        view
+        returns (uint256 claimableRewards, uint256 rewardProgramCount, uint256 claimableProgramCount)
+    {
+        LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
+        uint256[] storage programIds = LibEdenRewardsStorage.programIdsForTarget(
+            store, LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION, LibEdenRewardsStorage.STEVE_TARGET_ID
+        );
+        rewardProgramCount = programIds.length;
+
+        for (uint256 i = 0; i < rewardProgramCount; i++) {
+            uint256 claimable = _previewProgramClaimable(store, programIds[i], positionKey, eligiblePrincipal);
+            if (claimable == 0) {
+                continue;
+            }
+
+            claimableRewards += claimable;
+            claimableProgramCount++;
+        }
+    }
+
+    function _previewProgramClaimable(
+        LibEdenRewardsStorage.RewardsStorage storage store,
+        uint256 programId,
+        bytes32 positionKey,
+        uint256 eligiblePrincipal
+    ) internal view returns (uint256 claimable) {
+        LibEdenRewardsStorage.RewardProgramState memory previewState = LibEdenRewardsEngine.previewProgramState(programId);
+        uint256 checkpoint = store.positionRewardIndex[programId][positionKey];
+        claimable = store.accruedRewards[programId][positionKey];
+
+        if (previewState.globalRewardIndex <= checkpoint || eligiblePrincipal == 0) {
+            return claimable;
+        }
+
+        claimable += Math.mulDiv(
+            eligiblePrincipal,
+            previewState.globalRewardIndex - checkpoint,
+            LibEdenRewardsStorage.REWARD_INDEX_SCALE
+        );
+    }
+
+    function _isProgramActive(LibEdenRewardsStorage.RewardProgramConfig storage config) internal view returns (bool) {
+        if (config.closed || !config.enabled || config.paused || config.rewardRatePerSecond == 0) {
+            return false;
+        }
+
+        if (config.endTime != 0 && config.endTime <= block.timestamp) {
+            return false;
+        }
+
+        return true;
     }
 
 }

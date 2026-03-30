@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.20;
 
-import {LibEdenRewards} from "./LibEdenRewards.sol";
 import {LibEdenRewardsConsumer} from "./LibEdenRewardsConsumer.sol";
 import {LibEdenRewardsStorage} from "./LibEdenRewardsStorage.sol";
 import {LibStEVEEligibilityStorage} from "./LibStEVEEligibilityStorage.sol";
@@ -9,7 +8,6 @@ import {LibStEVEEligibilityStorage} from "./LibStEVEEligibilityStorage.sol";
 library LibStEVERewards {
     function settleBeforeEligibleBalanceChange(bytes32 positionKey) internal returns (uint256 eligibleBalance) {
         eligibleBalance = LibStEVEEligibilityStorage.s().eligiblePrincipal[positionKey];
-        LibEdenRewards.settlePositionRewards(positionKey);
         LibEdenRewardsConsumer.beforeTargetBalanceChange(_target(), positionKey, eligibleBalance);
     }
 

@@ -3,7 +3,6 @@ pragma solidity ^0.8.20;
 
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
-import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {PositionAgentRegistryFacet} from "src/agent-wallet/erc6551/PositionAgentRegistryFacet.sol";
 import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFacet.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
@@ -19,6 +18,7 @@ contract StEVEViewFacetTest is StEVELaunchFixture {
 
     uint256 internal alicePositionId;
     uint256 internal bobPositionId;
+    uint256 internal rewardProgramId;
     uint256 internal constant REGISTRATION_MODE_EXTERNAL_LINKED = 2;
     uint256 internal externalOwnerPk = uint256(0xA71CE);
     address internal externalOwner;
@@ -27,7 +27,7 @@ contract StEVEViewFacetTest is StEVELaunchFixture {
         super.setUp();
         _bootstrapCorePools();
         (steveBasketId, steveToken) = _createStEVE(_stEveParams(address(eve)));
-        _configureRewards(address(eve), 10e18, true);
+        rewardProgramId = _createStEVERewardProgram(address(eve), address(this), 10e18, 0, 0, true);
 
         externalOwner = vm.addr(externalOwnerPk);
 
@@ -40,8 +40,7 @@ contract StEVEViewFacetTest is StEVELaunchFixture {
         _mintWalletBasket(alice, steveBasketId, eve, 20e18);
         _depositWalletStEVEToPosition(alice, alicePositionId, 10e18);
 
-        eve.approve(diamond, 500e18);
-        EdenRewardFacet(diamond).fundRewards(500e18, 500e18);
+        _fundRewardProgram(address(this), rewardProgramId, eve, 500e18);
         vm.warp(block.timestamp + 10);
     }
 
@@ -60,8 +59,8 @@ contract StEVEViewFacetTest is StEVELaunchFixture {
         assertEq(config.totalUnits, 20e18);
         assertTrue(config.productInitialized);
         assertTrue(config.steveConfigured);
-        assertEq(config.rewardToken, address(eve));
-        assertTrue(config.rewardsEnabled);
+        assertEq(config.rewardProgramCount, 1);
+        assertEq(config.activeRewardProgramCount, 1);
 
         StEVEViewFacet.ProductFeeConfigView memory fees = StEVEViewFacet(diamond).getProductFeeConfig();
         assertEq(fees.poolFeeShareBps, 1000);
@@ -74,12 +73,13 @@ contract StEVEViewFacetTest is StEVELaunchFixture {
         StEVEViewFacet.ProductRewardStateView memory rewards = StEVEViewFacet(diamond).getProductRewardState();
         assertTrue(rewards.steveConfigured);
         assertEq(rewards.eligibleSupply, 10e18);
-        assertEq(rewards.rewardToken, address(eve));
-        assertEq(rewards.rewardRatePerSecond, 10e18);
+        assertEq(rewards.rewardProgramCount, 1);
+        assertEq(rewards.activeRewardProgramCount, 1);
+        assertEq(rewards.totalRewardReserve, 400e18);
         assertTrue(rewards.onlyPnftHeldStEVEEligible);
         assertTrue(!rewards.walletHeldStEVERewardEligible);
         assertTrue(rewards.rewardsAccrueToPosition);
-        assertTrue(rewards.rewardsEnabled);
+        assertTrue(rewards.rewardsConfigured);
 
         assertEq(StEVEViewFacet(diamond).getProductVaultBalance(address(eve)), 20e18);
         assertEq(StEVEViewFacet(diamond).getProductFeePot(address(eve)), 0);
@@ -102,8 +102,9 @@ contract StEVEViewFacetTest is StEVELaunchFixture {
 
         StEVEViewFacet.PositionRewardView memory rewards = StEVEViewFacet(diamond).getPositionRewardView(alicePositionId);
         assertEq(rewards.eligiblePrincipal, 10e18);
-        assertEq(rewards.accruedRewards, 0);
         assertGt(rewards.claimableRewards, 0);
+        assertEq(rewards.rewardProgramCount, 1);
+        assertEq(rewards.claimableProgramCount, 1);
         assertTrue(rewards.rewardsAccrueToPosition);
 
         StEVEViewFacet.PositionPortfolio memory portfolio = StEVEViewFacet(diamond).getPositionPortfolio(alicePositionId);
@@ -118,6 +119,8 @@ contract StEVEViewFacetTest is StEVELaunchFixture {
             StEVEViewFacet(diamond).getPositionPortfolio(bobPositionId);
         assertTrue(!emptyPortfolio.product.active);
         assertEq(emptyPortfolio.rewards.eligiblePrincipal, 0);
+        assertEq(emptyPortfolio.rewards.rewardProgramCount, 1);
+        assertEq(emptyPortfolio.rewards.claimableProgramCount, 0);
         assertTrue(emptyPortfolio.rewards.rewardsAccrueToPosition);
 
         StEVEViewFacet.UserPortfolio memory userPortfolio = StEVEViewFacet(diamond).getUserPortfolio(alice);
@@ -241,8 +244,8 @@ contract StEVEViewFacetTest is StEVELaunchFixture {
         assertTrue(!emptyClaimCheck.ok);
         assertEq(emptyClaimCheck.code, ACTION_NOTHING_CLAIMABLE);
 
-        _configureRewards(address(eve), 0, false);
-        StEVEViewFacet.ActionCheck memory disabledRewards = StEVEViewFacet(diamond).canClaimRewards(alicePositionId);
+        _setRewardProgramEnabled(rewardProgramId, false);
+        StEVEViewFacet.ActionCheck memory disabledRewards = StEVEViewFacet(diamond).canClaimRewards(bobPositionId);
         assertTrue(!disabledRewards.ok);
         assertEq(disabledRewards.code, ACTION_REWARDS_DISABLED);
     }
@@ -273,10 +276,12 @@ contract StEVEViewFacetTest is StEVELaunchFixture {
     }
 
     function test_ExplicitProductRewardViewsStayReadableWhenRewardsDisabled() public {
-        _configureRewards(address(eve), 0, false);
+        _setRewardProgramEnabled(rewardProgramId, false);
 
         StEVEViewFacet.ProductRewardStateView memory productRewards = StEVEViewFacet(diamond).getProductRewardState();
-        assertTrue(!productRewards.rewardsEnabled);
+        assertEq(productRewards.rewardProgramCount, 1);
+        assertEq(productRewards.activeRewardProgramCount, 0);
+        assertTrue(productRewards.rewardsConfigured);
         assertTrue(productRewards.onlyPnftHeldStEVEEligible);
         assertTrue(!productRewards.walletHeldStEVERewardEligible);
         assertTrue(productRewards.rewardsAccrueToPosition);
@@ -285,7 +290,8 @@ contract StEVEViewFacetTest is StEVELaunchFixture {
             StEVEViewFacet(diamond).getPositionRewardView(bobPositionId);
         assertEq(positionRewards.eligiblePrincipal, 0);
         assertEq(positionRewards.claimableRewards, 0);
-        assertEq(positionRewards.rewardCheckpoint, 0);
+        assertEq(positionRewards.rewardProgramCount, 1);
+        assertEq(positionRewards.claimableProgramCount, 0);
         assertTrue(positionRewards.rewardsAccrueToPosition);
     }
 }

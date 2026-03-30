@@ -31,7 +31,6 @@ import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.
 import {StEVEPositionFacet} from "src/steve/StEVEPositionFacet.sol";
 import {StEVEActionFacet} from "src/steve/StEVEActionFacet.sol";
 import {StEVEWalletFacet} from "src/steve/StEVEWalletFacet.sol";
-import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {StEVELendingFacet} from "src/steve/StEVELendingFacet.sol";
 import {StEVEViewFacet} from "src/steve/StEVEViewFacet.sol";
@@ -45,7 +44,7 @@ interface IPoolManagementFacetInitDefault {
 contract DeployEqualFi is Script {
     uint256 internal constant DIAMOND_CORE_FACET_COUNT = 3;
     uint256 internal constant NON_EDEN_LAUNCH_FACET_COUNT = 14;
-    uint256 internal constant EDEN_SINGLETON_FACET_COUNT = 8;
+    uint256 internal constant EDEN_SINGLETON_FACET_COUNT = 7;
     uint256 internal constant LAUNCH_FACET_COUNT = NON_EDEN_LAUNCH_FACET_COUNT + EDEN_SINGLETON_FACET_COUNT;
     uint256 internal constant TOTAL_FACET_COUNT = DIAMOND_CORE_FACET_COUNT + LAUNCH_FACET_COUNT;
     uint256 internal constant CUT_BATCH_SIZE = 3;
@@ -254,10 +253,6 @@ contract DeployEqualFi is Script {
         {
             StEVELendingFacet facet = new StEVELendingFacet();
             cuts[nextIndex++] = _cut(address(facet), _selectorsEdenLending());
-        }
-        {
-            EdenRewardFacet facet = new EdenRewardFacet();
-            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenReward());
         }
         {
             EdenRewardsFacet facet = new EdenRewardsFacet();
@@ -514,17 +509,6 @@ contract DeployEqualFi is Script {
         s[2] = StEVEActionFacet.withdrawStEVEFromPosition.selector;
         s[3] = StEVEActionFacet.eligibleSupply.selector;
         s[4] = StEVEActionFacet.eligiblePrincipalOfPosition.selector;
-    }
-
-    function _selectorsEdenReward() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
-        s[0] = EdenRewardFacet.configureRewards.selector;
-        s[1] = EdenRewardFacet.fundRewards.selector;
-        s[2] = EdenRewardFacet.claimRewards.selector;
-        s[3] = EdenRewardFacet.previewClaimRewards.selector;
-        s[4] = EdenRewardFacet.accruedRewardsOfPosition.selector;
-        s[5] = EdenRewardFacet.rewardCheckpointOfPosition.selector;
-        s[6] = EdenRewardFacet.getRewardConfig.selector;
     }
 
     function _selectorsEdenRewards() internal pure returns (bytes4[] memory s) {

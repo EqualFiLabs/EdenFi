@@ -29,9 +29,10 @@ import {StEVEProductBase} from "src/steve/StEVEProductBase.sol";
 import {StEVEPositionFacet} from "src/steve/StEVEPositionFacet.sol";
 import {StEVEActionFacet} from "src/steve/StEVEActionFacet.sol";
 import {StEVEWalletFacet} from "src/steve/StEVEWalletFacet.sol";
-import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
+import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {StEVELendingFacet} from "src/steve/StEVELendingFacet.sol";
 import {StEVEViewFacet} from "src/steve/StEVEViewFacet.sol";
+import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
 import {Types} from "src/libraries/Types.sol";
 import {
     MockEntryPointLaunch,
@@ -66,6 +67,7 @@ contract DeployEqualFiTest is DeployEqualFi {
     struct StEVEDeploymentState {
         uint256 steveBasketId;
         address steveToken;
+        uint256 rewardProgramId;
     }
 
     address internal treasury = _addr("treasury");
@@ -163,11 +165,10 @@ contract DeployEqualFiTest is DeployEqualFi {
         edenFacetAddresses[0] = _assertSelectorGroupInstalled(loupe, _selectorsEdenAdmin());
         edenFacetAddresses[1] = _assertSelectorGroupInstalled(loupe, _selectorsEdenView());
         edenFacetAddresses[2] = _assertSelectorGroupInstalled(loupe, _selectorsEdenLending());
-        edenFacetAddresses[3] = _assertSelectorGroupInstalled(loupe, _selectorsEdenReward());
-        edenFacetAddresses[4] = _assertSelectorGroupInstalled(loupe, _selectorsEdenRewards());
-        edenFacetAddresses[5] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVE());
-        edenFacetAddresses[6] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVEPosition());
-        edenFacetAddresses[7] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVEWallet());
+        edenFacetAddresses[3] = _assertSelectorGroupInstalled(loupe, _selectorsEdenRewards());
+        edenFacetAddresses[4] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVE());
+        edenFacetAddresses[5] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVEPosition());
+        edenFacetAddresses[6] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVEWallet());
         _assertEq(_countDistinctNonZero(edenFacetAddresses), EDEN_SINGLETON_FACET_COUNT, "stEVE and EDEN facet count");
 
         _assertEqAddress(loupe.facetAddress(CREATE_BASKET_SELECTOR), address(0), "legacy create basket removed");
@@ -379,10 +380,10 @@ contract DeployEqualFiTest is DeployEqualFi {
         _assertEqAddress(product.timelock, address(0), "timelock unset before launch handoff");
         _assertEqAddress(product.treasury, treasury, "treasury set");
         _assertEq(product.productId, state.steveBasketId, "product id");
-        _assertEqAddress(product.rewardToken, address(eve), "reward token");
+        _assertEq(product.rewardProgramCount, 1, "reward program count");
     }
 
-    function test_DeployLaunch_SupportsSingletonPositionRewardsAndLending() public {
+    function test_DeployLaunch_SupportsProgramScopedPositionRewardsAndLending() public {
         StEVEDeploymentState memory state = _bootstrapStEVEProduct();
 
         eve.mint(alice, 500e18);
@@ -411,11 +412,15 @@ contract DeployEqualFiTest is DeployEqualFi {
 
         eve.mint(address(this), 500e18);
         eve.approve(diamond, 500e18);
-        EdenRewardFacet(diamond).fundRewards(500e18, 500e18);
+        EdenRewardsFacet(diamond).fundRewardProgram(state.rewardProgramId, 500e18, 500e18);
 
         vm.warp(block.timestamp + 1 days);
 
-        _assertGt(EdenRewardFacet(diamond).previewClaimRewards(stevePositionId), 0, "claim preview positive");
+        _assertGt(
+            EdenRewardsFacet(diamond).previewRewardProgramPosition(state.rewardProgramId, stevePositionId).claimableRewards,
+            0,
+            "claim preview positive"
+        );
         _assertGt(bytes(positionNft.tokenURI(stevePositionId)).length, 0, "token uri available");
 
         vm.prank(alice);
@@ -429,7 +434,7 @@ contract DeployEqualFiTest is DeployEqualFi {
 
         uint256 before = eve.balanceOf(carol);
         vm.prank(carol);
-        uint256 claimed = EdenRewardFacet(diamond).claimRewards(stevePositionId, carol);
+        uint256 claimed = EdenRewardsFacet(diamond).claimRewardProgram(state.rewardProgramId, stevePositionId, carol);
         _assertGt(claimed, 0, "rewards claimed");
         _assertEq(eve.balanceOf(carol), before + claimed, "reward balance increased");
     }
@@ -444,7 +449,16 @@ contract DeployEqualFiTest is DeployEqualFi {
 
         (state.steveBasketId, state.steveToken) = StEVEActionFacet(diamond).createStEVE(_stEveParams(address(eve)));
 
-        EdenRewardFacet(diamond).configureRewards(address(eve), 1e18, true);
+        state.rewardProgramId = EdenRewardsFacet(diamond).createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            LibEdenRewardsStorage.STEVE_TARGET_ID,
+            address(eve),
+            address(this),
+            1e18,
+            0,
+            0,
+            true
+        );
         StEVELendingFacet(diamond).configureLending(1 days, 14 days);
 
         uint256[] memory mins = new uint256[](1);
@@ -575,7 +589,6 @@ contract DeployEqualFiTest is DeployEqualFi {
         facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenAdmin());
         facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenView());
         facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenLending());
-        facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenReward());
         facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenRewards());
         facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVE());
         facetAddresses[i++] = _assertSelectorGroupInstalled(loupe, _selectorsEdenStEVEPosition());

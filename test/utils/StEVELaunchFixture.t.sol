@@ -16,7 +16,6 @@ import {StEVEAdminFacet} from "src/steve/StEVEAdminFacet.sol";
 import {StEVEProductBase} from "src/steve/StEVEProductBase.sol";
 import {StEVEActionFacet} from "src/steve/StEVEActionFacet.sol";
 import {StEVEWalletFacet} from "src/steve/StEVEWalletFacet.sol";
-import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {StEVELendingFacet} from "src/steve/StEVELendingFacet.sol";
 import {StEVEViewFacet} from "src/steve/StEVEViewFacet.sol";
@@ -201,13 +200,6 @@ abstract contract StEVELaunchFixture is DeployEqualFi {
         indexToken = EqualIndexAdminFacetV3(diamond).getIndex(indexId).token;
     }
 
-    function _configureRewards(address rewardToken, uint256 rewardRatePerSecond, bool enabled) internal {
-        _timelockCall(
-            diamond,
-            abi.encodeWithSelector(EdenRewardFacet.configureRewards.selector, rewardToken, rewardRatePerSecond, enabled)
-        );
-    }
-
     function _createStEVERewardProgram(
         address rewardToken,
         address manager,
@@ -270,6 +262,12 @@ abstract contract StEVELaunchFixture is DeployEqualFi {
         rewardToken.approve(diamond, amount);
         EdenRewardsFacet(diamond).fundRewardProgram(programId, amount, amount);
         vm.stopPrank();
+    }
+
+    function _setRewardProgramEnabled(uint256 programId, bool enabled) internal {
+        _timelockCall(
+            diamond, abi.encodeWithSelector(EdenRewardsFacet.setRewardProgramEnabled.selector, programId, enabled)
+        );
     }
 
     function _configureLending(uint40 minDuration, uint40 maxDuration) internal {
