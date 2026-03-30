@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Test} from "forge-std/Test.sol";
+import {StdInvariant} from "forge-std/StdInvariant.sol";
 
 import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
@@ -488,6 +489,107 @@ contract EdenRewardsFacetTest is Test {
         assertEq(altRewardAsset.balanceOf(alice), 20e18);
     }
 
+    function test_M01Regression_LiabilitiesRemainPayableInOriginTokenAfterReserveDepletion() public {
+        vm.prank(timelock);
+        uint256 originProgramId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            0,
+            address(rewardAsset),
+            manager,
+            10e18,
+            0,
+            0,
+            true
+        );
+
+        rewardAsset.mint(address(this), 100e18);
+        rewardAsset.approve(address(facet), 100e18);
+        facet.fundRewardProgram(originProgramId, 100e18, 100e18);
+        facet.setProgramEligibleSupply(originProgramId, 10e18);
+        facet.setStEVEEligiblePrincipal(alicePositionKey, 10e18);
+
+        vm.warp(block.timestamp + 10);
+        facet.accrueRewardProgram(originProgramId);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory originState) = facet.getRewardProgram(originProgramId);
+        assertEq(originState.fundedReserve, 0);
+        assertEq(originState.globalRewardIndex, 10 * LibEdenRewardsStorage.REWARD_INDEX_SCALE);
+
+        vm.prank(timelock);
+        uint256 replacementProgramId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            0,
+            address(altRewardAsset),
+            manager,
+            5e18,
+            0,
+            0,
+            true
+        );
+
+        altRewardAsset.mint(address(this), 100e18);
+        altRewardAsset.approve(address(facet), 100e18);
+        facet.fundRewardProgram(replacementProgramId, 100e18, 100e18);
+
+        vm.prank(alice);
+        uint256 claimed = facet.claimRewardProgram(originProgramId, alicePositionId, alice);
+
+        assertEq(claimed, 100e18);
+        assertEq(rewardAsset.balanceOf(alice), 100e18);
+        assertEq(altRewardAsset.balanceOf(alice), 0);
+
+        (LibEdenRewardsStorage.RewardProgramConfig memory originConfig,) = facet.getRewardProgram(originProgramId);
+        (LibEdenRewardsStorage.RewardProgramConfig memory replacementConfig,) = facet.getRewardProgram(replacementProgramId);
+        assertEq(originConfig.rewardToken, address(rewardAsset));
+        assertEq(replacementConfig.rewardToken, address(altRewardAsset));
+    }
+
+    function test_ProgramTokenIdentity_RemainsStableAcrossReserveDepletionAndTopUps() public {
+        vm.prank(timelock);
+        uint256 programId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            0,
+            address(rewardAsset),
+            manager,
+            10e18,
+            0,
+            0,
+            true
+        );
+
+        rewardAsset.mint(address(this), 100e18);
+        rewardAsset.approve(address(facet), 100e18);
+        facet.fundRewardProgram(programId, 60e18, 60e18);
+        facet.setProgramEligibleSupply(programId, 10e18);
+        facet.setStEVEEligiblePrincipal(alicePositionKey, 10e18);
+
+        vm.warp(block.timestamp + 6);
+        facet.accrueRewardProgram(programId);
+
+        (
+            LibEdenRewardsStorage.RewardProgramConfig memory configAfterDepletion,
+            LibEdenRewardsStorage.RewardProgramState memory stateAfterDepletion
+        ) = facet.getRewardProgram(programId);
+        assertEq(configAfterDepletion.rewardToken, address(rewardAsset));
+        assertEq(stateAfterDepletion.fundedReserve, 0);
+
+        uint256 fundedTopUp = facet.fundRewardProgram(programId, 40e18, 40e18);
+        assertEq(fundedTopUp, 40e18);
+
+        (LibEdenRewardsStorage.RewardProgramConfig memory configAfterTopUp, LibEdenRewardsStorage.RewardProgramState memory stateAfterTopUp) =
+            facet.getRewardProgram(programId);
+        assertEq(configAfterTopUp.rewardToken, address(rewardAsset));
+        assertEq(stateAfterTopUp.fundedReserve, 40e18);
+
+        vm.warp(block.timestamp + 4);
+        vm.prank(alice);
+        uint256 claimed = facet.claimRewardProgram(programId, alicePositionId, alice);
+
+        assertEq(claimed, 100e18);
+        assertEq(rewardAsset.balanceOf(alice), 100e18);
+        assertEq(altRewardAsset.balanceOf(alice), 0);
+    }
+
     function test_ClaimRewardProgram_RevertsForUnauthorizedOwnerOrEmptyClaim() public {
         vm.prank(timelock);
         uint256 programId = facet.createRewardProgram(
@@ -634,5 +736,187 @@ contract EdenRewardsFacetTest is Test {
         assertEq(previews[1].claimableRewards, 20e18);
 
         assertEq(totalClaimable, 28e18);
+    }
+}
+
+contract EdenRewardsInvariantHandler is Test {
+    EdenRewardsFacetHarness internal facet;
+    MockERC20Rewards internal rewardAsset;
+    MockERC20Rewards internal altRewardAsset;
+
+    uint256 public firstProgramId;
+    uint256 public secondProgramId;
+    uint256 public positionId;
+
+    uint256 public firstFunded;
+    uint256 public secondFunded;
+    uint256 public firstClaimed;
+    uint256 public secondClaimed;
+
+    constructor(
+        EdenRewardsFacetHarness facet_,
+        MockERC20Rewards rewardAsset_,
+        MockERC20Rewards altRewardAsset_,
+        uint256 firstProgramId_,
+        uint256 secondProgramId_
+    ) {
+        facet = facet_;
+        rewardAsset = rewardAsset_;
+        altRewardAsset = altRewardAsset_;
+        firstProgramId = firstProgramId_;
+        secondProgramId = secondProgramId_;
+
+        rewardAsset.approve(address(facet), type(uint256).max);
+        altRewardAsset.approve(address(facet), type(uint256).max);
+    }
+
+    function setPosition(uint256 positionId_) external {
+        if (positionId != 0) revert("position already set");
+        positionId = positionId_;
+    }
+
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return this.onERC721Received.selector;
+    }
+
+    function fundFirstProgram(uint256 amountSeed) external {
+        uint256 amount = bound(amountSeed, 1e18, 50e18);
+        rewardAsset.mint(address(this), amount);
+        uint256 funded = facet.fundRewardProgram(firstProgramId, amount, amount);
+        firstFunded += funded;
+    }
+
+    function fundSecondProgram(uint256 amountSeed) external {
+        uint256 amount = bound(amountSeed, 1e18, 50e18);
+        altRewardAsset.mint(address(this), amount);
+        uint256 funded = facet.fundRewardProgram(secondProgramId, amount, amount);
+        secondFunded += funded;
+    }
+
+    function warpTime(uint256 deltaSeed) external {
+        uint256 delta = bound(deltaSeed, 1, 7 days);
+        vm.warp(block.timestamp + delta);
+    }
+
+    function settleFirstProgram() external {
+        if (positionId == 0) return;
+        facet.settleRewardProgramPosition(firstProgramId, positionId);
+    }
+
+    function settleSecondProgram() external {
+        if (positionId == 0) return;
+        facet.settleRewardProgramPosition(secondProgramId, positionId);
+    }
+
+    function claimFirstProgram() external {
+        if (positionId == 0) return;
+        EdenRewardsFacet.RewardProgramPositionView memory preview =
+            facet.previewRewardProgramPosition(firstProgramId, positionId);
+        if (preview.claimableRewards == 0) return;
+        firstClaimed += facet.claimRewardProgram(firstProgramId, positionId, address(this));
+    }
+
+    function claimSecondProgram() external {
+        if (positionId == 0) return;
+        EdenRewardsFacet.RewardProgramPositionView memory preview =
+            facet.previewRewardProgramPosition(secondProgramId, positionId);
+        if (preview.claimableRewards == 0) return;
+        secondClaimed += facet.claimRewardProgram(secondProgramId, positionId, address(this));
+    }
+}
+
+contract EdenRewardsInvariantTest is StdInvariant, Test {
+    EdenRewardsFacetHarness internal facet;
+    MockERC20Rewards internal rewardAsset;
+    MockERC20Rewards internal altRewardAsset;
+    PositionNFT internal positionNft;
+    EdenRewardsInvariantHandler internal handler;
+
+    uint256 internal firstProgramId;
+    uint256 internal secondProgramId;
+    uint256 internal positionId;
+
+    function setUp() public {
+        facet = new EdenRewardsFacetHarness();
+        facet.setOwner(address(this));
+        facet.setTimelock(address(this));
+
+        rewardAsset = new MockERC20Rewards("Reward", "RWD");
+        altRewardAsset = new MockERC20Rewards("AltReward", "ALT");
+
+        positionNft = new PositionNFT();
+        positionNft.setMinter(address(this));
+        facet.setPositionNFT(address(positionNft));
+
+        firstProgramId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            0,
+            address(rewardAsset),
+            address(this),
+            3e18,
+            0,
+            0,
+            true
+        );
+        secondProgramId = facet.createRewardProgram(
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            0,
+            address(altRewardAsset),
+            address(this),
+            5e18,
+            0,
+            0,
+            true
+        );
+
+        handler = new EdenRewardsInvariantHandler(facet, rewardAsset, altRewardAsset, firstProgramId, secondProgramId);
+        positionId = positionNft.mint(address(handler), 1);
+        handler.setPosition(positionId);
+
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+        facet.setStEVEEligiblePrincipal(positionKey, 10e18);
+        facet.setProgramEligibleSupply(firstProgramId, 10e18);
+        facet.setProgramEligibleSupply(secondProgramId, 10e18);
+
+        bytes4[] memory selectors = new bytes4[](7);
+        selectors[0] = handler.fundFirstProgram.selector;
+        selectors[1] = handler.fundSecondProgram.selector;
+        selectors[2] = handler.warpTime.selector;
+        selectors[3] = handler.settleFirstProgram.selector;
+        selectors[4] = handler.settleSecondProgram.selector;
+        selectors[5] = handler.claimFirstProgram.selector;
+        selectors[6] = handler.claimSecondProgram.selector;
+        targetContract(address(handler));
+        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
+    }
+
+    function invariant_ProgramLiabilitiesStayBackedPerProgram() public view {
+        EdenRewardsFacet.RewardProgramPositionView memory firstPreview =
+            facet.previewRewardProgramPosition(firstProgramId, positionId);
+        EdenRewardsFacet.RewardProgramPositionView memory secondPreview =
+            facet.previewRewardProgramPosition(secondProgramId, positionId);
+
+        LibEdenRewardsStorage.RewardProgramState memory firstState = facet.previewRewardProgramState(firstProgramId);
+        LibEdenRewardsStorage.RewardProgramState memory secondState = facet.previewRewardProgramState(secondProgramId);
+
+        assertLe(firstPreview.claimableRewards + firstState.fundedReserve + handler.firstClaimed(), handler.firstFunded());
+        assertLe(
+            secondPreview.claimableRewards + secondState.fundedReserve + handler.secondClaimed(), handler.secondFunded()
+        );
+    }
+
+    function invariant_ProgramTokenIdentityAndIsolationRemainStable() public view {
+        (LibEdenRewardsStorage.RewardProgramConfig memory firstConfig,) = facet.getRewardProgram(firstProgramId);
+        (LibEdenRewardsStorage.RewardProgramConfig memory secondConfig,) = facet.getRewardProgram(secondProgramId);
+
+        assertEq(firstConfig.rewardToken, address(rewardAsset));
+        assertEq(secondConfig.rewardToken, address(altRewardAsset));
+        assertEq(firstConfig.target.targetId, 0);
+        assertEq(secondConfig.target.targetId, 0);
+        assertEq(uint8(firstConfig.target.targetType), uint8(LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION));
+        assertEq(uint8(secondConfig.target.targetType), uint8(LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION));
+
+        assertEq(rewardAsset.balanceOf(address(handler)), handler.firstClaimed());
+        assertEq(altRewardAsset.balanceOf(address(handler)), handler.secondClaimed());
     }
 }
