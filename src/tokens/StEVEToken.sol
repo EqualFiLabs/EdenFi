@@ -8,8 +8,8 @@ import {BasketToken} from "./BasketToken.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract StEVEToken is BasketToken, ERC20Votes {
-    constructor(string memory name_, string memory symbol_, address minter_, uint256 basketId_)
-        BasketToken(name_, symbol_, minter_, basketId_)
+    constructor(string memory name_, string memory symbol_, address minter_)
+        BasketToken(name_, symbol_, minter_)
     {}
 
     function _update(address from, address to, uint256 value)

@@ -18,7 +18,6 @@ contract EdenRewardFacet is ReentrancyGuardModifiers {
         uint256 globalRewardIndex;
         uint256 rewardReserve;
         uint256 eligibleSupply;
-        uint256 pnftHeldStEVESupply;
         bool steveConfigured;
         bool onlyPnftHeldStEVEEligible;
         bool walletHeldStEVERewardEligible;
@@ -83,10 +82,6 @@ contract EdenRewardFacet is ReentrancyGuardModifiers {
         return LibEdenRewards.previewPositionRewards(LibPositionHelpers.positionKey(tokenId));
     }
 
-    function claimableRewards(uint256 tokenId) external view returns (uint256) {
-        return LibEdenRewards.previewPositionRewards(LibPositionHelpers.positionKey(tokenId));
-    }
-
     function accruedRewardsOfPosition(uint256 tokenId) external view returns (uint256) {
         return LibEdenRewardStorage.s().accruedRewards[LibPositionHelpers.positionKey(tokenId)];
     }
@@ -104,7 +99,6 @@ contract EdenRewardFacet is ReentrancyGuardModifiers {
         view_.globalRewardIndex = LibEdenRewards.previewGlobalRewardIndex();
         view_.rewardReserve = LibEdenRewards.previewRewardReserve();
         view_.eligibleSupply = steve.eligibleSupply;
-        view_.pnftHeldStEVESupply = steve.eligibleSupply;
         view_.steveConfigured = steve.configured;
         view_.onlyPnftHeldStEVEEligible = true;
         view_.walletHeldStEVERewardEligible = false;

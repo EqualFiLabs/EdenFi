@@ -8,7 +8,6 @@ import {IDiamondCut} from "src/interfaces/IDiamondCut.sol";
 import {OwnershipFacet} from "src/core/OwnershipFacet.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
-import {EdenBasketBase} from "src/eden/EdenBasketBase.sol";
 import {EdenLendingFacet} from "src/eden/EdenLendingFacet.sol";
 import {EdenRewardFacet} from "src/eden/EdenRewardFacet.sol";
 import {EdenViewFacet} from "src/eden/EdenViewFacet.sol";
@@ -28,9 +27,12 @@ contract EdenByEqualFiInvariantTest is StdInvariant, EdenLaunchFixture {
     function setUp() public override {
         super.setUp();
         _bootstrapEdenProduct();
+        _configureRewards(address(eve), 1e18, true);
 
+        (altBasketId, altBasketToken) =
+            _createIndexThroughTimelock(_singleAssetIndexParams("ALT Index", "eALT", address(alt), 0, 0));
         (feeBasketId, feeBasketToken) =
-            _createBasket(_singleAssetParams("ALT Fee Basket", "AFEE", address(alt), "ipfs://fee-alt", 2, 100, 100));
+            _createIndexThroughTimelock(_singleAssetIndexParams("ALT Fee Index", "afALT", address(alt), 100, 100));
         (feeIndexId, feeIndexToken) =
             _createIndexThroughTimelock(_singleAssetIndexParams("EVE Index", "eEVE", address(eve), 100, 100));
 
@@ -169,8 +171,12 @@ contract EdenByEqualFiInvariantTest is StdInvariant, EdenLaunchFixture {
     }
 
     function invariant_BasketAndIndexAccountingMatchesPositionHoldings() public view {
-        _assertProductSupplyMatchesPrincipal(altBasketId, altBasketToken, EdenViewFacet(diamond).getProductPoolId());
-        _assertProductSupplyMatchesPrincipal(feeBasketId, feeBasketToken, EdenViewFacet(diamond).getProductPoolId());
+        _assertIndexSupplyMatchesPrincipal(
+            altBasketId, altBasketToken, EqualIndexAdminFacetV3(diamond).getIndexPoolId(altBasketId)
+        );
+        _assertIndexSupplyMatchesPrincipal(
+            feeBasketId, feeBasketToken, EqualIndexAdminFacetV3(diamond).getIndexPoolId(feeBasketId)
+        );
         _assertIndexSupplyMatchesPrincipal(
             feeIndexId, feeIndexToken, EqualIndexAdminFacetV3(diamond).getIndexPoolId(feeIndexId)
         );
@@ -211,7 +217,7 @@ contract EdenByEqualFiInvariantTest is StdInvariant, EdenLaunchFixture {
             EdenLendingFacet.LoanView memory loanView = EdenLendingFacet(diamond).getLoanView(loanId);
             bool closed = loanView.closedAt != 0 || loanView.closeReason != 0;
 
-            require(loanView.productId == altBasketId, "loan product mismatch");
+            require(loanView.productId == steveBasketId, "loan product mismatch");
 
             if (!closed) {
                 require(loanView.closeReason == 0, "open loan close reason mismatch");
@@ -257,10 +263,13 @@ contract EdenByEqualFiInvariantTest is StdInvariant, EdenLaunchFixture {
 
     function test_InvariantSeedAccountingSanity() public view {
         _assertNamedProductSupplyMatchesPrincipal(
-            "alt", altBasketId, altBasketToken, EdenViewFacet(diamond).getProductPoolId()
+            "stEVE", steveBasketId, steveToken, EdenViewFacet(diamond).getProductPoolId()
         );
-        _assertNamedProductSupplyMatchesPrincipal(
-            "fee-basket", feeBasketId, feeBasketToken, EdenViewFacet(diamond).getProductPoolId()
+        _assertNamedIndexSupplyMatchesPrincipal(
+            "alt-index", altBasketId, altBasketToken, EqualIndexAdminFacetV3(diamond).getIndexPoolId(altBasketId)
+        );
+        _assertNamedIndexSupplyMatchesPrincipal(
+            "fee-index-alt", feeBasketId, feeBasketToken, EqualIndexAdminFacetV3(diamond).getIndexPoolId(feeBasketId)
         );
         _assertNamedIndexSupplyMatchesPrincipal(
             "fee-index", feeIndexId, feeIndexToken, EqualIndexAdminFacetV3(diamond).getIndexPoolId(feeIndexId)

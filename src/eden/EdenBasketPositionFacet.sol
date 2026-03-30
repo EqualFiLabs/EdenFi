@@ -23,10 +23,10 @@ contract EdenBasketPositionFacet is EdenStEVELogic, ReentrancyGuardModifiers {
         if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
         LibPositionHelpers.requireOwnership(positionId);
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
-        uint256 productId = _requireStEVEConfigured();
+        _requireStEVEConfigured();
 
         LibEdenBasketStorage.ProductConfig storage product = LibEdenBasketStorage.s().product;
-        if (product.paused) revert IndexPaused(productId);
+        if (product.paused) revert IndexPaused(LibEdenBasketStorage.PRODUCT_ID);
 
         LibEdenRewards.settlePositionRewards(positionKey);
 
@@ -82,10 +82,10 @@ contract EdenBasketPositionFacet is EdenStEVELogic, ReentrancyGuardModifiers {
         if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
         LibPositionHelpers.requireOwnership(positionId);
         bytes32 positionKey = LibPositionHelpers.positionKey(positionId);
-        uint256 productId = _requireStEVEConfigured();
+        _requireStEVEConfigured();
 
         LibEdenBasketStorage.ProductConfig storage product = LibEdenBasketStorage.s().product;
-        if (product.paused) revert IndexPaused(productId);
+        if (product.paused) revert IndexPaused(LibEdenBasketStorage.PRODUCT_ID);
         if (units > product.totalUnits) revert InvalidUnits();
 
         LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
@@ -123,9 +123,8 @@ contract EdenBasketPositionFacet is EdenStEVELogic, ReentrancyGuardModifiers {
         assetsOut = state.assetsOut;
     }
 
-    function _requireStEVEConfigured() internal view returns (uint256 basketId) {
+    function _requireStEVEConfigured() internal view {
         LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
         if (!steve.configured) revert InvalidParameterRange("stEVE not configured");
-        return steve.basketId;
     }
 }

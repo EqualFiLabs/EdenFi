@@ -20,18 +20,6 @@ abstract contract EdenBasketBase {
         uint8 basketType;
     }
 
-    struct BasketView {
-        address[] assets;
-        uint256[] bundleAmounts;
-        uint16[] mintFeeBps;
-        uint16[] burnFeeBps;
-        uint16 flashFeeBps;
-        uint256 totalUnits;
-        address token;
-        uint256 poolId;
-        bool paused;
-    }
-
     struct WalletMintLeg {
         address asset;
         uint256 baseDeposit;

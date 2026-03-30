@@ -6,7 +6,6 @@ library LibEdenStEVEStorage {
 
     struct StEVEStorage {
         bool configured;
-        uint256 basketId;
         uint256 eligibleSupply;
         mapping(bytes32 => uint256) eligiblePrincipal;
     }

@@ -27,7 +27,7 @@ contract EdenStEVEActionFacet is EdenStEVELogic, EdenPositionPoolHelpers, Reentr
     function createStEVE(EdenBasketBase.CreateBasketParams calldata params)
         external
         nonReentrant
-        returns (uint256 basketId, address token)
+        returns (uint256 productId, address token)
     {
         LibAccess.enforceTimelockOrOwnerIfUnset();
         if (LibEdenStEVEStorage.s().configured) revert InvalidParameterRange("stEVE already configured");
@@ -36,15 +36,14 @@ contract EdenStEVEActionFacet is EdenStEVELogic, EdenPositionPoolHelpers, Reentr
         _validateCreateParams(params);
         if (LibAppStorage.s().assetToPoolId[params.assets[0]] == 0) revert NoPoolForAsset(params.assets[0]);
 
-        basketId = LibEdenBasketStorage.PRODUCT_ID;
-        token = address(new StEVEToken(params.name, params.symbol, address(this), basketId));
+        productId = LibEdenBasketStorage.PRODUCT_ID;
+        token = address(new StEVEToken(params.name, params.symbol, address(this)));
         _configureStEVEProduct(params, token);
 
         LibEdenStEVEStorage.StEVEStorage storage store = LibEdenStEVEStorage.s();
         store.configured = true;
-        store.basketId = basketId;
 
-        emit StEVEConfigured(basketId, token);
+        emit StEVEConfigured(productId, token);
     }
 
     function depositStEVEToPosition(uint256 tokenId, uint256 amount, uint256 maxAmount)
@@ -142,23 +141,11 @@ contract EdenStEVEActionFacet is EdenStEVELogic, EdenPositionPoolHelpers, Reentr
         emit StEVEWithdrawnFromPosition(tokenId, positionKey, withdrawn);
     }
 
-    function steveBasketId() external view returns (uint256) {
-        return LibEdenStEVEStorage.s().basketId;
-    }
-
     function eligibleSupply() external view returns (uint256) {
         return LibEdenStEVEStorage.s().eligibleSupply;
     }
 
-    function pnftHeldStEVESupply() external view returns (uint256) {
-        return LibEdenStEVEStorage.s().eligibleSupply;
-    }
-
     function eligiblePrincipalOfPosition(uint256 tokenId) external view returns (uint256) {
-        return LibEdenStEVEStorage.s().eligiblePrincipal[_getPositionKey(tokenId)];
-    }
-
-    function pnftHeldStEVEPrincipalOfPosition(uint256 tokenId) external view returns (uint256) {
         return LibEdenStEVEStorage.s().eligiblePrincipal[_getPositionKey(tokenId)];
     }
 }

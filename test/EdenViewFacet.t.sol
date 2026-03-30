@@ -60,7 +60,6 @@ contract EdenViewFacetTest is EdenLaunchFixture {
         assertEq(config.totalUnits, 20e18);
         assertTrue(config.productInitialized);
         assertTrue(config.steveConfigured);
-        assertEq(config.steveBasketId, steveBasketId);
         assertEq(config.rewardToken, address(eve));
         assertTrue(config.rewardsEnabled);
 
@@ -74,9 +73,7 @@ contract EdenViewFacetTest is EdenLaunchFixture {
 
         EdenViewFacet.ProductRewardStateView memory rewards = EdenViewFacet(diamond).getProductRewardState();
         assertTrue(rewards.steveConfigured);
-        assertEq(rewards.steveBasketId, steveBasketId);
         assertEq(rewards.eligibleSupply, 10e18);
-        assertEq(rewards.pnftHeldStEVESupply, 10e18);
         assertEq(rewards.rewardToken, address(eve));
         assertEq(rewards.rewardRatePerSecond, 10e18);
         assertTrue(rewards.onlyPnftHeldStEVEEligible);

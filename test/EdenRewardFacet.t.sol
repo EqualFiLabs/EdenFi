@@ -35,9 +35,7 @@ contract EdenRewardFacetTest is EdenLaunchFixture {
 
         EdenRewardFacet.RewardView memory rewardConfig = EdenRewardFacet(diamond).getRewardConfig();
         assertEq(EdenStEVEActionFacet(diamond).eligibleSupply(), 10e18);
-        assertEq(EdenStEVEActionFacet(diamond).pnftHeldStEVESupply(), 10e18);
         assertEq(rewardConfig.eligibleSupply, 10e18);
-        assertEq(rewardConfig.pnftHeldStEVESupply, 10e18);
         assertTrue(rewardConfig.steveConfigured);
         assertTrue(rewardConfig.onlyPnftHeldStEVEEligible);
         assertTrue(!rewardConfig.walletHeldStEVERewardEligible);

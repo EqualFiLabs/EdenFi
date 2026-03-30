@@ -356,7 +356,7 @@ contract DeployEdenByEqualFiTest is DeployEdenByEqualFi {
         EdenViewFacet.ProductConfigView memory product = EdenViewFacet(diamond).getProductConfig();
         _assertEqAddress(product.timelock, address(0), "timelock unset before launch handoff");
         _assertEqAddress(product.treasury, treasury, "treasury set");
-        _assertEq(product.steveBasketId, state.steveBasketId, "stEVE basket id");
+        _assertEq(product.productId, state.steveBasketId, "product id");
         _assertEqAddress(product.rewardToken, address(eve), "reward token");
     }
 

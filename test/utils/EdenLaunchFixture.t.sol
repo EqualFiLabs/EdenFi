@@ -178,8 +178,9 @@ abstract contract EdenLaunchFixture is DeployEdenByEqualFi {
         returns (uint256 basketId, address basketToken)
     {
         _timelockCall(diamond, abi.encodeWithSelector(EdenStEVEActionFacet.createStEVE.selector, params));
-        basketId = EdenStEVEActionFacet(diamond).steveBasketId();
-        basketToken = EdenViewFacet(diamond).getProductConfig().token;
+        EdenViewFacet.ProductConfigView memory product = EdenViewFacet(diamond).getProductConfig();
+        basketId = product.productId;
+        basketToken = product.token;
     }
 
     function _createIndex(EqualIndexBaseV3.CreateIndexParams memory params)

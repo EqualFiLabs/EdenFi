@@ -7,20 +7,18 @@ import "../libraries/Errors.sol";
 
 contract BasketToken is ERC20, ERC20Permit {
     address public immutable minter;
-    uint256 public immutable basketId;
 
     modifier onlyMinter() {
         if (msg.sender != minter) revert NotMinter();
         _;
     }
 
-    constructor(string memory name_, string memory symbol_, address minter_, uint256 basketId_)
+    constructor(string memory name_, string memory symbol_, address minter_)
         ERC20(name_, symbol_)
         ERC20Permit(name_)
     {
         if (minter_ == address(0)) revert InvalidMinter();
         minter = minter_;
-        basketId = basketId_;
     }
 
     function mintIndexUnits(address to, uint256 amount) external onlyMinter {

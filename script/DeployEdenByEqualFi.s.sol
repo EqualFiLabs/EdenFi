@@ -483,27 +483,23 @@ contract DeployEdenByEqualFi is Script {
     }
 
     function _selectorsEdenStEVE() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
+        s = new bytes4[](5);
         s[0] = EdenStEVEActionFacet.createStEVE.selector;
         s[1] = EdenStEVEActionFacet.depositStEVEToPosition.selector;
         s[2] = EdenStEVEActionFacet.withdrawStEVEFromPosition.selector;
-        s[3] = EdenStEVEActionFacet.steveBasketId.selector;
-        s[4] = EdenStEVEActionFacet.eligibleSupply.selector;
-        s[5] = EdenStEVEActionFacet.eligiblePrincipalOfPosition.selector;
-        s[6] = EdenStEVEActionFacet.pnftHeldStEVESupply.selector;
-        s[7] = EdenStEVEActionFacet.pnftHeldStEVEPrincipalOfPosition.selector;
+        s[3] = EdenStEVEActionFacet.eligibleSupply.selector;
+        s[4] = EdenStEVEActionFacet.eligiblePrincipalOfPosition.selector;
     }
 
     function _selectorsEdenReward() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
+        s = new bytes4[](7);
         s[0] = EdenRewardFacet.configureRewards.selector;
         s[1] = EdenRewardFacet.fundRewards.selector;
         s[2] = EdenRewardFacet.claimRewards.selector;
         s[3] = EdenRewardFacet.previewClaimRewards.selector;
-        s[4] = EdenRewardFacet.claimableRewards.selector;
-        s[5] = EdenRewardFacet.accruedRewardsOfPosition.selector;
-        s[6] = EdenRewardFacet.rewardCheckpointOfPosition.selector;
-        s[7] = EdenRewardFacet.getRewardConfig.selector;
+        s[4] = EdenRewardFacet.accruedRewardsOfPosition.selector;
+        s[5] = EdenRewardFacet.rewardCheckpointOfPosition.selector;
+        s[6] = EdenRewardFacet.getRewardConfig.selector;
     }
 
     function _selectorsEdenLending() internal pure returns (bytes4[] memory s) {

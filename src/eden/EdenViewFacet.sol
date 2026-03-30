@@ -59,7 +59,6 @@ contract EdenViewFacet is EdenLendingLogic {
         uint256 poolId;
         uint256 totalUnits;
         bool steveConfigured;
-        uint256 steveBasketId;
         address rewardToken;
         uint256 rewardRatePerSecond;
         uint256 rewardReserve;
@@ -75,9 +74,7 @@ contract EdenViewFacet is EdenLendingLogic {
 
     struct ProductRewardStateView {
         bool steveConfigured;
-        uint256 steveBasketId;
         uint256 eligibleSupply;
-        uint256 pnftHeldStEVESupply;
         address rewardToken;
         uint256 rewardRatePerSecond;
         uint256 rewardReserve;
@@ -175,7 +172,6 @@ contract EdenViewFacet is EdenLendingLogic {
         view_.poolId = product.poolId;
         view_.totalUnits = product.totalUnits;
         view_.steveConfigured = steve.configured;
-        view_.steveBasketId = steve.configured ? steve.basketId : 0;
         view_.rewardToken = rewards.config.rewardToken;
         view_.rewardRatePerSecond = rewards.config.rewardRatePerSecond;
         view_.rewardReserve = LibEdenRewards.previewRewardReserve();
@@ -199,9 +195,7 @@ contract EdenViewFacet is EdenLendingLogic {
         LibEdenStEVEStorage.StEVEStorage storage steve = LibEdenStEVEStorage.s();
 
         view_.steveConfigured = steve.configured;
-        view_.steveBasketId = steve.configured ? steve.basketId : 0;
         view_.eligibleSupply = steve.eligibleSupply;
-        view_.pnftHeldStEVESupply = steve.eligibleSupply;
         view_.rewardToken = rewards.config.rewardToken;
         view_.rewardRatePerSecond = rewards.config.rewardRatePerSecond;
         view_.rewardReserve = LibEdenRewards.previewRewardReserve();
@@ -574,8 +568,4 @@ contract EdenViewFacet is EdenLendingLogic {
         return value ? "true" : "false";
     }
 
-    function _isKnownBasketId(uint256 basketId) internal view returns (bool) {
-        LibEdenBasketStorage.EdenProductStorage storage store = LibEdenBasketStorage.s();
-        return store.productInitialized && basketId == LibEdenBasketStorage.PRODUCT_ID;
-    }
 }

@@ -28,9 +28,7 @@ contract EdenStEVEActionFacetTest is EdenLaunchFixture {
         _mintWalletBasket(bob, steveBasketId, eve, 10e18);
 
         assertEq(EdenStEVEActionFacet(diamond).eligibleSupply(), 0);
-        assertEq(EdenStEVEActionFacet(diamond).pnftHeldStEVESupply(), 0);
         assertEq(EdenStEVEActionFacet(diamond).eligiblePrincipalOfPosition(emptyPositionId), 0);
-        assertEq(EdenStEVEActionFacet(diamond).pnftHeldStEVEPrincipalOfPosition(emptyPositionId), 0);
     }
 
     function test_DepositWithdrawStEVE_TracksEligibleSupply() public {
@@ -42,9 +40,7 @@ contract EdenStEVEActionFacetTest is EdenLaunchFixture {
 
         EdenViewFacet.PositionPortfolio memory portfolio = EdenViewFacet(diamond).getPositionPortfolio(positionId);
         assertEq(EdenStEVEActionFacet(diamond).eligibleSupply(), 10e18);
-        assertEq(EdenStEVEActionFacet(diamond).pnftHeldStEVESupply(), 10e18);
         assertEq(EdenStEVEActionFacet(diamond).eligiblePrincipalOfPosition(positionId), 10e18);
-        assertEq(EdenStEVEActionFacet(diamond).pnftHeldStEVEPrincipalOfPosition(positionId), 10e18);
         assertEq(portfolio.rewards.eligiblePrincipal, 10e18);
         assertTrue(portfolio.product.active);
         assertEq(portfolio.product.units, 10e18);

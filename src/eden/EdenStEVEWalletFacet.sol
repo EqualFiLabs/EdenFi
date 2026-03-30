@@ -19,11 +19,11 @@ contract EdenStEVEWalletFacet is EdenStEVELogic, ReentrancyGuardModifiers {
         nonReentrant
         returns (uint256 minted)
     {
-        uint256 productId = _requireStEVEConfigured();
+        _requireStEVEConfigured();
         if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
 
         LibEdenBasketStorage.ProductConfig storage product = LibEdenBasketStorage.s().product;
-        if (product.paused) revert IndexPaused(productId);
+        if (product.paused) revert IndexPaused(LibEdenBasketStorage.PRODUCT_ID);
         if (maxInputAmounts.length != product.assets.length) revert InvalidArrayLength();
 
         WalletMintState memory state;
@@ -44,12 +44,12 @@ contract EdenStEVEWalletFacet is EdenStEVELogic, ReentrancyGuardModifiers {
         nonReentrant
         returns (uint256[] memory assetsOut)
     {
-        uint256 productId = _requireStEVEConfigured();
+        _requireStEVEConfigured();
         LibCurrency.assertZeroMsgValue();
         if (units == 0 || units % UNIT_SCALE != 0) revert InvalidUnits();
 
         LibEdenBasketStorage.ProductConfig storage product = LibEdenBasketStorage.s().product;
-        if (product.paused) revert IndexPaused(productId);
+        if (product.paused) revert IndexPaused(LibEdenBasketStorage.PRODUCT_ID);
         if (units > product.totalUnits) revert InvalidUnits();
         uint256 balance = BasketToken(product.token).balanceOf(msg.sender);
         if (balance < units) revert InsufficientIndexTokens(units, balance);
@@ -66,8 +66,7 @@ contract EdenStEVEWalletFacet is EdenStEVELogic, ReentrancyGuardModifiers {
         emit StEVEBurned(msg.sender, to, units);
     }
 
-    function _requireStEVEConfigured() internal view returns (uint256 basketId) {
-        basketId = LibEdenBasketStorage.PRODUCT_ID;
+    function _requireStEVEConfigured() internal view {
         if (!LibEdenStEVEStorage.s().configured) revert InvalidParameterRange("stEVE not configured");
     }
 }
