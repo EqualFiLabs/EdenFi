@@ -24,6 +24,7 @@ library LibEdenRewardsStorage {
         uint256 startTime;
         uint256 endTime;
         bool enabled;
+        bool paused;
         bool closed;
     }
 

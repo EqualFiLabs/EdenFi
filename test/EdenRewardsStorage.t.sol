@@ -15,6 +15,7 @@ contract EdenRewardsStorageHarness {
         uint256 startTime,
         uint256 endTime,
         bool enabled,
+        bool paused,
         bool closed
     ) external returns (uint256 programId) {
         LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
@@ -31,6 +32,7 @@ contract EdenRewardsStorageHarness {
             startTime: startTime,
             endTime: endTime,
             enabled: enabled,
+            paused: paused,
             closed: closed
         });
 
@@ -137,10 +139,20 @@ contract EdenRewardsStorageTest is Test {
             100,
             200,
             true,
+            false,
             false
         );
         uint256 indexProgramId = harness.createProgram(
-            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION, 7, rewardB, manager, 2e18, 300, 400, false, false
+            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION,
+            7,
+            rewardB,
+            manager,
+            2e18,
+            300,
+            400,
+            false,
+            false,
+            false
         );
 
         assertEq(steveProgramId, 0);
@@ -156,6 +168,7 @@ contract EdenRewardsStorageTest is Test {
         assertEq(steveConfig.startTime, 100);
         assertEq(steveConfig.endTime, 200);
         assertTrue(steveConfig.enabled);
+        assertFalse(steveConfig.paused);
         assertFalse(steveConfig.closed);
 
         harness.setProgramState(indexProgramId, 500e18, 1234, 9e27, 25e18);
@@ -170,13 +183,13 @@ contract EdenRewardsStorageTest is Test {
         uint256 steveTargetId = harness.steveTargetId();
 
         uint256 first = harness.createProgram(
-            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION, steveTargetId, rewardA, manager, 1, 0, 10, true, false
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION, steveTargetId, rewardA, manager, 1, 0, 10, true, false, false
         );
         uint256 second = harness.createProgram(
-            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION, steveTargetId, rewardB, manager, 2, 0, 20, true, false
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION, steveTargetId, rewardB, manager, 2, 0, 20, true, false, false
         );
         uint256 third = harness.createProgram(
-            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION, 9, rewardA, manager, 3, 0, 30, true, false
+            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION, 9, rewardA, manager, 3, 0, 30, true, false, false
         );
 
         uint256[] memory stevePrograms =
@@ -199,10 +212,19 @@ contract EdenRewardsStorageTest is Test {
         bytes32 alicePositionKey = keccak256("alice-position");
 
         uint256 first = harness.createProgram(
-            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION, harness.steveTargetId(), rewardA, manager, 1, 0, 10, true, false
+            LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION,
+            harness.steveTargetId(),
+            rewardA,
+            manager,
+            1,
+            0,
+            10,
+            true,
+            false,
+            false
         );
         uint256 second = harness.createProgram(
-            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION, 3, rewardB, manager, 1, 0, 10, true, false
+            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION, 3, rewardB, manager, 1, 0, 10, true, false, false
         );
 
         harness.setPositionAccounting(first, alicePositionKey, 11e27, 17e18);
