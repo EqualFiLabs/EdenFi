@@ -22,6 +22,16 @@ library LibEqualXCommunityAmmStorage {
         uint16 feeBps;
         LibEqualXTypes.FeeAsset feeAsset;
         LibEqualXTypes.InvariantMode invariantMode;
+        uint256 feeIndexA;
+        uint256 feeIndexB;
+        uint256 feeIndexRemainderA;
+        uint256 feeIndexRemainderB;
+        uint256 treasuryFeeAAccrued;
+        uint256 treasuryFeeBAccrued;
+        uint256 feeIndexFeeAAccrued;
+        uint256 feeIndexFeeBAccrued;
+        uint256 activeCreditFeeAAccrued;
+        uint256 activeCreditFeeBAccrued;
         bool active;
         bool finalized;
     }

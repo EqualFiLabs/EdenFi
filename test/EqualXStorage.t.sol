@@ -60,6 +60,16 @@ contract EqualXStorageHarness is EqualXViewFacet {
             feeBps: 100,
             feeAsset: LibEqualXTypes.FeeAsset.TokenOut,
             invariantMode: LibEqualXTypes.InvariantMode.Stable,
+            feeIndexA: 0,
+            feeIndexB: 0,
+            feeIndexRemainderA: 0,
+            feeIndexRemainderB: 0,
+            treasuryFeeAAccrued: 0,
+            treasuryFeeBAccrued: 0,
+            feeIndexFeeAAccrued: 0,
+            feeIndexFeeBAccrued: 0,
+            activeCreditFeeAAccrued: 0,
+            activeCreditFeeBAccrued: 0,
             active: true,
             finalized: false
         });
