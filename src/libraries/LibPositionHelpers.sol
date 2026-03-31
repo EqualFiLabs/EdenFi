@@ -2,8 +2,10 @@
 pragma solidity ^0.8.20;
 
 import {PositionNFT} from "../nft/PositionNFT.sol";
+import {LibActiveCreditIndex} from "./LibActiveCreditIndex.sol";
 import {LibAppStorage} from "./LibAppStorage.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
+import {LibFeeIndex} from "./LibFeeIndex.sol";
 import {LibPositionNFT} from "./LibPositionNFT.sol";
 import {LibPoolMembership} from "./LibPoolMembership.sol";
 import {Types} from "./Types.sol";
@@ -63,5 +65,18 @@ library LibPositionHelpers {
             return 0;
         }
         return principal - totalEncumbered;
+    }
+
+    function settlePosition(uint256 pid, bytes32 posKey) internal {
+        LibActiveCreditIndex.settle(pid, posKey);
+        LibFeeIndex.settle(pid, posKey);
+    }
+
+    function settledAvailablePrincipal(Types.PoolData storage poolData, bytes32 posKey, uint256 poolId)
+        internal
+        returns (uint256 available)
+    {
+        settlePosition(poolId, posKey);
+        return availablePrincipal(poolData, posKey, poolId);
     }
 }

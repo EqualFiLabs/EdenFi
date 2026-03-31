@@ -512,8 +512,8 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         bytes32 makerPositionKey,
         uint256 poolId,
         uint256 amount
-    ) internal view {
-        uint256 available = LibPositionHelpers.availablePrincipal(pool, makerPositionKey, poolId);
+    ) internal {
+        uint256 available = LibPositionHelpers.settledAvailablePrincipal(pool, makerPositionKey, poolId);
         if (amount > available) {
             revert InsufficientPrincipal(amount, available);
         }
@@ -526,7 +526,7 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         uint256 amount
     ) internal {
         if (amount == 0) return;
-        LibActiveCreditIndex.settle(poolId, makerPositionKey);
+        LibPositionHelpers.settlePosition(poolId, makerPositionKey);
         LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(makerPositionKey, poolId);
         enc.directLent += amount;
         LibActiveCreditIndex.applyEncumbranceIncrease(pool, poolId, makerPositionKey, amount);
@@ -534,6 +534,7 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
 
     function _unlockReserveBacking(bytes32 makerPositionKey, uint256 poolId, uint256 amount) internal {
         if (amount == 0) return;
+        LibPositionHelpers.settlePosition(poolId, makerPositionKey);
         LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(makerPositionKey, poolId);
         uint256 currentLent = enc.directLent;
         if (currentLent < amount) {

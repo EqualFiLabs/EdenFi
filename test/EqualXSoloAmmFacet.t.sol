@@ -46,6 +46,10 @@ contract EqualXSoloAmmHarness is PoolManagementFacet, PositionManagementFacet, E
         LibAppStorage.s().treasury = treasury_;
     }
 
+    function setFoundationReceiver(address receiver) external {
+        LibAppStorage.s().foundationReceiver = receiver;
+    }
+
     function setFeeSplits(uint256 treasuryBps, uint256 activeCreditBps) external {
         if (treasuryBps > type(uint16).max || activeCreditBps > type(uint16).max) revert();
         LibAppStorage.AppStorage storage store = LibAppStorage.s();
@@ -219,6 +223,46 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(market.tokenBDecimals, 6);
     }
 
+    function test_CreateSoloAmm_UsesSettledPrincipalAfterMaintenance() public {
+        harness.setFoundationReceiver(makeAddr("foundation"));
+        vm.warp(block.timestamp + 2 days);
+
+        vm.expectRevert();
+        vm.prank(alice);
+        harness.createEqualXSoloAmmMarket(
+            alicePositionId,
+            1,
+            2,
+            500e18,
+            500e18,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 3 days),
+            300,
+            LibEqualXTypes.FeeAsset.TokenIn,
+            LibEqualXTypes.InvariantMode.Volatile
+        );
+    }
+
+    function test_WithdrawFromPosition_BlockedWhileSoloAmmBackingIsEncumbered() public {
+        vm.prank(alice);
+        harness.createEqualXSoloAmmMarket(
+            alicePositionId,
+            1,
+            2,
+            100e18,
+            100e18,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 3 days),
+            300,
+            LibEqualXTypes.FeeAsset.TokenIn,
+            LibEqualXTypes.InvariantMode.Volatile
+        );
+
+        vm.expectRevert(abi.encodeWithSignature("InsufficientPrincipal(uint256,uint256)", 450000000000000000000, 400000000000000000000));
+        vm.prank(alice);
+        harness.withdrawFromPosition(alicePositionId, 1, 450e18, 450e18);
+    }
+
     function test_SwapExactIn_MatchesPreviewAndRoutesFees() public {
         uint256 marketId;
         vm.prank(alice);
@@ -265,6 +309,56 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(harness.directLentOf(alicePositionKey, 2), market.reserveB);
         assertEq(harness.activeCreditPrincipalTotalOf(1), 100e18);
         assertEq(harness.activeCreditPrincipalTotalOf(2), 100e18);
+    }
+
+    function test_ViewHelpers_MatchSoloPreviewAndDiscovery() public {
+        uint256 marketId;
+        vm.prank(alice);
+        marketId = harness.createEqualXSoloAmmMarket(
+            alicePositionId,
+            1,
+            2,
+            100e18,
+            100e18,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 5 days),
+            300,
+            LibEqualXTypes.FeeAsset.TokenIn,
+            LibEqualXTypes.InvariantMode.Volatile
+        );
+
+        vm.warp(block.timestamp + 1 days);
+
+        EqualXSoloAmmFacet.SoloAmmSwapPreview memory modulePreview =
+            harness.previewEqualXSoloAmmSwapExactIn(marketId, address(tokenA), 10e18);
+        EqualXViewFacet.EqualXSwapQuote memory viewPreview =
+            harness.quoteEqualXSoloAmmExactIn(marketId, address(tokenA), 10e18);
+
+        assertEq(viewPreview.rawOut, modulePreview.rawOut);
+        assertEq(viewPreview.amountOut, modulePreview.amountOut);
+        assertEq(viewPreview.feeAmount, modulePreview.feeAmount);
+        assertEq(viewPreview.makerFee, modulePreview.makerFee);
+        assertEq(viewPreview.treasuryFee, modulePreview.treasuryFee);
+        assertEq(viewPreview.activeCreditFee, modulePreview.activeCreditFee);
+        assertEq(viewPreview.feeIndexFee, modulePreview.feeIndexFee);
+        assertEq(viewPreview.feeToken, modulePreview.feeToken);
+        assertEq(viewPreview.feePoolId, modulePreview.feePoolId);
+
+        LibEqualXTypes.MarketPointer[] memory byPositionId = harness.getEqualXMarketsByPositionId(alicePositionId);
+        assertEq(byPositionId.length, 1);
+        assertEq(uint8(byPositionId[0].marketType), uint8(LibEqualXTypes.MarketType.SOLO_AMM));
+        assertEq(byPositionId[0].marketId, marketId);
+
+        LibEqualXTypes.MarketPointer[] memory activeByPositionId = harness.getEqualXActiveMarketsByPositionId(alicePositionId);
+        assertEq(activeByPositionId.length, 1);
+        assertEq(activeByPositionId[0].marketId, marketId);
+
+        EqualXViewFacet.EqualXLinearMarketStatus memory status = harness.getEqualXSoloAmmStatus(marketId);
+        assertTrue(status.exists);
+        assertTrue(status.active);
+        assertTrue(status.started);
+        assertTrue(status.live);
+        assertFalse(status.expired);
     }
 
     function test_SwapExactIn_RejectsBeforeStartAndAfterExpiry() public {

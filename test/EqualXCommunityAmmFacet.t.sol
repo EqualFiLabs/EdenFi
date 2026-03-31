@@ -52,6 +52,10 @@ contract EqualXCommunityAmmHarness is
         LibAppStorage.s().treasury = treasury_;
     }
 
+    function setFoundationReceiver(address receiver) external {
+        LibAppStorage.s().foundationReceiver = receiver;
+    }
+
     function setFeeSplits(uint256 treasuryBps, uint256 activeCreditBps) external {
         if (treasuryBps > type(uint16).max || activeCreditBps > type(uint16).max) revert();
         LibAppStorage.AppStorage storage store = LibAppStorage.s();
@@ -277,6 +281,69 @@ contract EqualXCommunityAmmFacetTest is Test {
         assertEq(harness.trackedBalanceOf(1), trackedBeforeClaim + feesA);
     }
 
+    function test_ViewHelpers_MatchCommunityPreviewAndMakerState() public {
+        uint256 marketId = _createJoinedCommunityMarket();
+
+        vm.warp(block.timestamp + 1 days);
+        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory modulePreview =
+            harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), 15e18);
+        EqualXViewFacet.EqualXSwapQuote memory viewPreview =
+            harness.quoteEqualXCommunityAmmExactIn(marketId, address(tokenA), 15e18);
+
+        assertEq(viewPreview.rawOut, modulePreview.rawOut);
+        assertEq(viewPreview.amountOut, modulePreview.amountOut);
+        assertEq(viewPreview.feeAmount, modulePreview.feeAmount);
+        assertEq(viewPreview.makerFee, modulePreview.makerFee);
+        assertEq(viewPreview.treasuryFee, modulePreview.treasuryFee);
+        assertEq(viewPreview.activeCreditFee, modulePreview.activeCreditFee);
+        assertEq(viewPreview.feeIndexFee, modulePreview.feeIndexFee);
+        assertEq(viewPreview.feeToken, modulePreview.feeToken);
+        assertEq(viewPreview.feePoolId, modulePreview.feePoolId);
+
+        LibEqualXTypes.MarketPointer[] memory byPositionId = harness.getEqualXMarketsByPositionId(charliePositionId);
+        assertEq(byPositionId.length, 1);
+        assertEq(uint8(byPositionId[0].marketType), uint8(LibEqualXTypes.MarketType.COMMUNITY_AMM));
+        assertEq(byPositionId[0].marketId, marketId);
+
+        EqualXViewFacet.EqualXCommunityMakerView memory makerView =
+            harness.getEqualXCommunityMakerViewById(marketId, charliePositionId);
+        (uint256 pendingFeesA, uint256 pendingFeesB) =
+            harness.previewEqualXCommunityMakerFees(marketId, charliePositionKey);
+
+        assertEq(makerView.maker.share, 50e18);
+        assertEq(makerView.pendingFeesA, pendingFeesA);
+        assertEq(makerView.pendingFeesB, pendingFeesB);
+
+        EqualXViewFacet.EqualXLinearMarketStatus memory status = harness.getEqualXCommunityAmmStatus(marketId);
+        assertTrue(status.exists);
+        assertTrue(status.active);
+        assertTrue(status.started);
+        assertTrue(status.live);
+    }
+
+    function test_JoinCommunityAmm_UsesSettledPrincipalAfterMaintenance() public {
+        vm.prank(alice);
+        uint256 marketId = harness.createEqualXCommunityAmmMarket(
+            alicePositionId,
+            1,
+            2,
+            100e18,
+            100e18,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 5 days),
+            300,
+            LibEqualXTypes.FeeAsset.TokenIn,
+            LibEqualXTypes.InvariantMode.Volatile
+        );
+
+        harness.setFoundationReceiver(makeAddr("foundation"));
+        vm.warp(block.timestamp + 2 days);
+
+        vm.expectRevert();
+        vm.prank(charlie);
+        harness.joinEqualXCommunityAmmMarket(marketId, charliePositionId, 500e18, 500e18);
+    }
+
     function test_Leave_ReconcilesBackingAndContributions() public {
         uint256 marketId = _createJoinedCommunityMarket();
 
@@ -309,6 +376,14 @@ contract EqualXCommunityAmmFacetTest is Test {
         assertEq(harness.directLentOf(charliePositionKey, 2), 0);
         assertEq(harness.principalOf(1, charliePositionKey), 500e18 + (withdrawnA - 50e18));
         assertEq(harness.principalOf(2, charliePositionKey), 500e18 - (50e18 - withdrawnB));
+    }
+
+    function test_WithdrawFromPosition_BlockedWhileCommunityAmmBackingIsEncumbered() public {
+        _createJoinedCommunityMarket();
+
+        vm.expectRevert(abi.encodeWithSignature("InsufficientPrincipal(uint256,uint256)", 480000000000000000000, 450000000000000000000));
+        vm.prank(charlie);
+        harness.withdrawFromPosition(charliePositionId, 1, 480e18, 480e18);
     }
 
     function test_Swap_MatchesPreviewAndPreservesLowGasHotPath() public {

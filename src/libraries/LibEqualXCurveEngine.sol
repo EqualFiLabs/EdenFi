@@ -397,7 +397,7 @@ library LibEqualXCurveEngine {
         if (desc.feeAsset != LibEqualXTypes.FeeAsset.TokenIn) revert EqualXCurve_InvalidDescriptor();
         if (desc.generation != 1) revert EqualXCurve_InvalidDescriptor();
         if (desc.poolIdA == desc.poolIdB) revert EqualXCurve_InvalidDescriptor();
-        if (desc.tokenA == address(0) || desc.tokenB == address(0) || desc.tokenA == desc.tokenB) {
+        if (desc.tokenA == desc.tokenB) {
             revert EqualXCurve_InvalidDescriptor();
         }
 
@@ -446,7 +446,7 @@ library LibEqualXCurveEngine {
 
     function _lockCollateral(bytes32 positionKey, uint256 poolId, uint256 amount) private {
         Types.PoolData storage pool = LibPositionHelpers.pool(poolId);
-        uint256 available = LibPositionHelpers.availablePrincipal(pool, positionKey, poolId);
+        uint256 available = LibPositionHelpers.settledAvailablePrincipal(pool, positionKey, poolId);
         if (available < amount) revert InsufficientPrincipal(amount, available);
         LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(positionKey, poolId);
         enc.directLocked += amount;
@@ -454,7 +454,7 @@ library LibEqualXCurveEngine {
     }
 
     function _unlockCollateral(bytes32 positionKey, uint256 poolId, uint256 amount) private {
-        LibActiveCreditIndex.settle(poolId, positionKey);
+        LibPositionHelpers.settlePosition(poolId, positionKey);
         LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(positionKey, poolId);
         uint256 currentLocked = enc.directLocked;
         if (currentLocked < amount) revert InsufficientPrincipal(amount, currentLocked);

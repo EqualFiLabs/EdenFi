@@ -8,6 +8,7 @@ import {LibEqualXDiscoveryStorage} from "../src/libraries/LibEqualXDiscoveryStor
 import {LibEqualXSoloAmmStorage} from "../src/libraries/LibEqualXSoloAmmStorage.sol";
 import {LibEqualXCommunityAmmStorage} from "../src/libraries/LibEqualXCommunityAmmStorage.sol";
 import {LibEqualXCurveStorage} from "../src/libraries/LibEqualXCurveStorage.sol";
+import {LibEqualXCurveEngine} from "../src/libraries/LibEqualXCurveEngine.sol";
 
 contract EqualXStorageHarness is EqualXViewFacet {
     function createSolo(bytes32 positionKey, uint256 positionId, address tokenA, address tokenB)
@@ -142,6 +143,63 @@ contract EqualXStorageHarness is EqualXViewFacet {
             curveId
         );
     }
+
+    function setCommunityMaker(
+        uint256 marketId,
+        bytes32 positionKey,
+        uint256 share,
+        uint256 snapshotA,
+        uint256 snapshotB,
+        uint256 initialContributionA,
+        uint256 initialContributionB,
+        bool isParticipant
+    ) external {
+        LibEqualXCommunityAmmStorage.s().makers[marketId][positionKey] = LibEqualXCommunityAmmStorage.CommunityMakerPosition({
+            share: share,
+            feeIndexSnapshotA: snapshotA,
+            feeIndexSnapshotB: snapshotB,
+            initialContributionA: initialContributionA,
+            initialContributionB: initialContributionB,
+            isParticipant: isParticipant
+        });
+        LibEqualXDiscoveryStorage.addPositionMarket(
+            LibEqualXDiscoveryStorage.s(), positionKey, LibEqualXTypes.MarketType.COMMUNITY_AMM, marketId
+        );
+    }
+
+    function setCommunityFeeIndexes(uint256 marketId, uint256 feeIndexA, uint256 feeIndexB) external {
+        LibEqualXCommunityAmmStorage.CommunityAmmMarket storage market = LibEqualXCommunityAmmStorage.s().markets[marketId];
+        market.feeIndexA = feeIndexA;
+        market.feeIndexB = feeIndexB;
+    }
+
+    function setSoloState(uint256 marketId, bool active, bool finalized) external {
+        LibEqualXSoloAmmStorage.SoloAmmMarket storage market = LibEqualXSoloAmmStorage.s().markets[marketId];
+        market.active = active;
+        market.finalized = finalized;
+    }
+
+    function setCommunityState(uint256 marketId, bool active, bool finalized) external {
+        LibEqualXCommunityAmmStorage.CommunityAmmMarket storage market = LibEqualXCommunityAmmStorage.s().markets[marketId];
+        market.active = active;
+        market.finalized = finalized;
+    }
+
+    function setCurveState(
+        uint256 curveId,
+        bool active,
+        uint32 generation,
+        bytes32 commitment,
+        uint128 remainingVolume,
+        uint64 endTime
+    ) external {
+        LibEqualXCurveStorage.CurveMarket storage market = LibEqualXCurveStorage.s().markets[curveId];
+        market.active = active;
+        market.generation = generation;
+        market.commitment = commitment;
+        market.remainingVolume = remainingVolume;
+        market.endTime = endTime;
+    }
 }
 
 contract EqualXStorageTest is Test {
@@ -223,5 +281,85 @@ contract EqualXStorageTest is Test {
         assertEq(profileData.profileId, 1);
         assertEq(immutables.tokenA, TOKEN_B);
         assertTrue(baseIsA);
+    }
+
+    function test_ViewFacetAddsTypedDiscoveryStatusAndMakerPendingReads() public {
+        uint256 soloId = harness.createSolo(POSITION_KEY_ONE, 10, TOKEN_A, TOKEN_B);
+        uint256 communityId = harness.createCommunity(POSITION_KEY_ONE, 11, TOKEN_A, TOKEN_B);
+        uint256 curveId = harness.createCurve(POSITION_KEY_ONE, 12, TOKEN_A, TOKEN_C);
+
+        harness.setCommunityMaker(communityId, POSITION_KEY_TWO, 21e18, 1e18, 2e18, 50e18, 80e18, true);
+        harness.setCommunityFeeIndexes(communityId, 4e18, 5e18);
+        harness.setSoloState(soloId, false, true);
+        harness.setCurveState(curveId, false, 2, keccak256("new-commitment"), 125e18, uint64(block.timestamp - 1));
+
+        LibEqualXTypes.MarketPointer[] memory communityOnly =
+            harness.getEqualXMarketsByPositionAndType(POSITION_KEY_ONE, LibEqualXTypes.MarketType.COMMUNITY_AMM);
+        assertEq(communityOnly.length, 1);
+        assertEq(communityOnly[0].marketId, communityId);
+
+        LibEqualXTypes.MarketPointer[] memory pairSoloOnly =
+            harness.getEqualXMarketsByPairAndType(TOKEN_A, TOKEN_B, LibEqualXTypes.MarketType.SOLO_AMM);
+        assertEq(pairSoloOnly.length, 1);
+        assertEq(pairSoloOnly[0].marketId, soloId);
+
+        LibEqualXTypes.MarketPointer[] memory activeByPair = harness.getEqualXActiveMarketsByPair(TOKEN_A, TOKEN_B);
+        assertEq(activeByPair.length, 1);
+        assertEq(uint8(activeByPair[0].marketType), uint8(LibEqualXTypes.MarketType.COMMUNITY_AMM));
+
+        EqualXViewFacet.EqualXLinearMarketStatus memory soloStatus = harness.getEqualXSoloAmmStatus(soloId);
+        assertTrue(soloStatus.exists);
+        assertFalse(soloStatus.active);
+        assertTrue(soloStatus.finalized);
+        assertFalse(soloStatus.live);
+
+        EqualXViewFacet.EqualXLinearMarketStatus memory communityStatus = harness.getEqualXCommunityAmmStatus(communityId);
+        assertTrue(communityStatus.exists);
+        assertTrue(communityStatus.active);
+        assertTrue(communityStatus.live);
+
+        EqualXViewFacet.EqualXCurveStatus memory curveStatus = harness.getEqualXCurveStatus(curveId);
+        assertTrue(curveStatus.exists);
+        assertFalse(curveStatus.active);
+        assertTrue(curveStatus.expired);
+        assertEq(curveStatus.generation, 2);
+        assertEq(curveStatus.remainingVolume, 125e18);
+
+        EqualXViewFacet.EqualXCommunityMakerView memory makerView =
+            harness.getEqualXCommunityMakerView(communityId, POSITION_KEY_TWO);
+        assertEq(makerView.maker.share, 21e18);
+        assertEq(makerView.pendingFeesA, 63e18);
+        assertEq(makerView.pendingFeesB, 63e18);
+
+        (uint256 feesA, uint256 feesB) = harness.previewEqualXCommunityMakerFees(communityId, POSITION_KEY_TWO);
+        assertEq(feesA, 63e18);
+        assertEq(feesB, 63e18);
+    }
+
+    function test_ViewFacetQuoteHelpersMatchStoredMarketMath() public {
+        uint256 soloId = harness.createSolo(POSITION_KEY_ONE, 10, TOKEN_A, TOKEN_B);
+        uint256 communityId = harness.createCommunity(POSITION_KEY_ONE, 11, TOKEN_A, TOKEN_B);
+        uint256 curveId = harness.createCurve(POSITION_KEY_ONE, 12, TOKEN_A, TOKEN_C);
+
+        EqualXViewFacet.EqualXSwapQuote memory soloQuote = harness.quoteEqualXSoloAmmExactIn(soloId, TOKEN_A, 10e18);
+        assertEq(soloQuote.feePoolId, 11);
+        assertEq(soloQuote.feeToken, TOKEN_A);
+        assertGt(soloQuote.amountOut, 0);
+        assertGt(soloQuote.feeAmount, 0);
+
+        EqualXViewFacet.EqualXSwapQuote memory communityQuote =
+            harness.quoteEqualXCommunityAmmExactIn(communityId, TOKEN_A, 10e18);
+        assertEq(communityQuote.feePoolId, 44);
+        assertEq(communityQuote.feeToken, TOKEN_B);
+        assertGt(communityQuote.amountOut, 0);
+        assertGt(communityQuote.feeAmount, 0);
+
+        vm.warp(block.timestamp + 1 hours + 1);
+        LibEqualXCurveEngine.CurveExecutionPreview memory curveQuote = harness.quoteEqualXCurveExactIn(curveId, 10e18);
+        assertEq(curveQuote.basePoolId, 55);
+        assertEq(curveQuote.quotePoolId, 66);
+        assertEq(curveQuote.baseToken, TOKEN_A);
+        assertEq(curveQuote.quoteToken, TOKEN_C);
+        assertGt(curveQuote.amountOut, 0);
     }
 }
