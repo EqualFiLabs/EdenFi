@@ -22,6 +22,8 @@ library LibEqualXCommunityAmmStorage {
         uint16 feeBps;
         LibEqualXTypes.FeeAsset feeAsset;
         LibEqualXTypes.InvariantMode invariantMode;
+        uint8 tokenADecimals;
+        uint8 tokenBDecimals;
         uint256 feeIndexA;
         uint256 feeIndexB;
         uint256 feeIndexRemainderA;

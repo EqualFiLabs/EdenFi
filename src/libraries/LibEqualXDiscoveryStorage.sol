@@ -58,6 +58,17 @@ library LibEqualXDiscoveryStorage {
         }
     }
 
+    function addPositionMarket(
+        DiscoveryStorage storage store,
+        bytes32 positionKey,
+        LibEqualXTypes.MarketType marketType,
+        uint256 marketId
+    ) internal {
+        LibEqualXTypes.MarketPointer memory pointer =
+            LibEqualXTypes.MarketPointer({marketType: marketType, marketId: marketId});
+        store.marketsByPosition[positionKey].push(pointer);
+    }
+
     function marketsByPosition(DiscoveryStorage storage store, bytes32 positionKey)
         internal
         view
