@@ -16,6 +16,7 @@ import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibEqualXCurveEngine} from "src/libraries/LibEqualXCurveEngine.sol";
 import {LibEqualXCurveStorage} from "src/libraries/LibEqualXCurveStorage.sol";
 import {LibEqualXTypes} from "src/libraries/LibEqualXTypes.sol";
+import {ICurveProfile} from "src/interfaces/ICurveProfile.sol";
 import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {Types} from "src/libraries/Types.sol";
@@ -33,6 +34,19 @@ contract MockERC20EqualXCurve is ERC20 {
 
     function decimals() public view override returns (uint8) {
         return _decimals;
+    }
+}
+
+contract MockCurveProfile is ICurveProfile {
+    function computePrice(
+        uint256 startPrice,
+        uint256, /* endPrice */
+        uint256, /* startTime */
+        uint256, /* duration */
+        uint256, /* currentTime */
+        bytes32 profileParams
+    ) external pure returns (uint256 price) {
+        return startPrice + uint256(profileParams);
     }
 }
 
@@ -108,6 +122,7 @@ contract EqualXCurveFacetTest is Test {
     PositionNFT internal positionNft;
     MockERC20EqualXCurve internal tokenA;
     MockERC20EqualXCurve internal tokenB;
+    MockCurveProfile internal customProfile;
 
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
@@ -129,6 +144,7 @@ contract EqualXCurveFacetTest is Test {
 
         tokenA = new MockERC20EqualXCurve("Token A", "TKA", 18);
         tokenB = new MockERC20EqualXCurve("Token B", "TKB", 18);
+        customProfile = new MockCurveProfile();
 
         Types.ActionFeeSet memory actionFees;
         harness.initPoolWithActionFees(1, address(tokenA), _poolConfig(), actionFees);
@@ -154,9 +170,7 @@ contract EqualXCurveFacetTest is Test {
         LibEqualXCurveEngine.CurveDescriptor memory desc = _defaultDescriptor();
         desc.profileId = 2;
 
-        vm.expectRevert(
-            abi.encodeWithSelector(LibEqualXCurveEngine.EqualXCurve_NotBuiltInLinearProfile.selector, uint16(2))
-        );
+        vm.expectRevert(abi.encodeWithSelector(LibEqualXCurveEngine.EqualXCurve_ProfileNotApproved.selector, uint16(2)));
         vm.prank(alice);
         harness.createEqualXCurve(desc);
 
@@ -181,6 +195,72 @@ contract EqualXCurveFacetTest is Test {
         assertEq(immutables.feeRateBps, 300);
         assertTrue(baseIsA);
         assertEq(harness.directLockedOf(alicePositionKey, 1), 100e18);
+    }
+
+    function test_GovernedProfileApproval_EnablesCustomProfileExecutionAndMetadataReads() public {
+        vm.prank(alice);
+        uint256 curveId = harness.createEqualXCurve(_defaultDescriptor());
+
+        (LibEqualXCurveStorage.CurveProfileRegistryEntry memory linearEntry, bool linearBuiltIn) =
+            harness.getEqualXCurveProfile(1);
+        assertTrue(linearBuiltIn);
+        assertTrue(linearEntry.approved);
+
+        harness.setEqualXCurveProfile(7, address(customProfile), 123, true);
+
+        (LibEqualXCurveStorage.CurveProfileRegistryEntry memory entry, bool builtIn) = harness.getEqualXCurveProfile(7);
+        assertFalse(builtIn);
+        assertEq(entry.impl, address(customProfile));
+        assertEq(entry.flags, 123);
+        assertTrue(entry.approved);
+        assertTrue(harness.isEqualXCurveProfileApproved(7));
+
+        LibEqualXCurveEngine.CurveUpdateParams memory params = LibEqualXCurveEngine.CurveUpdateParams({
+            startPrice: 2e18,
+            endPrice: 15e17,
+            startTime: uint64(block.timestamp + 1 hours),
+            duration: 3 days,
+            updateProfile: true,
+            profileId: 7,
+            updateProfileParams: true,
+            profileParams: bytes32(uint256(5e17))
+        });
+        vm.prank(alice);
+        harness.updateEqualXCurve(curveId, params);
+
+        vm.warp(block.timestamp + 1 days);
+        LibEqualXCurveEngine.CurveExecutionPreview memory preview = harness.previewEqualXCurveQuote(curveId, 10e18);
+        assertEq(preview.price, 25e17);
+    }
+
+    function test_RevokedProfile_CannotBeUsedInPreviewOrExecution() public {
+        vm.prank(alice);
+        uint256 curveId = harness.createEqualXCurve(_defaultDescriptor());
+
+        harness.setEqualXCurveProfile(7, address(customProfile), 0, true);
+        LibEqualXCurveEngine.CurveUpdateParams memory params = LibEqualXCurveEngine.CurveUpdateParams({
+            startPrice: 2e18,
+            endPrice: 2e18,
+            startTime: uint64(block.timestamp + 1 hours),
+            duration: 3 days,
+            updateProfile: true,
+            profileId: 7,
+            updateProfileParams: false,
+            profileParams: bytes32(0)
+        });
+        vm.prank(alice);
+        harness.updateEqualXCurve(curveId, params);
+
+        harness.setEqualXCurveProfile(7, address(customProfile), 0, false);
+        vm.warp(block.timestamp + 1 days);
+
+        vm.expectRevert(abi.encodeWithSelector(LibEqualXCurveEngine.EqualXCurve_ProfileNotApproved.selector, uint16(7)));
+        harness.previewEqualXCurveQuote(curveId, 10e18);
+
+        (uint32 generation, bytes32 commitment) = harness.getEqualXCurveCommitment(curveId);
+        vm.expectRevert(abi.encodeWithSelector(LibEqualXCurveEngine.EqualXCurve_ProfileNotApproved.selector, uint16(7)));
+        vm.prank(bob);
+        harness.executeEqualXCurveSwap(curveId, 10e18, 11e18, 1, uint64(block.timestamp + 1 days), bob, generation, commitment);
     }
 
     function test_UpdateCurve_IncrementsGenerationAndRecomputesCommitment() public {

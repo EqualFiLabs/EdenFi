@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {ICurveProfile} from "../interfaces/ICurveProfile.sol";
 import {LibActiveCreditIndex} from "./LibActiveCreditIndex.sol";
 import {LibAppStorage} from "./LibAppStorage.sol";
 import {LibCurrency} from "./LibCurrency.sol";
@@ -36,6 +37,7 @@ library LibEqualXCurveEngine {
     error EqualXCurve_CommitmentMismatch(bytes32 expected, bytes32 actual);
     error EqualXCurve_InvalidProfileId(uint16 profileId);
     error EqualXCurve_NotBuiltInLinearProfile(uint16 profileId);
+    error EqualXCurve_ProfileNotApproved(uint16 profileId);
 
     event EqualXCurveCreated(
         uint256 indexed curveId,
@@ -164,7 +166,7 @@ library LibEqualXCurveEngine {
         uint16 nextProfileId = profileData.profileId;
         bytes32 nextProfileParams = profileData.profileParams;
         if (params.updateProfile) {
-            _requireBuiltInProfile(params.profileId);
+            _enforceProfileApprovedForMutation(params.profileId);
             nextProfileId = params.profileId;
         }
         if (params.updateProfileParams) {
@@ -300,6 +302,35 @@ library LibEqualXCurveEngine {
         return BUILTIN_LINEAR_PROFILE_ID;
     }
 
+    function setCurveProfile(uint16 profileId, address impl, uint32 flags, bool approved) internal {
+        if (profileId == 0) revert EqualXCurve_InvalidProfileId(profileId);
+        if (profileId == BUILTIN_LINEAR_PROFILE_ID) {
+            if (impl != address(0)) revert EqualXCurve_InvalidProfileId(profileId);
+            return;
+        }
+        if (approved && impl == address(0)) revert EqualXCurve_InvalidProfileId(profileId);
+        LibEqualXCurveStorage.s().curveProfiles[profileId] =
+            LibEqualXCurveStorage.CurveProfileRegistryEntry({impl: impl, flags: flags, approved: approved});
+    }
+
+    function getCurveProfile(uint16 profileId)
+        internal
+        view
+        returns (LibEqualXCurveStorage.CurveProfileRegistryEntry memory entry, bool builtIn)
+    {
+        builtIn = profileId == BUILTIN_LINEAR_PROFILE_ID;
+        if (builtIn) {
+            entry = LibEqualXCurveStorage.CurveProfileRegistryEntry({impl: address(0), flags: 0, approved: true});
+            return (entry, true);
+        }
+        entry = LibEqualXCurveStorage.s().curveProfiles[profileId];
+    }
+
+    function isCurveProfileApproved(uint16 profileId) internal view returns (bool approved) {
+        if (profileId == BUILTIN_LINEAR_PROFILE_ID) return true;
+        approved = LibEqualXCurveStorage.s().curveProfiles[profileId].approved;
+    }
+
     function curveHash(CurveDescriptor memory desc) internal pure returns (bytes32) {
         return keccak256(abi.encode(CURVE_DOMAIN_SEPARATOR, desc));
     }
@@ -355,7 +386,7 @@ library LibEqualXCurveEngine {
         private
         returns (bool baseIsA, uint256 endTime)
     {
-        _requireBuiltInProfile(desc.profileId);
+        _enforceProfileApprovedForMutation(desc.profileId);
         if (desc.maxVolume == 0) revert EqualXCurve_InvalidAmount(desc.maxVolume);
         if (desc.startPrice == 0 || desc.endPrice == 0) revert EqualXCurve_InvalidDescriptor();
         if (desc.duration == 0) revert EqualXCurve_InvalidTimeWindow(desc.startTime, desc.duration);
@@ -400,6 +431,14 @@ library LibEqualXCurveEngine {
         if (profileId != BUILTIN_LINEAR_PROFILE_ID) revert EqualXCurve_NotBuiltInLinearProfile(profileId);
     }
 
+    function _enforceProfileApprovedForMutation(uint16 profileId) private view {
+        if (profileId == 0) revert EqualXCurve_InvalidProfileId(profileId);
+        if (profileId == BUILTIN_LINEAR_PROFILE_ID) return;
+        LibEqualXCurveStorage.CurveProfileRegistryEntry storage entry = LibEqualXCurveStorage.s().curveProfiles[profileId];
+        if (!entry.approved) revert EqualXCurve_ProfileNotApproved(profileId);
+        if (entry.impl == address(0)) revert EqualXCurve_InvalidProfileId(profileId);
+    }
+
     function _requireActiveCurve(uint256 curveId, LibEqualXCurveStorage.CurveMarket storage market) private view {
         if (market.generation == 0) revert EqualXCurve_InvalidCurve(curveId);
         if (!market.active) revert EqualXCurve_NotActive(curveId);
@@ -428,10 +467,35 @@ library LibEqualXCurveEngine {
         LibEqualXCurveStorage.CurvePricing storage pricing,
         LibEqualXCurveStorage.CurveProfileData storage profile
     ) private view returns (uint256 price) {
-        _requireBuiltInProfile(profile.profileId);
         uint256 endTime = uint256(pricing.startTime) + uint256(pricing.duration);
         if (block.timestamp < pricing.startTime || block.timestamp > endTime) revert EqualXCurve_Expired(curveId);
-        return computePrice(pricing.startPrice, pricing.endPrice, pricing.startTime, pricing.duration, block.timestamp);
+        if (profile.profileId == BUILTIN_LINEAR_PROFILE_ID) {
+            return computePrice(pricing.startPrice, pricing.endPrice, pricing.startTime, pricing.duration, block.timestamp);
+        }
+
+        LibEqualXCurveStorage.CurveProfileRegistryEntry storage entry = LibEqualXCurveStorage.s().curveProfiles[profile.profileId];
+        if (!entry.approved) revert EqualXCurve_ProfileNotApproved(profile.profileId);
+        if (entry.impl == address(0)) revert EqualXCurve_InvalidProfileId(profile.profileId);
+
+        (bool success, bytes memory ret) = entry.impl.staticcall(
+            abi.encodeCall(
+                ICurveProfile.computePrice,
+                (
+                    pricing.startPrice,
+                    pricing.endPrice,
+                    pricing.startTime,
+                    pricing.duration,
+                    block.timestamp,
+                    profile.profileParams
+                )
+            )
+        );
+        if (!success) {
+            assembly {
+                revert(add(ret, 32), mload(ret))
+            }
+        }
+        price = abi.decode(ret, (uint256));
     }
 
     function _previewCurveQuote(

@@ -6,6 +6,7 @@ import {LibEqualXDiscoveryStorage} from "../libraries/LibEqualXDiscoveryStorage.
 import {LibEqualXSoloAmmStorage} from "../libraries/LibEqualXSoloAmmStorage.sol";
 import {LibEqualXCommunityAmmStorage} from "../libraries/LibEqualXCommunityAmmStorage.sol";
 import {LibEqualXCurveStorage} from "../libraries/LibEqualXCurveStorage.sol";
+import {LibEqualXCurveEngine} from "../libraries/LibEqualXCurveEngine.sol";
 
 /// @notice View surface for EqualX market discovery and greenfield storage reads.
 contract EqualXViewFacet {
@@ -46,6 +47,23 @@ contract EqualXViewFacet {
         profileData = store.curveProfileData[curveId];
         immutables = store.curveImmutables[curveId];
         baseIsA = store.curveBaseIsA[curveId];
+    }
+
+    function getEqualXCurveProfile(uint16 profileId)
+        external
+        view
+        returns (LibEqualXCurveStorage.CurveProfileRegistryEntry memory entry, bool builtIn)
+    {
+        (entry, builtIn) = LibEqualXCurveEngine.getCurveProfile(profileId);
+    }
+
+    function isEqualXCurveProfileApproved(uint16 profileId) external view returns (bool approved) {
+        approved = LibEqualXCurveEngine.isCurveProfileApproved(profileId);
+    }
+
+    function getEqualXBuiltInCurveProfiles() external pure returns (uint16[] memory profileIds) {
+        profileIds = new uint16[](1);
+        profileIds[0] = LibEqualXCurveEngine.builtInLinearProfileId();
     }
 
     function getEqualXMarketsByPosition(bytes32 positionKey)
