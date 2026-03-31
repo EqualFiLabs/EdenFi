@@ -15,11 +15,23 @@ library LibEqualXSoloAmmStorage {
         address tokenB;
         uint256 reserveA;
         uint256 reserveB;
+        uint256 initialReserveA;
+        uint256 initialReserveB;
         uint64 startTime;
         uint64 endTime;
         uint16 feeBps;
         LibEqualXTypes.FeeAsset feeAsset;
         LibEqualXTypes.InvariantMode invariantMode;
+        uint8 tokenADecimals;
+        uint8 tokenBDecimals;
+        uint256 makerFeeAAccrued;
+        uint256 makerFeeBAccrued;
+        uint256 treasuryFeeAAccrued;
+        uint256 treasuryFeeBAccrued;
+        uint256 feeIndexFeeAAccrued;
+        uint256 feeIndexFeeBAccrued;
+        uint256 activeCreditFeeAAccrued;
+        uint256 activeCreditFeeBAccrued;
         bool active;
         bool finalized;
     }

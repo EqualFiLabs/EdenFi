@@ -39,6 +39,25 @@ library LibEqualXDiscoveryStorage {
         store.activeMarketsByType[uint8(marketType)].push(pointer);
     }
 
+    function removeActiveMarket(
+        DiscoveryStorage storage store,
+        LibEqualXTypes.MarketType marketType,
+        uint256 marketId
+    ) internal {
+        LibEqualXTypes.MarketPointer[] storage active = store.activeMarketsByType[uint8(marketType)];
+        uint256 len = active.length;
+        for (uint256 i; i < len; ++i) {
+            if (active[i].marketId == marketId && active[i].marketType == marketType) {
+                uint256 last = len - 1;
+                if (i != last) {
+                    active[i] = active[last];
+                }
+                active.pop();
+                return;
+            }
+        }
+    }
+
     function marketsByPosition(DiscoveryStorage storage store, bytes32 positionKey)
         internal
         view
