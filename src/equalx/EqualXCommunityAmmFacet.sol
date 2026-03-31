@@ -739,7 +739,7 @@ contract EqualXCommunityAmmFacet is ReentrancyGuardModifiers {
     ) internal {
         if (amount == 0) return;
         LibPositionHelpers.settlePosition(poolId, positionKey);
-        LibEncumbrance.position(positionKey, poolId).directLent += amount;
+        LibEncumbrance.position(positionKey, poolId).encumberedCapital += amount;
         LibActiveCreditIndex.applyEncumbranceIncrease(pool, poolId, positionKey, amount);
     }
 
@@ -747,9 +747,9 @@ contract EqualXCommunityAmmFacet is ReentrancyGuardModifiers {
         if (amount == 0) return;
         LibPositionHelpers.settlePosition(poolId, positionKey);
         LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(positionKey, poolId);
-        uint256 currentLent = enc.directLent;
-        if (currentLent < amount) revert InsufficientPrincipal(amount, currentLent);
-        enc.directLent = currentLent - amount;
+        uint256 currentEncumberedCapital = enc.encumberedCapital;
+        if (currentEncumberedCapital < amount) revert InsufficientPrincipal(amount, currentEncumberedCapital);
+        enc.encumberedCapital = currentEncumberedCapital - amount;
     }
 
     function _validateJoinRatio(

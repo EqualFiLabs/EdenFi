@@ -76,8 +76,8 @@ contract EqualXSoloAmmHarness is PoolManagementFacet, PositionManagementFacet, E
         }
     }
 
-    function directLentOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
-        return LibEncumbrance.position(positionKey, pid).directLent;
+    function encumberedCapitalOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
+        return LibEncumbrance.position(positionKey, pid).encumberedCapital;
     }
 
     function principalOf(uint256 pid, bytes32 positionKey) external view returns (uint256) {
@@ -195,8 +195,8 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(market.reserveA, 100e18);
         assertEq(market.reserveB, 100e18);
         assertTrue(market.active);
-        assertEq(harness.directLentOf(alicePositionKey, 1), 100e18);
-        assertEq(harness.directLentOf(alicePositionKey, 2), 100e18);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 100e18);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 100e18);
         assertEq(harness.activeCreditPrincipalTotalOf(1), 100e18);
         assertEq(harness.activeCreditPrincipalTotalOf(2), 100e18);
     }
@@ -305,8 +305,8 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(harness.principalOf(2, alicePositionKey), 500e18);
         assertEq(harness.trackedBalanceOf(1), 500e18);
         assertEq(harness.trackedBalanceOf(2), 500e18);
-        assertEq(harness.directLentOf(alicePositionKey, 1), market.reserveA);
-        assertEq(harness.directLentOf(alicePositionKey, 2), market.reserveB);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), market.reserveA);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), market.reserveB);
         assertEq(harness.activeCreditPrincipalTotalOf(1), 100e18);
         assertEq(harness.activeCreditPrincipalTotalOf(2), 100e18);
     }
@@ -418,8 +418,8 @@ contract EqualXSoloAmmFacetTest is Test {
         LibEqualXSoloAmmStorage.SoloAmmMarket memory finalized = harness.getEqualXSoloAmmMarket(marketId);
         assertTrue(finalized.finalized);
         assertFalse(finalized.active);
-        assertEq(harness.directLentOf(alicePositionKey, 1), 0);
-        assertEq(harness.directLentOf(alicePositionKey, 2), 0);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 0);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 0);
 
         vm.prank(alice);
         uint256 cancelledMarketId = harness.createEqualXSoloAmmMarket(
@@ -441,8 +441,8 @@ contract EqualXSoloAmmFacetTest is Test {
         LibEqualXSoloAmmStorage.SoloAmmMarket memory cancelled = harness.getEqualXSoloAmmMarket(cancelledMarketId);
         assertTrue(cancelled.finalized);
         assertFalse(cancelled.active);
-        assertEq(harness.directLentOf(alicePositionKey, 1), 0);
-        assertEq(harness.directLentOf(alicePositionKey, 2), 0);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 0);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 0);
     }
 
     function test_Finalize_ReconcilesPrincipalOnlyOnClose() public {
@@ -485,8 +485,8 @@ contract EqualXSoloAmmFacetTest is Test {
 
         assertEq(harness.principalOf(1, alicePositionKey), 500e18 + (reserveAForPrincipal - 100e18));
         assertEq(harness.principalOf(2, alicePositionKey), 500e18 - (100e18 - reserveBForPrincipal));
-        assertEq(harness.directLentOf(alicePositionKey, 1), 0);
-        assertEq(harness.directLentOf(alicePositionKey, 2), 0);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 0);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 0);
     }
 
     function _poolConfig() internal pure returns (Types.PoolConfig memory cfg) {

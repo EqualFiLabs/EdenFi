@@ -82,8 +82,8 @@ contract EqualXCommunityAmmHarness is
         }
     }
 
-    function directLentOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
-        return LibEncumbrance.position(positionKey, pid).directLent;
+    function encumberedCapitalOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
+        return LibEncumbrance.position(positionKey, pid).encumberedCapital;
     }
 
     function principalOf(uint256 pid, bytes32 positionKey) external view returns (uint256) {
@@ -227,8 +227,8 @@ contract EqualXCommunityAmmFacetTest is Test {
         assertEq(market.totalShares, 100e18);
         assertEq(market.makerCount, 1);
         assertEq(maker.share, 100e18);
-        assertEq(harness.directLentOf(alicePositionKey, 1), 100e18);
-        assertEq(harness.directLentOf(alicePositionKey, 2), 100e18);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 100e18);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 100e18);
         assertEq(harness.activeCreditPrincipalTotalOf(1), 100e18);
         assertEq(harness.activeCreditPrincipalTotalOf(2), 100e18);
     }
@@ -260,8 +260,8 @@ contract EqualXCommunityAmmFacetTest is Test {
         LibEqualXCommunityAmmStorage.CommunityMakerPosition memory joined =
             harness.getCommunityMaker(marketId, charliePositionKey);
         assertEq(joined.share, 50e18);
-        assertEq(harness.directLentOf(charliePositionKey, 1), 50e18);
-        assertEq(harness.directLentOf(charliePositionKey, 2), 50e18);
+        assertEq(harness.encumberedCapitalOf(charliePositionKey, 1), 50e18);
+        assertEq(harness.encumberedCapitalOf(charliePositionKey, 2), 50e18);
 
         vm.warp(block.timestamp + 1 days);
         EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory preview =
@@ -372,8 +372,8 @@ contract EqualXCommunityAmmFacetTest is Test {
         assertEq(leaveFeesB, 0);
         assertEq(withdrawnA, Math.mulDiv(withdrawableReserveA, joined.share, marketBeforeLeave.totalShares));
         assertEq(withdrawnB, Math.mulDiv(withdrawableReserveB, joined.share, marketBeforeLeave.totalShares));
-        assertEq(harness.directLentOf(charliePositionKey, 1), 0);
-        assertEq(harness.directLentOf(charliePositionKey, 2), 0);
+        assertEq(harness.encumberedCapitalOf(charliePositionKey, 1), 0);
+        assertEq(harness.encumberedCapitalOf(charliePositionKey, 2), 0);
         assertEq(harness.principalOf(1, charliePositionKey), 500e18 + (withdrawnA - 50e18));
         assertEq(harness.principalOf(2, charliePositionKey), 500e18 - (50e18 - withdrawnB));
     }
@@ -419,8 +419,8 @@ contract EqualXCommunityAmmFacetTest is Test {
         assertEq(harness.principalOf(2, alicePositionKey), 500e18);
         assertEq(harness.principalOf(1, charliePositionKey), 500e18);
         assertEq(harness.principalOf(2, charliePositionKey), 500e18);
-        assertEq(harness.directLentOf(alicePositionKey, 1), 100e18);
-        assertEq(harness.directLentOf(charliePositionKey, 1), 50e18);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 100e18);
+        assertEq(harness.encumberedCapitalOf(charliePositionKey, 1), 50e18);
         assertEq(market.treasuryFeeAAccrued, preview.treasuryFee);
         assertEq(market.activeCreditFeeAAccrued, preview.activeCreditFee);
         assertEq(market.feeIndexFeeAAccrued, preview.feeIndexFee);

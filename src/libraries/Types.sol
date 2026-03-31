@@ -106,9 +106,9 @@ library Types {
 
     /// @notice Encumbrance breakdown for a position within a pool.
     struct PositionEncumbrance {
-        uint256 directLocked;
-        uint256 directLent;
-        uint256 directOfferEscrow;
+        uint256 lockedCapital;
+        uint256 encumberedCapital;
+        uint256 offerEscrowedCapital;
         uint256 indexEncumbered;
         uint256 moduleEncumbered;
         uint256 totalEncumbered;

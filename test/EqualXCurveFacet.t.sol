@@ -100,8 +100,8 @@ contract EqualXCurveHarness is
         }
     }
 
-    function directLockedOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
-        return LibEncumbrance.position(positionKey, pid).directLocked;
+    function lockedCapitalOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
+        return LibEncumbrance.position(positionKey, pid).lockedCapital;
     }
 
     function principalOf(uint256 pid, bytes32 positionKey) external view returns (uint256) {
@@ -203,7 +203,7 @@ contract EqualXCurveFacetTest is Test {
         assertEq(profileData.profileId, LibEqualXCurveEngine.builtInLinearProfileId());
         assertEq(immutables.feeRateBps, 300);
         assertTrue(baseIsA);
-        assertEq(harness.directLockedOf(alicePositionKey, 1), 100e18);
+        assertEq(harness.lockedCapitalOf(alicePositionKey, 1), 100e18);
     }
 
     function test_GovernedProfileApproval_EnablesCustomProfileExecutionAndMetadataReads() public {
@@ -342,7 +342,7 @@ contract EqualXCurveFacetTest is Test {
         assertEq(tokenB.balanceOf(treasury) - treasuryBalanceBefore, treasuryFee);
         assertEq(harness.principalOf(2, alicePositionKey), 500e18 + 10e18 + makerFee);
         assertEq(harness.principalOf(1, alicePositionKey), 500e18 - preview.amountOut);
-        assertEq(harness.directLockedOf(alicePositionKey, 1), 100e18 - preview.amountOut);
+        assertEq(harness.lockedCapitalOf(alicePositionKey, 1), 100e18 - preview.amountOut);
         assertEq(market.remainingVolume, 100e18 - preview.amountOut);
         assertEq(harness.yieldReserveOf(2), protocolFee - treasuryFee);
     }
@@ -393,7 +393,7 @@ contract EqualXCurveFacetTest is Test {
         vm.prank(alice);
         uint256 curveId = harness.createEqualXCurve(_defaultDescriptor());
 
-        assertEq(harness.directLockedOf(alicePositionKey, 1), 100e18);
+        assertEq(harness.lockedCapitalOf(alicePositionKey, 1), 100e18);
 
         vm.prank(alice);
         harness.cancelEqualXCurve(curveId);
@@ -402,7 +402,7 @@ contract EqualXCurveFacetTest is Test {
 
         assertFalse(market.active);
         assertEq(market.remainingVolume, 0);
-        assertEq(harness.directLockedOf(alicePositionKey, 1), 0);
+        assertEq(harness.lockedCapitalOf(alicePositionKey, 1), 0);
     }
 
     function test_ExpireCurve_PermissionlesslyReleasesLockedBacking() public {
@@ -416,7 +416,7 @@ contract EqualXCurveFacetTest is Test {
         (LibEqualXCurveStorage.CurveMarket memory market,,,,,) = harness.getEqualXCurveMarket(curveId);
 
         assertFalse(market.active);
-        assertEq(harness.directLockedOf(alicePositionKey, 1), 0);
+        assertEq(harness.lockedCapitalOf(alicePositionKey, 1), 0);
     }
 
     function test_NativeBaseCurve_UsesSubstrateCurrencyHelpers() public {
@@ -464,7 +464,7 @@ contract EqualXCurveFacetTest is Test {
         harness.executeEqualXCurveSwap(curveId, 2e18, preview.totalQuote, preview.amountOut, uint64(block.timestamp + 1 days), bob);
 
         assertEq(bob.balance - bobBalanceBefore, preview.amountOut);
-        assertEq(harness.directLockedOf(nativePositionKey, 3), 1 ether - preview.amountOut);
+        assertEq(harness.lockedCapitalOf(nativePositionKey, 3), 1 ether - preview.amountOut);
         assertEq(harness.trackedBalanceOf(3), 5 ether - preview.amountOut);
         assertEq(harness.nativeTrackedTotal(), nativeTrackedBefore - preview.amountOut);
     }

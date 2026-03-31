@@ -96,12 +96,12 @@ contract EqualXHarnessBase is PoolManagementFacet, PositionManagementFacet, Equa
         }
     }
 
-    function directLentOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
-        return LibEncumbrance.position(positionKey, pid).directLent;
+    function encumberedCapitalOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
+        return LibEncumbrance.position(positionKey, pid).encumberedCapital;
     }
 
-    function directLockedOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
-        return LibEncumbrance.position(positionKey, pid).directLocked;
+    function lockedCapitalOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
+        return LibEncumbrance.position(positionKey, pid).lockedCapital;
     }
 
     function totalEncumbranceOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
@@ -656,14 +656,14 @@ contract EqualXSoloInvariantTest is StdInvariant, Test {
         LibEqualXSoloAmmStorage.SoloAmmMarket memory market = harness.getEqualXSoloAmmMarket(marketId);
         bytes32 makerKey = handler.makerPositionKey();
         if (market.active) {
-            assertEq(harness.directLentOf(makerKey, market.poolIdA), market.reserveA);
-            assertEq(harness.directLentOf(makerKey, market.poolIdB), market.reserveB);
+            assertEq(harness.encumberedCapitalOf(makerKey, market.poolIdA), market.reserveA);
+            assertEq(harness.encumberedCapitalOf(makerKey, market.poolIdB), market.reserveB);
             assertEq(harness.principalOf(1, makerKey), 750e18);
             assertEq(harness.principalOf(2, makerKey), 750e18);
         } else if (market.finalized) {
             assertFalse(market.active);
-            assertEq(harness.directLentOf(makerKey, market.poolIdA), 0);
-            assertEq(harness.directLentOf(makerKey, market.poolIdB), 0);
+            assertEq(harness.encumberedCapitalOf(makerKey, market.poolIdA), 0);
+            assertEq(harness.encumberedCapitalOf(makerKey, market.poolIdB), 0);
         }
     }
 
@@ -828,7 +828,7 @@ contract EqualXCurveInvariantTest is StdInvariant, Test {
             bool baseIsA
         ) = harness.getEqualXCurveMarket(curveId);
         uint256 basePoolId = baseIsA ? data.poolIdA : data.poolIdB;
-        uint256 locked = harness.directLockedOf(data.makerPositionKey, basePoolId);
+        uint256 locked = harness.lockedCapitalOf(data.makerPositionKey, basePoolId);
 
         assertLe(market.remainingVolume, immutables.maxVolume);
         if (market.active) {

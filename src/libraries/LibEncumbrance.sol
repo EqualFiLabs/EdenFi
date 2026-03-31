@@ -9,9 +9,9 @@ library LibEncumbrance {
     bytes32 internal constant STORAGE_POSITION = keccak256("equallend.encumbrance.storage");
 
     struct Encumbrance {
-        uint256 directLocked;
-        uint256 directLent;
-        uint256 directOfferEscrow;
+        uint256 lockedCapital;
+        uint256 encumberedCapital;
+        uint256 offerEscrowedCapital;
         uint256 indexEncumbered;
         uint256 moduleEncumbered;
     }
@@ -72,12 +72,13 @@ library LibEncumbrance {
 
     function total(bytes32 positionKey, uint256 poolId) internal view returns (uint256) {
         Encumbrance storage enc = s().encumbrance[positionKey][poolId];
-        return enc.directLocked + enc.directLent + enc.directOfferEscrow + enc.indexEncumbered + enc.moduleEncumbered;
+        return enc.lockedCapital + enc.encumberedCapital + enc.offerEscrowedCapital + enc.indexEncumbered
+            + enc.moduleEncumbered;
     }
 
     function totalForActiveCredit(bytes32 positionKey, uint256 poolId) internal view returns (uint256) {
         Encumbrance storage enc = s().encumbrance[positionKey][poolId];
-        return enc.directLocked + enc.directLent + enc.directOfferEscrow;
+        return enc.lockedCapital + enc.encumberedCapital + enc.offerEscrowedCapital;
     }
 
     function getIndexEncumbered(bytes32 positionKey, uint256 poolId) internal view returns (uint256) {

@@ -528,7 +528,7 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         if (amount == 0) return;
         LibPositionHelpers.settlePosition(poolId, makerPositionKey);
         LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(makerPositionKey, poolId);
-        enc.directLent += amount;
+        enc.encumberedCapital += amount;
         LibActiveCreditIndex.applyEncumbranceIncrease(pool, poolId, makerPositionKey, amount);
     }
 
@@ -536,11 +536,11 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         if (amount == 0) return;
         LibPositionHelpers.settlePosition(poolId, makerPositionKey);
         LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(makerPositionKey, poolId);
-        uint256 currentLent = enc.directLent;
-        if (currentLent < amount) {
-            revert InsufficientPrincipal(amount, currentLent);
+        uint256 currentEncumberedCapital = enc.encumberedCapital;
+        if (currentEncumberedCapital < amount) {
+            revert InsufficientPrincipal(amount, currentEncumberedCapital);
         }
-        enc.directLent = currentLent - amount;
+        enc.encumberedCapital = currentEncumberedCapital - amount;
     }
 
     function _commitSwapReserves(
@@ -572,14 +572,14 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         }
         LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(makerPositionKey, poolId);
         if (newReserve > previousReserve) {
-            enc.directLent += newReserve - previousReserve;
+            enc.encumberedCapital += newReserve - previousReserve;
         } else {
             uint256 delta = previousReserve - newReserve;
-            uint256 currentLent = enc.directLent;
-            if (currentLent < delta) {
-                revert InsufficientPrincipal(delta, currentLent);
+            uint256 currentEncumberedCapital = enc.encumberedCapital;
+            if (currentEncumberedCapital < delta) {
+                revert InsufficientPrincipal(delta, currentEncumberedCapital);
             }
-            enc.directLent = currentLent - delta;
+            enc.encumberedCapital = currentEncumberedCapital - delta;
         }
     }
 

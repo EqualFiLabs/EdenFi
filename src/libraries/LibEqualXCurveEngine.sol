@@ -449,16 +449,16 @@ library LibEqualXCurveEngine {
         uint256 available = LibPositionHelpers.settledAvailablePrincipal(pool, positionKey, poolId);
         if (available < amount) revert InsufficientPrincipal(amount, available);
         LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(positionKey, poolId);
-        enc.directLocked += amount;
+        enc.lockedCapital += amount;
         LibActiveCreditIndex.applyEncumbranceIncrease(pool, poolId, positionKey, amount);
     }
 
     function _unlockCollateral(bytes32 positionKey, uint256 poolId, uint256 amount) private {
         LibPositionHelpers.settlePosition(poolId, positionKey);
         LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(positionKey, poolId);
-        uint256 currentLocked = enc.directLocked;
-        if (currentLocked < amount) revert InsufficientPrincipal(amount, currentLocked);
-        enc.directLocked = currentLocked - amount;
+        uint256 currentLockedCapital = enc.lockedCapital;
+        if (currentLockedCapital < amount) revert InsufficientPrincipal(amount, currentLockedCapital);
+        enc.lockedCapital = currentLockedCapital - amount;
         LibActiveCreditIndex.applyEncumbranceDecrease(LibPositionHelpers.pool(poolId), poolId, positionKey, amount);
     }
 
