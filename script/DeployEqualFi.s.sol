@@ -351,13 +351,14 @@ contract DeployEqualFi is Script {
     }
 
     function _selectorsPositionManagement() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = PositionManagementFacet.mintPosition.selector;
         s[1] = PositionManagementFacet.depositToPosition.selector;
-        s[2] = PositionManagementFacet.withdrawFromPosition.selector;
-        s[3] = PositionManagementFacet.cleanupMembership.selector;
-        s[4] = PositionManagementFacet.previewPositionYield.selector;
-        s[5] = PositionManagementFacet.claimPositionYield.selector;
+        s[2] = PositionManagementFacet.joinPositionPool.selector;
+        s[3] = PositionManagementFacet.withdrawFromPosition.selector;
+        s[4] = PositionManagementFacet.cleanupMembership.selector;
+        s[5] = PositionManagementFacet.previewPositionYield.selector;
+        s[6] = PositionManagementFacet.claimPositionYield.selector;
     }
 
     function _selectorsFlashLoan() internal pure returns (bytes4[] memory s) {

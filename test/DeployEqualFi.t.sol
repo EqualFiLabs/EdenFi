@@ -87,6 +87,7 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         assertEq(OwnershipFacet(deployment.diamond).owner(), deployment.timelockController);
 
         assertTrue(loupe.facetAddress(PositionManagementFacet.mintPosition.selector) != address(0));
+        assertTrue(loupe.facetAddress(PositionManagementFacet.joinPositionPool.selector) != address(0));
         assertTrue(loupe.facetAddress(FlashLoanFacet.flashLoan.selector) != address(0));
         assertTrue(loupe.facetAddress(EqualIndexAdminFacetV3.createIndex.selector) != address(0));
         assertTrue(loupe.facetAddress(EqualIndexActionsFacetV3.mint.selector) != address(0));

@@ -27,6 +27,7 @@ import {
 /// @notice Minimal Position NFT lifecycle and principal management for EDEN-facing substrate work.
 contract PositionManagementFacet is ReentrancyGuardModifiers {
     event PositionMinted(uint256 indexed tokenId, address indexed owner, uint256 indexed poolId);
+    event PositionPoolJoined(uint256 indexed tokenId, address indexed owner, uint256 indexed poolId);
     event DepositedToPosition(
         uint256 indexed tokenId,
         address indexed owner,
@@ -66,6 +67,18 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
         uint256 maxAmount
     ) external payable nonReentrant {
         _depositToPosition(tokenId, pid, amount, maxAmount, msg.sender);
+    }
+
+    function joinPositionPool(uint256 tokenId, uint256 pid) external payable nonReentrant {
+        LibCurrency.assertZeroMsgValue();
+        _requireOwnership(tokenId);
+        _pool(pid);
+
+        bytes32 positionKey = _getPositionKey(tokenId);
+        bool alreadyMember = LibPositionHelpers.ensurePoolMembership(positionKey, pid, true);
+        if (!alreadyMember) {
+            emit PositionPoolJoined(tokenId, msg.sender, pid);
+        }
     }
 
     function withdrawFromPosition(
