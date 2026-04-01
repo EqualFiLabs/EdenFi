@@ -24,6 +24,11 @@ import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFa
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
 import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
+import {OptionToken} from "src/tokens/OptionToken.sol";
+import {OptionTokenAdminFacet} from "src/options/OptionTokenAdminFacet.sol";
+import {OptionTokenViewFacet} from "src/options/OptionTokenViewFacet.sol";
+import {OptionsFacet} from "src/options/OptionsFacet.sol";
+import {OptionsViewFacet} from "src/options/OptionsViewFacet.sol";
 import {
     MockEntryPointLaunch,
     MockERC6551RegistryLaunch,
@@ -94,7 +99,16 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         assertTrue(loupe.facetAddress(EqualScaleAlphaFacet.registerBorrowerProfile.selector) != address(0));
         assertTrue(loupe.facetAddress(EqualScaleAlphaAdminFacet.freezeLine.selector) != address(0));
         assertTrue(loupe.facetAddress(EqualScaleAlphaViewFacet.getBorrowerProfile.selector) != address(0));
+        assertTrue(loupe.facetAddress(OptionTokenAdminFacet.deployOptionToken.selector) != address(0));
+        assertTrue(loupe.facetAddress(OptionTokenViewFacet.getOptionToken.selector) != address(0));
+        assertTrue(loupe.facetAddress(OptionsFacet.createOptionSeries.selector) != address(0));
+        assertTrue(loupe.facetAddress(OptionsViewFacet.getOptionSeriesProductiveCollateral.selector) != address(0));
         assertTrue(loupe.facetAddress(EdenRewardsFacet.createRewardProgram.selector) != address(0));
+
+        assertEq(OptionTokenViewFacet(deployment.diamond).getOptionToken(), deployment.optionToken);
+        assertTrue(deployment.optionToken != address(0));
+        assertEq(OptionToken(deployment.optionToken).owner(), deployment.timelockController);
+        assertEq(OptionToken(deployment.optionToken).manager(), deployment.diamond);
 
         assertEq(loupe.facetAddress(LEGACY_CREATE_BASKET_SELECTOR), address(0));
         assertEq(loupe.facetAddress(LEGACY_PRODUCT_MINT_SELECTOR), address(0));

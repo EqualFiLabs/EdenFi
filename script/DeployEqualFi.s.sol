@@ -29,6 +29,10 @@ import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
 import {EqualScaleAlphaAdminFacet} from "src/equalscale/EqualScaleAlphaAdminFacet.sol";
 import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.sol";
 import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
+import {OptionTokenAdminFacet} from "src/options/OptionTokenAdminFacet.sol";
+import {OptionTokenViewFacet} from "src/options/OptionTokenViewFacet.sol";
+import {OptionsFacet} from "src/options/OptionsFacet.sol";
+import {OptionsViewFacet} from "src/options/OptionsViewFacet.sol";
 import {Types} from "src/libraries/Types.sol";
 
 interface IPoolManagementFacetInitDefault {
@@ -36,8 +40,9 @@ interface IPoolManagementFacetInitDefault {
 }
 
 contract DeployEqualFi is Script {
+    string internal constant DEFAULT_OPTION_TOKEN_BASE_URI = "ipfs://equalfi/options";
     uint256 internal constant DIAMOND_CORE_FACET_COUNT = 3;
-    uint256 internal constant SUBSTRATE_LAUNCH_FACET_COUNT = 14;
+    uint256 internal constant SUBSTRATE_LAUNCH_FACET_COUNT = 18;
     uint256 internal constant EDEN_REWARDS_FACET_COUNT = 1;
     uint256 internal constant LAUNCH_FACET_COUNT = SUBSTRATE_LAUNCH_FACET_COUNT + EDEN_REWARDS_FACET_COUNT;
     uint256 internal constant TOTAL_FACET_COUNT = DIAMOND_CORE_FACET_COUNT + LAUNCH_FACET_COUNT;
@@ -58,6 +63,7 @@ contract DeployEqualFi is Script {
         address erc6551Registry;
         address identityRegistry;
         address positionMSCAImplementation;
+        address optionToken;
     }
 
     function runBase() external returns (BaseDeployment memory deployment) {
@@ -99,6 +105,7 @@ contract DeployEqualFi is Script {
         console2.log("erc6551Registry", deployment.erc6551Registry);
         console2.log("identityRegistry", deployment.identityRegistry);
         console2.log("positionMSCAImplementation", deployment.positionMSCAImplementation);
+        console2.log("optionToken", deployment.optionToken);
     }
 
     function deployBase(address owner_, address treasury_) public returns (BaseDeployment memory deployment) {
@@ -149,6 +156,9 @@ contract DeployEqualFi is Script {
 
         BaseDeployment memory base = _deployBase(owner_, treasury_, address(0));
         _installLaunchFacets(base.diamond);
+        address optionToken = OptionTokenAdminFacet(base.diamond).deployOptionToken(
+            DEFAULT_OPTION_TOKEN_BASE_URI, address(timelockController)
+        );
 
         PositionMSCAImpl positionMSCAImplementation = new PositionMSCAImpl(entryPoint_);
         PositionAgentConfigFacet(base.diamond).setERC6551Registry(erc6551Registry_);
@@ -167,7 +177,8 @@ contract DeployEqualFi is Script {
             entryPoint: entryPoint_,
             erc6551Registry: erc6551Registry_,
             identityRegistry: identityRegistry_,
-            positionMSCAImplementation: address(positionMSCAImplementation)
+            positionMSCAImplementation: address(positionMSCAImplementation),
+            optionToken: optionToken
         });
     }
 
@@ -239,6 +250,22 @@ contract DeployEqualFi is Script {
         {
             EqualScaleAlphaViewFacet facet = new EqualScaleAlphaViewFacet();
             cuts[i++] = _cut(address(facet), _selectorsEqualScaleAlphaView());
+        }
+        {
+            OptionTokenAdminFacet facet = new OptionTokenAdminFacet();
+            cuts[i++] = _cut(address(facet), _selectorsOptionTokenAdmin());
+        }
+        {
+            OptionTokenViewFacet facet = new OptionTokenViewFacet();
+            cuts[i++] = _cut(address(facet), _selectorsOptionTokenView());
+        }
+        {
+            OptionsFacet facet = new OptionsFacet();
+            cuts[i++] = _cut(address(facet), _selectorsOptions());
+        }
+        {
+            OptionsViewFacet facet = new OptionsViewFacet();
+            cuts[i++] = _cut(address(facet), _selectorsOptionsView());
         }
         {
             EdenRewardsFacet facet = new EdenRewardsFacet();
@@ -465,6 +492,42 @@ contract DeployEqualFi is Script {
         s[9] = EqualScaleAlphaViewFacet.getTreasuryTelemetry.selector;
         s[10] = EqualScaleAlphaViewFacet.getRefinanceStatus.selector;
         s[11] = EqualScaleAlphaViewFacet.getLineLossSummary.selector;
+    }
+
+    function _selectorsOptionTokenAdmin() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = OptionTokenAdminFacet.deployOptionToken.selector;
+        s[1] = OptionTokenAdminFacet.setOptionToken.selector;
+    }
+
+    function _selectorsOptionTokenView() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = OptionTokenViewFacet.getOptionToken.selector;
+        s[1] = OptionTokenViewFacet.hasOptionToken.selector;
+    }
+
+    function _selectorsOptions() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](7);
+        s[0] = OptionsFacet.createOptionSeries.selector;
+        s[1] = OptionsFacet.exerciseOptions.selector;
+        s[2] = OptionsFacet.exerciseOptionsFor.selector;
+        s[3] = OptionsFacet.reclaimOptions.selector;
+        s[4] = OptionsFacet.burnReclaimedOptionsClaims.selector;
+        s[5] = OptionsFacet.setOptionsPaused.selector;
+        s[6] = OptionsFacet.setEuropeanTolerance.selector;
+    }
+
+    function _selectorsOptionsView() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](9);
+        s[0] = OptionsViewFacet.getOptionSeries.selector;
+        s[1] = OptionsViewFacet.getOptionSeriesIdsByPosition.selector;
+        s[2] = OptionsViewFacet.getOptionSeriesIdsByPositionKey.selector;
+        s[3] = OptionsViewFacet.getOptionSeriesProductiveCollateral.selector;
+        s[4] = OptionsViewFacet.getOptionPositionProductiveCollateral.selector;
+        s[5] = OptionsViewFacet.getOptionPositionProductiveCollateralByKey.selector;
+        s[6] = OptionsViewFacet.previewExercisePayment.selector;
+        s[7] = OptionsViewFacet.isOptionsPaused.selector;
+        s[8] = OptionsViewFacet.europeanToleranceSeconds.selector;
     }
 
     function _selectorsEdenRewards() internal pure returns (bytes4[] memory s) {

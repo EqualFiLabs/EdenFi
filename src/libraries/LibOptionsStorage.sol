@@ -35,6 +35,26 @@ library LibOptionsStorage {
         bool isAmerican;
     }
 
+    struct ProductiveCollateralView {
+        uint256 seriesId;
+        bytes32 makerPositionKey;
+        uint256 makerPositionId;
+        uint256 collateralPoolId;
+        address collateralAsset;
+        uint256 remainingSize;
+        uint256 collateralLocked;
+        uint256 settledPrincipal;
+        uint256 availablePrincipal;
+        uint256 totalEncumbrance;
+        uint256 activeCreditEncumbrancePrincipal;
+        uint256 pendingActiveCreditYield;
+        uint256 pendingFeeYield;
+        uint256 accruedYield;
+        uint256 claimableYield;
+        bool isCall;
+        bool reclaimed;
+    }
+
     struct OptionsStorage {
         mapping(uint256 => OptionSeries) optionSeries;
         uint256 nextOptionSeriesId;

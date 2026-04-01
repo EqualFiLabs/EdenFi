@@ -14,6 +14,7 @@ import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibDiamond} from "src/libraries/LibDiamond.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibFeeIndex} from "src/libraries/LibFeeIndex.sol";
+import {LibFeeRouter} from "src/libraries/LibFeeRouter.sol";
 import {LibOptionsStorage} from "src/libraries/LibOptionsStorage.sol";
 import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
@@ -83,6 +84,28 @@ contract OptionsHarness is OptionTokenAdminFacet, OptionTokenViewFacet, OptionsF
 
     function lockedCollateral(uint256 pid, bytes32 positionKey) external view returns (uint256) {
         return LibEncumbrance.position(positionKey, pid).lockedCapital;
+    }
+
+    function activeCreditEncumbrancePrincipal(uint256 pid, bytes32 positionKey) external view returns (uint256) {
+        return LibAppStorage.s().pools[pid].userActiveCreditStateEncumbrance[positionKey].principal;
+    }
+
+    function pendingActiveCreditYield(uint256 pid, bytes32 positionKey) external view returns (uint256) {
+        return LibActiveCreditIndex.pendingActiveCredit(pid, positionKey);
+    }
+
+    function pendingFeeYield(uint256 pid, bytes32 positionKey) external view returns (uint256) {
+        uint256 accrued = LibAppStorage.s().pools[pid].userAccruedYield[positionKey];
+        uint256 total = LibFeeIndex.pendingYield(pid, positionKey);
+        return total > accrued ? total - accrued : 0;
+    }
+
+    function accruedYield(uint256 pid, bytes32 positionKey) external view returns (uint256) {
+        return LibAppStorage.s().pools[pid].userAccruedYield[positionKey];
+    }
+
+    function accrueActiveCreditForTest(uint256 pid, uint256 amount, bytes32 source) external {
+        LibFeeRouter.accrueActiveCredit(pid, amount, source, amount);
     }
 }
 
@@ -243,6 +266,56 @@ contract OptionsFacetTest is Test {
         vm.warp(block.timestamp + 1 days - 50);
         vm.prank(holder);
         harness.exerciseOptions(seriesId, 1e18, holder, payment, 0);
+    }
+
+    function test_ProductiveCollateralView_ShowsLockedCollateralStillAccruingActiveCredit() public {
+        vm.prank(maker);
+        uint256 seriesId = harness.createOptionSeries(_defaultParams(5e18, true, true));
+
+        vm.warp(block.timestamp + 1 days + 1);
+        harness.accrueActiveCreditForTest(UNDERLYING_PID, 1e18, keccak256("options-active-credit"));
+
+        LibOptionsStorage.ProductiveCollateralView memory viewData =
+            harness.getOptionSeriesProductiveCollateral(seriesId);
+
+        assertEq(viewData.seriesId, seriesId);
+        assertEq(viewData.collateralPoolId, UNDERLYING_PID);
+        assertEq(viewData.collateralAsset, address(underlying));
+        assertEq(viewData.collateralLocked, 5e18);
+        assertEq(viewData.remainingSize, 5e18);
+        assertEq(viewData.settledPrincipal, 20e18);
+        assertEq(viewData.availablePrincipal, 15e18);
+        assertEq(viewData.totalEncumbrance, 5e18);
+        assertEq(viewData.activeCreditEncumbrancePrincipal, 5e18);
+        assertEq(viewData.pendingActiveCreditYield, harness.pendingActiveCreditYield(UNDERLYING_PID, makerPositionKey));
+        assertEq(viewData.pendingFeeYield, harness.pendingFeeYield(UNDERLYING_PID, makerPositionKey));
+        assertEq(viewData.accruedYield, harness.accruedYield(UNDERLYING_PID, makerPositionKey));
+        assertEq(
+            viewData.claimableYield,
+            viewData.accruedYield + viewData.pendingActiveCreditYield + viewData.pendingFeeYield
+        );
+        assertGt(viewData.pendingActiveCreditYield, 0);
+    }
+
+    function test_ProductiveCollateralViews_ByPosition_ReturnActiveSeriesOnly() public {
+        vm.startPrank(maker);
+        uint256 activeSeriesId = harness.createOptionSeries(_defaultParams(3e18, true, true));
+        uint256 reclaimableSeriesId = harness.createOptionSeries(_defaultParams(2e18, false, true));
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(maker);
+        harness.reclaimOptions(reclaimableSeriesId);
+
+        LibOptionsStorage.ProductiveCollateralView[] memory byPosition =
+            harness.getOptionPositionProductiveCollateral(makerPositionId);
+        assertEq(byPosition.length, 1);
+        assertEq(byPosition[0].seriesId, activeSeriesId);
+
+        LibOptionsStorage.ProductiveCollateralView memory reclaimedView =
+            harness.getOptionSeriesProductiveCollateral(reclaimableSeriesId);
+        assertTrue(reclaimedView.reclaimed);
+        assertEq(reclaimedView.collateralLocked, 0);
     }
 
     function test_RevertWhen_CreateSeriesWithoutRequiredPoolMembership() public {
