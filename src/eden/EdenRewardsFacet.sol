@@ -12,7 +12,6 @@ import {LibEdenRewardsStorage} from "../libraries/LibEdenRewardsStorage.sol";
 import {LibEqualIndexStorage} from "../libraries/LibEqualIndexStorage.sol";
 import {LibFeeIndex} from "../libraries/LibFeeIndex.sol";
 import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
-import {LibStEVERewards} from "../libraries/LibStEVERewards.sol";
 import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
 import {Unauthorized, InvalidParameterRange, InvalidUnderlying} from "../libraries/Errors.sol";
 
@@ -365,12 +364,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         }
     }
 
-    function _validateTarget(LibEdenRewardsStorage.RewardTargetType targetType, uint256 targetId) private pure {
-        if (targetType == LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION) {
-            if (targetId != LibEdenRewardsStorage.STEVE_TARGET_ID) revert InvalidParameterRange("steveTargetId");
-            return;
-        }
-
+    function _validateTarget(LibEdenRewardsStorage.RewardTargetType targetType, uint256) private pure {
         if (targetType == LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION) {
             return;
         }
@@ -408,10 +402,6 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         private
         returns (uint256 eligibleBalance)
     {
-        if (target.targetType == LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION) {
-            return LibStEVERewards.currentEligibleBalance(positionKey);
-        }
-
         if (target.targetType == LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION) {
             uint256 poolId = LibEqualIndexStorage.poolIdForIndex(target.targetId);
             if (poolId == 0) {
@@ -430,10 +420,6 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         view
         returns (uint256 eligibleBalance)
     {
-        if (target.targetType == LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION) {
-            return LibStEVERewards.previewEligibleBalance(positionKey);
-        }
-
         if (target.targetType == LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION) {
             uint256 poolId = LibEqualIndexStorage.poolIdForIndex(target.targetId);
             if (poolId == 0) {

@@ -10,10 +10,10 @@ import {
     OnlyManagerAllowed
 } from "src/libraries/Errors.sol";
 
-import {StEVELaunchFixture, MockERC20Launch} from "test/utils/StEVELaunchFixture.t.sol";
+import {LaunchFixture} from "test/utils/LaunchFixture.t.sol";
 import {ProtocolTestSupportFacet} from "test/utils/ProtocolTestSupport.sol";
 
-contract ManagedPoolFacetTest is StEVELaunchFixture {
+contract ManagedPoolFacetTest is LaunchFixture {
     uint256 internal constant MANAGED_PID = 7;
     uint256 internal constant CREATION_FEE = 1 ether;
 

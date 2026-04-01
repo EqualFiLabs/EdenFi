@@ -6,9 +6,9 @@ import {Vm} from "forge-std/Vm.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {AumFeeOutOfBounds, PoolNotInitialized} from "src/libraries/Errors.sol";
-import {StEVELaunchFixture} from "test/utils/StEVELaunchFixture.t.sol";
+import {LaunchFixture} from "test/utils/LaunchFixture.t.sol";
 
-contract PoolAumFacetTest is StEVELaunchFixture {
+contract PoolAumFacetTest is LaunchFixture {
     event PoolAumFeeUpdated(uint256 indexed pid, uint16 oldFeeBps, uint16 newFeeBps);
 
     function setUp() public override {

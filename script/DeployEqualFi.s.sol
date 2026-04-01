@@ -28,13 +28,7 @@ import {PositionMSCAImpl} from "src/agent-wallet/erc6900/PositionMSCAImpl.sol";
 import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
 import {EqualScaleAlphaAdminFacet} from "src/equalscale/EqualScaleAlphaAdminFacet.sol";
 import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.sol";
-import {StEVEPositionFacet} from "src/steve/StEVEPositionFacet.sol";
-import {StEVEActionFacet} from "src/steve/StEVEActionFacet.sol";
-import {StEVEWalletFacet} from "src/steve/StEVEWalletFacet.sol";
 import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
-import {StEVELendingFacet} from "src/steve/StEVELendingFacet.sol";
-import {StEVEViewFacet} from "src/steve/StEVEViewFacet.sol";
-import {StEVEAdminFacet} from "src/steve/StEVEAdminFacet.sol";
 import {Types} from "src/libraries/Types.sol";
 
 interface IPoolManagementFacetInitDefault {
@@ -43,9 +37,9 @@ interface IPoolManagementFacetInitDefault {
 
 contract DeployEqualFi is Script {
     uint256 internal constant DIAMOND_CORE_FACET_COUNT = 3;
-    uint256 internal constant NON_EDEN_LAUNCH_FACET_COUNT = 14;
-    uint256 internal constant EDEN_SINGLETON_FACET_COUNT = 7;
-    uint256 internal constant LAUNCH_FACET_COUNT = NON_EDEN_LAUNCH_FACET_COUNT + EDEN_SINGLETON_FACET_COUNT;
+    uint256 internal constant SUBSTRATE_LAUNCH_FACET_COUNT = 14;
+    uint256 internal constant EDEN_REWARDS_FACET_COUNT = 1;
+    uint256 internal constant LAUNCH_FACET_COUNT = SUBSTRATE_LAUNCH_FACET_COUNT + EDEN_REWARDS_FACET_COUNT;
     uint256 internal constant TOTAL_FACET_COUNT = DIAMOND_CORE_FACET_COUNT + LAUNCH_FACET_COUNT;
     uint256 internal constant CUT_BATCH_SIZE = 3;
 
@@ -108,6 +102,13 @@ contract DeployEqualFi is Script {
     }
 
     function deployBase(address owner_, address treasury_) public returns (BaseDeployment memory deployment) {
+        deployment = _deployBase(owner_, treasury_, address(0));
+    }
+
+    function _deployBase(address owner_, address treasury_, address timelock_)
+        internal
+        returns (BaseDeployment memory deployment)
+    {
         DiamondCutFacet cut = new DiamondCutFacet();
         DiamondLoupeFacet loupe = new DiamondLoupeFacet();
         OwnershipFacet own = new OwnershipFacet();
@@ -125,7 +126,7 @@ contract DeployEqualFi is Script {
             .diamondCut(
                 new IDiamondCut.FacetCut[](0),
                 address(initializer),
-                abi.encodeWithSelector(DiamondInit.init.selector, address(0), treasury_, address(nftContract))
+                abi.encodeWithSelector(DiamondInit.init.selector, timelock_, treasury_, address(nftContract))
             );
 
         deployment = BaseDeployment({diamond: address(diamond), positionNFT: address(nftContract)});
@@ -139,14 +140,6 @@ contract DeployEqualFi is Script {
         address erc6551Registry_,
         address identityRegistry_
     ) public returns (LaunchDeployment memory deployment) {
-        BaseDeployment memory base = deployBase(owner_, treasury_);
-        _installLaunchFacets(base.diamond);
-
-        PositionMSCAImpl positionMSCAImplementation = new PositionMSCAImpl(entryPoint_);
-        PositionAgentConfigFacet(base.diamond).setERC6551Registry(erc6551Registry_);
-        PositionAgentConfigFacet(base.diamond).setERC6551Implementation(address(positionMSCAImplementation));
-        PositionAgentConfigFacet(base.diamond).setIdentityRegistry(identityRegistry_);
-
         address[] memory proposers = new address[](1);
         proposers[0] = governor_;
         address[] memory executors = new address[](1);
@@ -154,7 +147,15 @@ contract DeployEqualFi is Script {
         FixedDelayTimelockController timelockController =
             new FixedDelayTimelockController(proposers, executors, governor_);
 
-        StEVEAdminFacet(base.diamond).setTimelockController(address(timelockController));
+        BaseDeployment memory base = _deployBase(owner_, treasury_, address(0));
+        _installLaunchFacets(base.diamond);
+
+        PositionMSCAImpl positionMSCAImplementation = new PositionMSCAImpl(entryPoint_);
+        PositionAgentConfigFacet(base.diamond).setERC6551Registry(erc6551Registry_);
+        PositionAgentConfigFacet(base.diamond).setERC6551Implementation(address(positionMSCAImplementation));
+        PositionAgentConfigFacet(base.diamond).setIdentityRegistry(identityRegistry_);
+        _installTimelock(base.diamond, treasury_, address(timelockController));
+
         OwnershipFacet(base.diamond).transferOwnership(address(timelockController));
 
         deployment = LaunchDeployment({
@@ -168,6 +169,15 @@ contract DeployEqualFi is Script {
             identityRegistry: identityRegistry_,
             positionMSCAImplementation: address(positionMSCAImplementation)
         });
+    }
+
+    function _installTimelock(address diamond, address treasury_, address timelock_) internal {
+        DiamondInit initializer = new DiamondInit();
+        IDiamondCut(diamond).diamondCut(
+            new IDiamondCut.FacetCut[](0),
+            address(initializer),
+            abi.encodeWithSelector(DiamondInit.init.selector, timelock_, treasury_, address(0))
+        );
     }
 
     function _installLaunchFacets(address diamond) internal {
@@ -230,46 +240,13 @@ contract DeployEqualFi is Script {
             EqualScaleAlphaViewFacet facet = new EqualScaleAlphaViewFacet();
             cuts[i++] = _cut(address(facet), _selectorsEqualScaleAlphaView());
         }
-        i = _appendEdenSingletonProductCuts(cuts, i);
+        {
+            EdenRewardsFacet facet = new EdenRewardsFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEdenRewards());
+        }
 
         require(i == LAUNCH_FACET_COUNT, "DeployEqualFi: bad facet count");
         _applyCutsInBatches(diamond, cuts, CUT_BATCH_SIZE);
-    }
-
-    function _appendEdenSingletonProductCuts(IDiamondCut.FacetCut[] memory cuts, uint256 index)
-        internal
-        returns (uint256 nextIndex)
-    {
-        nextIndex = index;
-
-        {
-            StEVEAdminFacet facet = new StEVEAdminFacet();
-            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenAdmin());
-        }
-        {
-            StEVEViewFacet facet = new StEVEViewFacet();
-            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenView());
-        }
-        {
-            StEVELendingFacet facet = new StEVELendingFacet();
-            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenLending());
-        }
-        {
-            EdenRewardsFacet facet = new EdenRewardsFacet();
-            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenRewards());
-        }
-        {
-            StEVEActionFacet facet = new StEVEActionFacet();
-            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenStEVE());
-        }
-        {
-            StEVEPositionFacet facet = new StEVEPositionFacet();
-            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenStEVEPosition());
-        }
-        {
-            StEVEWalletFacet facet = new StEVEWalletFacet();
-            cuts[nextIndex++] = _cut(address(facet), _selectorsEdenStEVEWallet());
-        }
     }
 
     function _applyCutsInBatches(address diamond, IDiamondCut.FacetCut[] memory cuts, uint256 batchSize) internal {
@@ -490,27 +467,6 @@ contract DeployEqualFi is Script {
         s[11] = EqualScaleAlphaViewFacet.getLineLossSummary.selector;
     }
 
-    function _selectorsEdenStEVEWallet() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
-        s[0] = StEVEWalletFacet.mintStEVE.selector;
-        s[1] = StEVEWalletFacet.burnStEVE.selector;
-    }
-
-    function _selectorsEdenStEVEPosition() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
-        s[0] = StEVEPositionFacet.mintStEVEFromPosition.selector;
-        s[1] = StEVEPositionFacet.burnStEVEFromPosition.selector;
-    }
-
-    function _selectorsEdenStEVE() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
-        s[0] = StEVEActionFacet.createStEVE.selector;
-        s[1] = StEVEActionFacet.depositStEVEToPosition.selector;
-        s[2] = StEVEActionFacet.withdrawStEVEFromPosition.selector;
-        s[3] = StEVEActionFacet.eligibleSupply.selector;
-        s[4] = StEVEActionFacet.eligiblePrincipalOfPosition.selector;
-    }
-
     function _selectorsEdenRewards() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](16);
         s[0] = EdenRewardsFacet.createRewardProgram.selector;
@@ -531,73 +487,4 @@ contract DeployEqualFi is Script {
         s[15] = EdenRewardsFacet.previewRewardProgramsForPosition.selector;
     }
 
-    function _selectorsEdenLending() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
-        s[0] = StEVELendingFacet.borrow.selector;
-        s[1] = StEVELendingFacet.repay.selector;
-        s[2] = StEVELendingFacet.extend.selector;
-        s[3] = StEVELendingFacet.recoverExpired.selector;
-        s[4] = StEVELendingFacet.configureLending.selector;
-        s[5] = StEVELendingFacet.configureBorrowFeeTiers.selector;
-        s[6] = StEVELendingFacet.loanCount.selector;
-        s[7] = StEVELendingFacet.borrowerLoanCount.selector;
-        s[8] = StEVELendingFacet.getLoanView.selector;
-        s[9] = StEVELendingFacet.getLoanIdsByBorrower.selector;
-        s[10] = StEVELendingFacet.getActiveLoanIdsByBorrower.selector;
-        s[11] = StEVELendingFacet.getLoansByBorrower.selector;
-        s[12] = StEVELendingFacet.getActiveLoansByBorrower.selector;
-        s[13] = StEVELendingFacet.getLoanIdsByBorrowerPaginated.selector;
-        s[14] = StEVELendingFacet.getActiveLoanIdsByBorrowerPaginated.selector;
-        s[15] = StEVELendingFacet.previewBorrow.selector;
-        s[16] = StEVELendingFacet.previewRepay.selector;
-        s[17] = StEVELendingFacet.previewExtend.selector;
-        s[18] = StEVELendingFacet.getOutstandingPrincipal.selector;
-        s[19] = StEVELendingFacet.getLockedCollateralUnits.selector;
-    }
-
-    function _selectorsEdenView() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](25);
-        s[0] = StEVEViewFacet.getProductConfig.selector;
-        s[1] = StEVEViewFacet.getProductPoolId.selector;
-        s[2] = StEVEViewFacet.getProductFeeConfig.selector;
-        s[3] = StEVEViewFacet.getProductRewardState.selector;
-        s[4] = StEVEViewFacet.getProductRewardPrograms.selector;
-        s[5] = StEVEViewFacet.getActiveProductRewardProgramIds.selector;
-        s[6] = StEVEViewFacet.getProductVaultBalance.selector;
-        s[7] = StEVEViewFacet.getProductFeePot.selector;
-        s[8] = StEVEViewFacet.getPositionTokenURI.selector;
-        s[9] = StEVEViewFacet.hasOpenOffers.selector;
-        s[10] = StEVEViewFacet.cancelOffersForPosition.selector;
-        s[11] = StEVEViewFacet.getUserPositionIds.selector;
-        s[12] = StEVEViewFacet.getUserPositionIdsPaginated.selector;
-        s[13] = StEVEViewFacet.getPositionPortfolio.selector;
-        s[14] = StEVEViewFacet.getPositionProductView.selector;
-        s[15] = StEVEViewFacet.getPositionRewardView.selector;
-        s[16] = StEVEViewFacet.previewPositionRewardPrograms.selector;
-        s[17] = StEVEViewFacet.getPositionAgentView.selector;
-        s[18] = StEVEViewFacet.getUserPortfolio.selector;
-        s[19] = StEVEViewFacet.canMintStEVE.selector;
-        s[20] = StEVEViewFacet.canBurnStEVE.selector;
-        s[21] = StEVEViewFacet.canBorrow.selector;
-        s[22] = StEVEViewFacet.canRepay.selector;
-        s[23] = StEVEViewFacet.canExtend.selector;
-        s[24] = StEVEViewFacet.canClaimRewards.selector;
-    }
-
-    function _selectorsEdenAdmin() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](13);
-        s[0] = StEVEAdminFacet.setProductMetadata.selector;
-        s[1] = StEVEAdminFacet.setProtocolURI.selector;
-        s[2] = StEVEAdminFacet.setContractVersion.selector;
-        s[3] = StEVEAdminFacet.setFacetVersion.selector;
-        s[4] = StEVEAdminFacet.setTimelockController.selector;
-        s[5] = StEVEAdminFacet.setProductPaused.selector;
-        s[6] = StEVEAdminFacet.setProductFees.selector;
-        s[7] = StEVEAdminFacet.setPoolFeeShareBps.selector;
-        s[8] = StEVEAdminFacet.protocolURI.selector;
-        s[9] = StEVEAdminFacet.contractVersion.selector;
-        s[10] = StEVEAdminFacet.facetVersion.selector;
-        s[11] = StEVEAdminFacet.timelockDelaySeconds.selector;
-        s[12] = StEVEAdminFacet.getGovernanceConfig.selector;
-    }
 }

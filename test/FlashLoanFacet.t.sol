@@ -13,7 +13,7 @@ import {IFlashLoanReceiver} from "src/interfaces/IFlashLoanReceiver.sol";
 import {IEqualIndexFlashReceiver} from "src/interfaces/IEqualIndexFlashReceiver.sol";
 import {FlashLoanUnderpaid} from "src/libraries/Errors.sol";
 
-import {StEVELaunchFixture} from "test/utils/StEVELaunchFixture.t.sol";
+import {LaunchFixture} from "test/utils/LaunchFixture.t.sol";
 
 contract PoolFlashLoanReceiverMock is IFlashLoanReceiver {
     bytes32 internal constant CALLBACK_SUCCESS = keccak256("IFlashLoanReceiver.onFlashLoan");
@@ -46,7 +46,7 @@ contract IndexFlashLoanReceiverMock is IEqualIndexFlashReceiver {
     }
 }
 
-contract FlashLoanFacetTest is StEVELaunchFixture {
+contract FlashLoanFacetTest is LaunchFixture {
     struct IndexFlashExpectation {
         uint256 eveFee;
         uint256 altFee;
@@ -128,13 +128,8 @@ contract FlashLoanFacetTest is StEVELaunchFixture {
         assertEq(alt.balanceOf(address(receiver)), 0);
     }
 
-    function test_IndexFlashLoan_StillWorksAfterBootstrappingSingletonEden() public {
-        (steveBasketId, steveToken) = _createStEVE(_stEveParams(address(alt)));
-
+    function test_IndexFlashLoan_WorksWithoutSingletonProductBundle() public {
         uint256 indexId = _seedDualIndex(true);
-        address indexToken = EqualIndexAdminFacetV3(diamond).getIndex(indexId).token;
-        assertTrue(indexToken != steveToken);
-
         IndexFlashExpectation memory expected = _snapshotDualIndexFlash(indexId);
         IndexFlashLoanReceiverMock receiver = new IndexFlashLoanReceiverMock();
         eve.mint(address(receiver), expected.eveFee);

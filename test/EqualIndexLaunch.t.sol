@@ -9,7 +9,6 @@ import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
 import {EqualIndexLendingFacet} from "src/equalindex/EqualIndexLendingFacet.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
-import {StEVEViewFacet} from "src/steve/StEVEViewFacet.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
@@ -24,9 +23,9 @@ import {
     NoPoolForAsset
 } from "src/libraries/Errors.sol";
 
-import {StEVELaunchFixture, MockERC20Launch} from "test/utils/StEVELaunchFixture.t.sol";
+import {LaunchFixture, MockERC20Launch} from "test/utils/LaunchFixture.t.sol";
 
-contract EqualIndexLaunchTest is StEVELaunchFixture {
+contract EqualIndexLaunchTest is LaunchFixture {
     function setUp() public override {
         super.setUp();
         _bootstrapCorePools();
@@ -83,9 +82,7 @@ contract EqualIndexLaunchTest is StEVELaunchFixture {
         assertEq(EqualIndexAdminFacetV3(diamond).getIndex(indexId).totalUnits, 0);
     }
 
-    function test_NonEdenEqualIndexWalletAndPositionFlows_WorkAlongsideSingletonEden() public {
-        (steveBasketId, steveToken) = _createStEVE(_stEveParams(address(alt)));
-
+    function test_EqualIndexWalletAndPositionFlows_RunWithoutSingletonProductBundle() public {
         eve.mint(alice, 200e18);
         eve.mint(bob, 30e18);
         uint256 positionId = _mintPosition(alice, 1);
@@ -98,8 +95,7 @@ contract EqualIndexLaunchTest is StEVELaunchFixture {
         (uint256 indexId, address indexToken) =
             _createIndexThroughTimelock(_singleAssetIndexParams("Equal EVE", "QEVE", address(eve), 1000, 1000));
 
-        assertTrue(indexToken != steveToken);
-        assertEq(StEVEViewFacet(diamond).getProductConfig().token, steveToken);
+        assertTrue(indexToken != address(0));
 
         vm.startPrank(bob);
         eve.approve(diamond, 30e18);
@@ -120,7 +116,6 @@ contract EqualIndexLaunchTest is StEVELaunchFixture {
         assertEq(ERC20(indexToken).balanceOf(bob), 0);
         assertEq(ERC20(indexToken).balanceOf(diamond), 0);
         assertEq(EqualIndexAdminFacetV3(diamond).getIndex(indexId).totalUnits, 0);
-        assertEq(StEVEViewFacet(diamond).getProductConfig().token, steveToken);
     }
 
     function test_EqualIndexLending_BorrowAndRepay_WorksOnLiveDiamond() public {

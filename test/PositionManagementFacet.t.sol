@@ -9,9 +9,9 @@ import {
 } from "src/libraries/Errors.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 
-import {StEVELaunchFixture} from "test/utils/StEVELaunchFixture.t.sol";
+import {LaunchFixture} from "test/utils/LaunchFixture.t.sol";
 
-contract PositionManagementFacetTest is StEVELaunchFixture {
+contract PositionManagementFacetTest is LaunchFixture {
     function setUp() public override {
         super.setUp();
         _bootstrapCorePools();

@@ -6,8 +6,6 @@ import {LibAppStorage} from "./LibAppStorage.sol";
 import {LibEqualIndexStorage} from "./LibEqualIndexStorage.sol";
 import {LibMaintenance} from "./LibMaintenance.sol";
 import {LibEdenRewardsStorage} from "./LibEdenRewardsStorage.sol";
-import {LibStEVEEligibilityStorage} from "./LibStEVEEligibilityStorage.sol";
-import {LibStEVEStorage} from "./LibStEVEStorage.sol";
 import {InvalidParameterRange} from "./Errors.sol";
 
 library LibEdenRewardsEngine {
@@ -176,13 +174,6 @@ library LibEdenRewardsEngine {
     }
 
     function _poolIdForTarget(LibEdenRewardsStorage.RewardTarget memory target) private view returns (uint256 poolId) {
-        if (target.targetType == LibEdenRewardsStorage.RewardTargetType.STEVE_POSITION) {
-            if (!LibStEVEEligibilityStorage.s().configured) {
-                return 0;
-            }
-            return LibStEVEStorage.s().product.poolId;
-        }
-
         if (target.targetType == LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION) {
             return LibEqualIndexStorage.poolIdForIndex(target.targetId);
         }

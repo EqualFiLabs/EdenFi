@@ -4,11 +4,9 @@ pragma solidity ^0.8.20;
 library LibEdenRewardsStorage {
     bytes32 internal constant STORAGE_POSITION = keccak256("equalfi.eden.rewards.engine.storage");
     uint256 internal constant REWARD_INDEX_SCALE = 1e27;
-    uint256 internal constant STEVE_TARGET_ID = 0;
     uint16 internal constant TRANSFER_FEE_BPS_SCALE = 10_000;
 
     enum RewardTargetType {
-        STEVE_POSITION,
         EQUAL_INDEX_POSITION
     }
 

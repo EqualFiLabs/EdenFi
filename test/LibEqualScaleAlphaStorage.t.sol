@@ -3,8 +3,8 @@ pragma solidity ^0.8.20;
 
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibDiamond} from "src/libraries/LibDiamond.sol";
-import {LibStEVELendingStorage} from "src/libraries/LibStEVELendingStorage.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
+import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
 import {LibPositionAgentStorage} from "src/libraries/LibPositionAgentStorage.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
@@ -55,12 +55,12 @@ contract EqualScaleAlphaStorageHarness {
         );
     }
 
-    function setLendingNextLoanId(uint256 nextLoanId) external {
-        LibStEVELendingStorage.s().nextLoanId = nextLoanId;
+    function setRewardAccrued(uint256 programId, bytes32 positionKey, uint256 amount) external {
+        LibEdenRewardsStorage.s().accruedRewards[programId][positionKey] = amount;
     }
 
-    function lendingNextLoanId() external view returns (uint256) {
-        return LibStEVELendingStorage.s().nextLoanId;
+    function rewardAccrued(uint256 programId, bytes32 positionKey) external view returns (uint256) {
+        return LibEdenRewardsStorage.s().accruedRewards[programId][positionKey];
     }
 
     function setPositionAgentId(uint256 positionId, uint256 agentId) external {
@@ -88,26 +88,27 @@ contract LibEqualScaleAlphaStorageTest {
         require(slot_ != LibPositionNFT.POSITION_NFT_STORAGE_POSITION, "collides with position nft storage");
         require(slot_ != LibPoolMembership.POOL_MEMBERSHIP_STORAGE_POSITION, "collides with pool membership");
         require(slot_ != LibEncumbrance.STORAGE_POSITION, "collides with encumbrance");
-        require(slot_ != LibStEVELendingStorage.STORAGE_POSITION, "collides with eden lending");
+        require(slot_ != LibEdenRewardsStorage.STORAGE_POSITION, "collides with eden rewards");
         require(slot_ != LibPositionAgentStorage.STORAGE_POSITION, "collides with position agent storage");
     }
 
-    function test_storageWrites_doNotOverlapEdenLendingOrPositionAgentStorage() external {
+    function test_storageWrites_doNotOverlapEdenRewardsOrPositionAgentStorage() external {
         bytes32 borrowerPositionKey = keccak256("equalscale.borrower");
         address treasuryWallet = address(0xA11CE);
         address bankrToken = address(0xBEEF);
         bytes32 metadataHash = keccak256("metadata");
+        bytes32 rewardPositionKey = keccak256("rewards.position");
 
         harness.setAlphaNextLineId(7);
         harness.setBorrowerProfile(borrowerPositionKey, treasuryWallet, bankrToken, metadataHash, true);
 
-        require(harness.lendingNextLoanId() == 0, "alpha write mutated lending");
+        require(harness.rewardAccrued(19, rewardPositionKey) == 0, "alpha write mutated rewards");
         require(harness.positionAgentId(55) == 0, "alpha write mutated position agent");
 
-        harness.setLendingNextLoanId(19);
+        harness.setRewardAccrued(19, rewardPositionKey, 73);
         harness.setPositionAgentId(55, 73);
 
-        require(harness.alphaNextLineId() == 7, "lending or wallet write mutated alpha counter");
+        require(harness.alphaNextLineId() == 7, "rewards or wallet write mutated alpha counter");
 
         (
             bytes32 storedKey,
@@ -122,7 +123,7 @@ contract LibEqualScaleAlphaStorageTest {
         require(storedBankrToken == bankrToken, "alpha bankr mutated");
         require(storedMetadataHash == metadataHash, "alpha metadata mutated");
         require(profileActive, "alpha active flag mutated");
-        require(harness.lendingNextLoanId() == 19, "lending write missing");
+        require(harness.rewardAccrued(19, rewardPositionKey) == 73, "rewards write missing");
         require(harness.positionAgentId(55) == 73, "position agent write missing");
     }
 }
