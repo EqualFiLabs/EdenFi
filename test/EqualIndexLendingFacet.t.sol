@@ -9,7 +9,15 @@ import {EqualIndexLendingFacet} from "src/equalindex/EqualIndexLendingFacet.sol"
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {LibEqualIndexLending} from "src/libraries/LibEqualIndexLending.sol";
-import {InvalidArrayLength, InvalidParameterRange, Unauthorized} from "src/libraries/Errors.sol";
+import {
+    InsufficientPoolLiquidity,
+    InsufficientUnencumberedPrincipal,
+    InvalidArrayLength,
+    InvalidParameterRange,
+    PoolMembershipRequired,
+    Unauthorized,
+    UnexpectedMsgValue
+} from "src/libraries/Errors.sol";
 
 import {LaunchFixture} from "test/utils/LaunchFixture.t.sol";
 
@@ -70,9 +78,104 @@ contract EqualIndexLendingFacetTest is LaunchFixture {
         assertEq(EqualIndexLendingFacet(diamond).getLoan(loanId).collateralUnits, 0);
     }
 
+    function test_extendFromPosition_updatesMaturity_andChargesFlatFee() public {
+        BorrowCtx memory ctx = _readyBorrowContext();
+        _configureLending(ctx.indexId, 10_000, 1 days, 30 days);
+        _configureSingleTierFee(ctx.indexId, 1e18, 0.02 ether);
+        vm.deal(alice, 1 ether);
+
+        vm.prank(alice);
+        uint256 loanId =
+            EqualIndexLendingFacet(diamond).borrowFromPosition{value: 0.02 ether}(ctx.positionId, ctx.indexId, 1e18, 7 days);
+        uint40 initialMaturity = EqualIndexLendingFacet(diamond).getLoan(loanId).maturity;
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibEqualIndexLending.FlatFeePaymentMismatch.selector, 0.02 ether, 0)
+        );
+        EqualIndexLendingFacet(diamond).extendFromPosition(ctx.positionId, loanId, 3 days);
+
+        uint256 treasuryBefore = treasury.balance;
+        vm.prank(alice);
+        EqualIndexLendingFacet(diamond).extendFromPosition{value: 0.02 ether}(ctx.positionId, loanId, 3 days);
+
+        LibEqualIndexLending.IndexLoan memory extendedLoan = EqualIndexLendingFacet(diamond).getLoan(loanId);
+        assertEq(uint256(extendedLoan.maturity), uint256(initialMaturity) + 3 days);
+        assertEq(treasury.balance - treasuryBefore, 0.02 ether);
+    }
+
+    function test_borrow_revertsWhenDurationBelowMinimum() public {
+        BorrowCtx memory ctx = _readyBorrowContext();
+        _configureLending(ctx.indexId, 10_000, 1 days, 30 days);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibEqualIndexLending.InvalidDuration.selector, uint40(12 hours), uint40(1 days), uint40(30 days))
+        );
+        EqualIndexLendingFacet(diamond).borrowFromPosition(ctx.positionId, ctx.indexId, 1e18, 12 hours);
+    }
+
+    function test_borrow_revertsWhenDurationAboveMaximum() public {
+        BorrowCtx memory ctx = _readyBorrowContext();
+        _configureLending(ctx.indexId, 10_000, 1 days, 30 days);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibEqualIndexLending.InvalidDuration.selector, uint40(31 days), uint40(1 days), uint40(30 days))
+        );
+        EqualIndexLendingFacet(diamond).borrowFromPosition(ctx.positionId, ctx.indexId, 1e18, 31 days);
+    }
+
+    function test_borrow_revertsWithoutMintedIndexCollateralUnits() public {
+        BorrowCtx memory ctx = _readyDepositedContext();
+        _configureLending(ctx.indexId, 10_000, 1 days, 30 days);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(PoolMembershipRequired.selector, ctx.positionKey, ctx.indexPoolId));
+        EqualIndexLendingFacet(diamond).borrowFromPosition(ctx.positionId, ctx.indexId, 1e18, 7 days);
+    }
+
+    function test_borrow_revertsWhenCollateralUnitsExceedAvailableIndexPrincipal() public {
+        BorrowCtx memory ctx = _readyBorrowContext();
+        _configureLending(ctx.indexId, 10_000, 1 days, 30 days);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(InsufficientUnencumberedPrincipal.selector, 3e18, 2e18));
+        EqualIndexLendingFacet(diamond).borrowFromPosition(ctx.positionId, ctx.indexId, 3e18, 7 days);
+    }
+
+    function test_borrow_revertsWhenVaultLiquidityIsMutatedBelowQuote() public {
+        BorrowCtx memory ctx = _readyBorrowContext();
+        _configureLending(ctx.indexId, 10_000, 1 days, 30 days);
+
+        testSupport.setVaultBalance(ctx.indexId, address(alt), 1e18);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(InsufficientPoolLiquidity.selector, 2e18, 1e18));
+        EqualIndexLendingFacet(diamond).borrowFromPosition(ctx.positionId, ctx.indexId, 1e18, 7 days);
+    }
+
+    function test_flatFeeBorrow_revertsForWrongFeeValue() public {
+        BorrowCtx memory ctx = _readyBorrowContext();
+        _configureLending(ctx.indexId, 10_000, 1 days, 30 days);
+        _configureSingleTierFee(ctx.indexId, 1e18, 0.02 ether);
+
+        vm.deal(alice, 1 ether);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibEqualIndexLending.FlatFeePaymentMismatch.selector, 0.02 ether, 0.03 ether)
+        );
+        EqualIndexLendingFacet(diamond).borrowFromPosition{value: 0.03 ether}(ctx.positionId, ctx.indexId, 1e18, 7 days);
+    }
+
     function test_recoverExpired_clearsLoanAndCollateral() public {
         BorrowCtx memory ctx = _readyBorrowContext();
         _configureLending(ctx.indexId, 10_000, 1 days, 30 days);
+
+        uint256 principalBefore = testSupport.principalOf(ctx.indexPoolId, ctx.positionKey);
+        uint256 trackedBefore = testSupport.getPoolView(ctx.indexPoolId).trackedBalance;
+        uint256 depositsBefore = testSupport.getPoolView(ctx.indexPoolId).totalDeposits;
 
         vm.prank(alice);
         uint256 loanId = EqualIndexLendingFacet(diamond).borrowFromPosition(ctx.positionId, ctx.indexId, 1e18, 1 days);
@@ -86,6 +189,9 @@ contract EqualIndexLendingFacetTest is LaunchFixture {
         assertEq(EqualIndexLendingFacet(diamond).getLoan(loanId).collateralUnits, 0);
         assertEq(EqualIndexAdminFacetV3(diamond).getIndex(ctx.indexId).totalUnits, 1e18);
         assertEq(testSupport.principalOf(ctx.indexPoolId, ctx.positionKey), 1e18);
+        assertEq(testSupport.principalOf(ctx.indexPoolId, ctx.positionKey), principalBefore - 1e18);
+        assertEq(testSupport.getPoolView(ctx.indexPoolId).trackedBalance, trackedBefore - 1e18);
+        assertEq(testSupport.getPoolView(ctx.indexPoolId).totalDeposits, depositsBefore - 1e18);
         assertEq(ERC20(ctx.token).totalSupply(), 1e18);
     }
 
@@ -141,6 +247,59 @@ contract EqualIndexLendingFacetTest is LaunchFixture {
         vm.prank(alice);
         EqualIndexLendingFacet(diamond).borrowFromPosition{value: 0.02 ether}(ctx.positionId, ctx.indexId, 1e18, 7 days);
         assertEq(treasury.balance - treasuryBefore, 0.02 ether);
+    }
+
+    function test_repay_revertsOnUnexpectedMsgValue_forExactOnlyRepayFlow() public {
+        BorrowCtx memory ctx = _readyBorrowContext();
+        _configureLending(ctx.indexId, 10_000, 1 days, 30 days);
+
+        vm.prank(alice);
+        uint256 loanId = EqualIndexLendingFacet(diamond).borrowFromPosition(ctx.positionId, ctx.indexId, 1e18, 7 days);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 1e18);
+        alt.approve(diamond, 2e18);
+        vm.stopPrank();
+        vm.deal(alice, 1);
+
+        (bool ok, bytes memory revertData) = _callAsValue(
+            alice,
+            1,
+            abi.encodeWithSelector(EqualIndexLendingFacet.repayFromPosition.selector, ctx.positionId, loanId)
+        );
+        assertTrue(!ok);
+        assertEq(bytes32(_revertSelector(revertData)), bytes32(UnexpectedMsgValue.selector));
+    }
+
+    function test_quoteHelpers_matchLiveExecution() public {
+        BorrowCtx memory ctx = _readyBorrowContext();
+        _configureLending(ctx.indexId, 10_000, 1 days, 30 days);
+        _configureSingleTierFee(ctx.indexId, 1e18, 0.02 ether);
+        vm.deal(alice, 1 ether);
+
+        uint256 eveMaxBorrowable = EqualIndexLendingFacet(diamond).maxBorrowable(ctx.indexId, address(eve), 1e18);
+        uint256 altMaxBorrowable = EqualIndexLendingFacet(diamond).maxBorrowable(ctx.indexId, address(alt), 1e18);
+        uint256 quotedFee = EqualIndexLendingFacet(diamond).quoteBorrowFee(ctx.indexId, 1e18);
+        (address[] memory assets, uint256[] memory principals) =
+            EqualIndexLendingFacet(diamond).quoteBorrowBasket(ctx.indexId, 1e18);
+
+        uint256 eveBefore = eve.balanceOf(alice);
+        uint256 altBefore = alt.balanceOf(alice);
+        uint256 treasuryBefore = treasury.balance;
+
+        vm.prank(alice);
+        EqualIndexLendingFacet(diamond).borrowFromPosition{value: quotedFee}(ctx.positionId, ctx.indexId, 1e18, 7 days);
+
+        assertEq(eveMaxBorrowable, principals[0]);
+        assertEq(altMaxBorrowable, principals[1]);
+        assertEq(quotedFee, 0.02 ether);
+        assertEq(assets[0], address(eve));
+        assertEq(assets[1], address(alt));
+        assertEq(eve.balanceOf(alice) - eveBefore, principals[0]);
+        assertEq(alt.balanceOf(alice) - altBefore, principals[1]);
+        assertEq(EqualIndexLendingFacet(diamond).getOutstandingPrincipal(ctx.indexId, address(eve)), principals[0]);
+        assertEq(EqualIndexLendingFacet(diamond).getOutstandingPrincipal(ctx.indexId, address(alt)), principals[1]);
+        assertEq(treasury.balance - treasuryBefore, quotedFee);
     }
 
     function test_configureBorrowFeeTiers_revertsOnEmptyMismatchAndOrdering() public {
@@ -201,7 +360,31 @@ contract EqualIndexLendingFacetTest is LaunchFixture {
         timelockController.execute(target, 0, data, bytes32(0), salt);
     }
 
+    function _callAsValue(address caller, uint256 value, bytes memory data) internal returns (bool ok, bytes memory result) {
+        vm.prank(caller);
+        (ok, result) = diamond.call{value: value}(data);
+    }
+
+    function _revertSelector(bytes memory revertData) internal pure returns (bytes4 selector) {
+        if (revertData.length < 4) {
+            return bytes4(0);
+        }
+        assembly {
+            selector := mload(add(revertData, 0x20))
+        }
+    }
+
     function _readyBorrowContext() internal returns (BorrowCtx memory ctx) {
+        ctx = _readyDepositedContext();
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(ctx.positionId, ctx.indexId, 2e18);
+
+        assertEq(testSupport.principalOf(ctx.indexPoolId, ctx.positionKey), 2e18);
+        assertEq(EqualIndexAdminFacetV3(diamond).getIndex(ctx.indexId).totalUnits, 2e18);
+    }
+
+    function _readyDepositedContext() internal returns (BorrowCtx memory ctx) {
         eve.mint(alice, 1_000e18);
         alt.mint(alice, 1_000e18);
 
@@ -220,12 +403,6 @@ contract EqualIndexLendingFacetTest is LaunchFixture {
 
         assertEq(testSupport.principalOf(1, ctx.positionKey), 1_000e18);
         assertEq(testSupport.principalOf(2, ctx.positionKey), 1_000e18);
-
-        vm.prank(alice);
-        EqualIndexPositionFacet(diamond).mintFromPosition(ctx.positionId, ctx.indexId, 2e18);
-
-        assertEq(testSupport.principalOf(ctx.indexPoolId, ctx.positionKey), 2e18);
-        assertEq(EqualIndexAdminFacetV3(diamond).getIndex(ctx.indexId).totalUnits, 2e18);
     }
 
     function _dualAssetIndexParams(string memory name_, string memory symbol_)

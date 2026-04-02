@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibFeeRouter} from "src/libraries/LibFeeRouter.sol";
@@ -8,7 +9,7 @@ import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {Types} from "src/libraries/Types.sol";
 
-contract ProtocolTestSupportFacet {
+contract ProtocolTestSupportFacet is EqualIndexBaseV3 {
     struct PoolView {
         address underlying;
         bool initialized;
@@ -90,6 +91,10 @@ contract ProtocolTestSupportFacet {
         returns (bool canClear, string memory reason)
     {
         return LibPoolMembership.canClearMembership(positionKey, pid);
+    }
+
+    function setVaultBalance(uint256 indexId, address asset, uint256 amount) external {
+        s().vaultBalances[indexId][asset] = amount;
     }
 
     function routeManagedShareExternal(
