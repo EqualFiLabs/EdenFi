@@ -93,7 +93,6 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
     function cleanupMembership(uint256 tokenId, uint256 pid) external payable nonReentrant {
         LibCurrency.assertZeroMsgValue();
         _requireOwnership(tokenId);
-        _assertTokenPool(tokenId, pid);
 
         bytes32 positionKey = _getPositionKey(tokenId);
         LibPositionHelpers.ensurePoolMembership(positionKey, pid, true);
@@ -158,12 +157,6 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
         return LibPositionHelpers.positionKey(tokenId);
     }
 
-    function _assertTokenPool(uint256 tokenId, uint256 pid) internal view {
-        if (LibPositionHelpers.derivePoolId(tokenId) != pid) {
-            revert InvalidParameterRange("token pool mismatch");
-        }
-    }
-
     function _enforceDepositCap(Types.PoolData storage p, uint256 newPrincipal) internal view {
         if (!p.poolConfig.isCapped) {
             return;
@@ -196,7 +189,6 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
         }
 
         _requireOwnership(tokenId);
-        _assertTokenPool(tokenId, pid);
 
         Types.PoolData storage p = _pool(pid);
         LibCurrency.assertMsgValue(p.underlying, amount);
@@ -244,7 +236,6 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
         }
 
         _requireOwnership(tokenId);
-        _assertTokenPool(tokenId, pid);
 
         Types.PoolData storage p = _pool(pid);
         bytes32 positionKey = _getPositionKey(tokenId);

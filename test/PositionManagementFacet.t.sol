@@ -68,6 +68,34 @@ contract PositionManagementFacetTest is LaunchFixture {
         vm.stopPrank();
     }
 
+    function test_PositionCanDepositWithdrawAndCleanupAcrossJoinedPools() public {
+        eve.mint(alice, 20e18);
+        alt.mint(alice, 30e18);
+
+        uint256 positionId = _mintPosition(alice, 1);
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 20e18);
+        alt.approve(diamond, 30e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 20e18, 20e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 2, 30e18, 30e18);
+        vm.stopPrank();
+
+        assertEq(testSupport.principalOf(1, positionKey), 20e18);
+        assertEq(testSupport.principalOf(2, positionKey), 30e18);
+
+        vm.startPrank(alice);
+        PositionManagementFacet(diamond).withdrawFromPosition(positionId, 2, 30e18, 30e18);
+        PositionManagementFacet(diamond).cleanupMembership(positionId, 2);
+        vm.stopPrank();
+
+        assertEq(testSupport.principalOf(2, positionKey), 0);
+        (bool canClear, string memory reason) = testSupport.canClearMembership(2, positionKey);
+        assertTrue(canClear);
+        assertEq(bytes(reason).length, 0);
+    }
+
     function _seedYieldBearingPosition() internal returns (uint256 positionId) {
         eve.mint(alice, 100e18);
         eve.mint(bob, 60e18);
