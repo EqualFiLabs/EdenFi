@@ -14,7 +14,6 @@ import {LibDiamond} from "src/libraries/LibDiamond.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibEqualXCommunityAmmStorage} from "src/libraries/LibEqualXCommunityAmmStorage.sol";
 import {LibEqualXTypes} from "src/libraries/LibEqualXTypes.sol";
-import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {Types} from "src/libraries/Types.sol";
 
@@ -68,18 +67,6 @@ contract EqualXCommunityAmmHarness is
     function setPositionNft(address nft) external {
         LibPositionNFT.s().positionNFTContract = nft;
         LibPositionNFT.s().nftModeEnabled = nft != address(0);
-    }
-
-    function seedCrossPoolPrincipal(uint256 pid, bytes32 positionKey, uint256 principal) external {
-        Types.PoolData storage pool = LibAppStorage.s().pools[pid];
-        pool.userPrincipal[positionKey] = principal;
-        pool.userFeeIndex[positionKey] = pool.feeIndex;
-        pool.userMaintenanceIndex[positionKey] = pool.maintenanceIndex;
-        pool.totalDeposits += principal;
-        pool.trackedBalance += principal;
-        if (!LibPoolMembership.isMember(positionKey, pid)) {
-            LibPoolMembership._joinPool(positionKey, pid);
-        }
     }
 
     function encumberedCapitalOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
@@ -153,28 +140,34 @@ contract EqualXCommunityAmmFacetTest is Test {
         harness.initPoolWithActionFees(3, address(stableToken), _poolConfig(), actionFees);
 
         tokenA.mint(alice, 1_000e18);
+        tokenB.mint(alice, 1_000e18);
+        stableToken.mint(alice, 1_000_000e6);
         tokenA.mint(charlie, 1_000e18);
+        tokenB.mint(charlie, 1_000e18);
+        stableToken.mint(charlie, 1_000_000e6);
         tokenA.mint(bob, 1_000e18);
-        tokenB.mint(address(harness), 2_000e18);
-        stableToken.mint(address(harness), 2_000_000e6);
 
         vm.startPrank(alice);
         tokenA.approve(address(harness), type(uint256).max);
+        tokenB.approve(address(harness), type(uint256).max);
+        stableToken.approve(address(harness), type(uint256).max);
         alicePositionId = harness.mintPosition(1);
         harness.depositToPosition(alicePositionId, 1, 500e18, 500e18);
+        harness.depositToPosition(alicePositionId, 2, 500e18, 500e18);
+        harness.depositToPosition(alicePositionId, 3, 500_000e6, 500_000e6);
         vm.stopPrank();
         alicePositionKey = positionNft.getPositionKey(alicePositionId);
-        harness.seedCrossPoolPrincipal(2, alicePositionKey, 500e18);
-        harness.seedCrossPoolPrincipal(3, alicePositionKey, 500_000e6);
 
         vm.startPrank(charlie);
         tokenA.approve(address(harness), type(uint256).max);
+        tokenB.approve(address(harness), type(uint256).max);
+        stableToken.approve(address(harness), type(uint256).max);
         charliePositionId = harness.mintPosition(1);
         harness.depositToPosition(charliePositionId, 1, 500e18, 500e18);
+        harness.depositToPosition(charliePositionId, 2, 500e18, 500e18);
+        harness.depositToPosition(charliePositionId, 3, 500_000e6, 500_000e6);
         vm.stopPrank();
         charliePositionKey = positionNft.getPositionKey(charliePositionId);
-        harness.seedCrossPoolPrincipal(2, charliePositionKey, 500e18);
-        harness.seedCrossPoolPrincipal(3, charliePositionKey, 500_000e6);
 
         vm.prank(bob);
         tokenA.approve(address(harness), type(uint256).max);

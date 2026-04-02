@@ -17,7 +17,6 @@ import {LibEqualXCurveEngine} from "src/libraries/LibEqualXCurveEngine.sol";
 import {LibEqualXCurveStorage} from "src/libraries/LibEqualXCurveStorage.sol";
 import {LibEqualXTypes} from "src/libraries/LibEqualXTypes.sol";
 import {ICurveProfile} from "src/interfaces/ICurveProfile.sol";
-import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {Types} from "src/libraries/Types.sol";
 
@@ -88,18 +87,6 @@ contract EqualXCurveHarness is
         LibPositionNFT.s().nftModeEnabled = nft != address(0);
     }
 
-    function seedCrossPoolPrincipal(uint256 pid, bytes32 positionKey, uint256 principal) external {
-        Types.PoolData storage pool = LibAppStorage.s().pools[pid];
-        pool.userPrincipal[positionKey] = principal;
-        pool.userFeeIndex[positionKey] = pool.feeIndex;
-        pool.userMaintenanceIndex[positionKey] = pool.maintenanceIndex;
-        pool.totalDeposits += principal;
-        pool.trackedBalance += principal;
-        if (!LibPoolMembership.isMember(positionKey, pid)) {
-            LibPoolMembership._joinPool(positionKey, pid);
-        }
-    }
-
     function lockedCapitalOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
         return LibEncumbrance.position(positionKey, pid).lockedCapital;
     }
@@ -160,16 +147,18 @@ contract EqualXCurveFacetTest is Test {
         harness.initPoolWithActionFees(3, address(0), _poolConfig(), actionFees);
 
         tokenA.mint(alice, 1_000e18);
+        tokenB.mint(alice, 1_000e18);
         tokenB.mint(bob, 1_000e18);
 
         vm.startPrank(alice);
         tokenA.approve(address(harness), type(uint256).max);
+        tokenB.approve(address(harness), type(uint256).max);
         alicePositionId = harness.mintPosition(1);
         harness.depositToPosition(alicePositionId, 1, 500e18, 500e18);
+        harness.depositToPosition(alicePositionId, 2, 500e18, 500e18);
         vm.stopPrank();
 
         alicePositionKey = positionNft.getPositionKey(alicePositionId);
-        harness.seedCrossPoolPrincipal(2, alicePositionKey, 500e18);
 
         vm.prank(bob);
         tokenB.approve(address(harness), type(uint256).max);
@@ -423,12 +412,13 @@ contract EqualXCurveFacetTest is Test {
         uint256 nativePositionId;
         vm.deal(alice, 10 ether);
         vm.startPrank(alice);
+        tokenB.approve(address(harness), type(uint256).max);
         nativePositionId = harness.mintPosition(3);
         harness.depositToPosition{value: 5 ether}(nativePositionId, 3, 5 ether, 5 ether);
+        harness.depositToPosition(nativePositionId, 2, 500e18, 500e18);
         vm.stopPrank();
 
         bytes32 nativePositionKey = positionNft.getPositionKey(nativePositionId);
-        harness.seedCrossPoolPrincipal(2, nativePositionKey, 500e18);
 
         LibEqualXCurveEngine.CurveDescriptor memory desc = LibEqualXCurveEngine.CurveDescriptor({
             makerPositionKey: nativePositionKey,
