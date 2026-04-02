@@ -8,6 +8,7 @@ import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
 import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.sol";
 import {IEqualScaleAlphaErrors} from "src/equalscale/IEqualScaleAlphaErrors.sol";
 import {IEqualScaleAlphaEvents} from "src/equalscale/IEqualScaleAlphaEvents.sol";
+import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
 import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockController.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
@@ -32,6 +33,7 @@ contract EqualScaleAlphaFacetHarness is
     EqualScaleAlphaFacet,
     EqualScaleAlphaAdminFacet,
     EqualScaleAlphaViewFacet,
+    PositionManagementFacet,
     PositionAgentViewFacet
 {
     function setPositionNFT(address nft) external {
@@ -106,30 +108,22 @@ contract EqualScaleAlphaFacetHarness is
         return LibEqualScaleAlphaStorage.s().lenderPositionLineIds[lenderPositionId];
     }
 
-    function setPoolInitialized(uint256 pid, bool initialized) external {
-        LibAppStorage.s().pools[pid].initialized = initialized;
+    function configurePoolForDeposits(uint256 pid, address underlying, uint256 minDepositAmount) external {
+        Types.PoolData storage p = LibAppStorage.s().pools[pid];
+        p.initialized = true;
+        p.underlying = underlying;
+        p.poolConfig.minDepositAmount = minDepositAmount;
+        p.poolConfig.minLoanAmount = 1;
+        p.poolConfig.minTopupAmount = 1;
     }
 
-    function setPoolUnderlying(uint256 pid, address underlying) external {
-        LibAppStorage.s().pools[pid].underlying = underlying;
-    }
-
+    // Retained for the one synthetic liquidity-drift branch where tracked balance must diverge from funded principal.
     function setPoolTrackedBalance(uint256 pid, uint256 trackedBalance) external {
         LibAppStorage.s().pools[pid].trackedBalance = trackedBalance;
     }
 
-    function setPoolTotalDeposits(uint256 pid, uint256 totalDeposits) external {
-        LibAppStorage.s().pools[pid].totalDeposits = totalDeposits;
-    }
-
     function setTimelock(address timelock) external {
         LibAppStorage.s().timelock = timelock;
-    }
-
-    function seedPrincipal(uint256 pid, bytes32 positionKey, uint256 principal) external {
-        LibAppStorage.s().pools[pid].userPrincipal[positionKey] = principal;
-        LibAppStorage.s().pools[pid].userFeeIndex[positionKey] = LibAppStorage.s().pools[pid].feeIndex;
-        LibAppStorage.s().pools[pid].userMaintenanceIndex[positionKey] = LibAppStorage.s().pools[pid].maintenanceIndex;
     }
 
     function settlementCommitmentModuleId(uint256 lineId) external pure returns (uint256) {
@@ -154,10 +148,12 @@ contract EqualScaleAlphaFacetHarness is
         );
     }
 
+    // Retained for state-machine edge coverage where the protocol does not expose a natural setup transition.
     function setLineCurrentCommittedAmount(uint256 lineId, uint256 currentCommittedAmount) external {
         LibEqualScaleAlphaStorage.s().lines[lineId].currentCommittedAmount = currentCommittedAmount;
     }
 
+    // Retained for status-gating tests that need to jump directly into terminal or blocked states.
     function setLineStatus(uint256 lineId, uint256 statusRaw) external {
         if (statusRaw > uint256(LibEqualScaleAlphaStorage.CreditLineStatus.Closed)) {
             revert("invalid status");
@@ -286,7 +282,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         positionNft.setMinter(address(this));
         facet.setPositionNFT(address(positionNft));
         facet.setPositionAgentViews(address(registry), address(0x1234), address(identityRegistry));
-        facet.setPoolUnderlying(SETTLEMENT_POOL_ID, address(settlementToken));
+        facet.configurePoolForDeposits(SETTLEMENT_POOL_ID, address(settlementToken), 1);
         facet.setTimelock(address(timelockController));
     }
 
@@ -793,7 +789,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     function test_commitSolo_encumbersFullTargetDuringSoloWindow() external {
         uint256 lineId = _createDefaultLine();
-        uint256 lenderPositionId = _seedSettlementPosition(bob, TARGET_LIMIT);
+        uint256 lenderPositionId = _fundSettlementPosition(bob, TARGET_LIMIT);
         bytes32 lenderPositionKey = positionNft.getPositionKey(lenderPositionId);
 
         vm.expectEmit(true, true, true, true, address(facet));
@@ -815,7 +811,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     function test_commitSolo_revertsWhenAvailableSettlementPrincipalIsTooLow() external {
         uint256 lineId = _createDefaultLine();
-        uint256 lenderPositionId = _seedSettlementPosition(bob, TARGET_LIMIT - 1);
+        uint256 lenderPositionId = _fundSettlementPosition(bob, TARGET_LIMIT - 1);
 
         vm.prank(bob);
         vm.expectRevert(
@@ -850,8 +846,8 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     function test_commitPooled_tracksSeparateCommitmentsPerPositionNotWallet() external {
         uint256 lineId = _openLineToPool();
-        uint256 lenderPositionOne = _seedSettlementPosition(bob, 700e18);
-        uint256 lenderPositionTwo = _seedSettlementPosition(bob, 500e18);
+        uint256 lenderPositionOne = _fundSettlementPosition(bob, 700e18);
+        uint256 lenderPositionTwo = _fundSettlementPosition(bob, 500e18);
 
         vm.startPrank(bob);
         facet.commitPooled(lineId, lenderPositionOne, 400e18);
@@ -878,8 +874,8 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     function test_commitPooled_revertsWhenCommitmentExceedsRemainingCapacity() external {
         uint256 lineId = _openLineToPool();
-        uint256 lenderPositionOne = _seedSettlementPosition(bob, 700e18);
-        uint256 lenderPositionTwo = _seedSettlementPosition(carol, 500e18);
+        uint256 lenderPositionOne = _fundSettlementPosition(bob, 700e18);
+        uint256 lenderPositionTwo = _fundSettlementPosition(carol, 500e18);
 
         vm.prank(bob);
         facet.commitPooled(lineId, lenderPositionOne, 700e18);
@@ -897,7 +893,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     function test_cancelCommitment_releasesPooledEncumbrance() external {
         uint256 lineId = _openLineToPool();
-        uint256 lenderPositionId = _seedSettlementPosition(bob, 600e18);
+        uint256 lenderPositionId = _fundSettlementPosition(bob, 600e18);
         bytes32 lenderPositionKey = positionNft.getPositionKey(lenderPositionId);
 
         vm.prank(bob);
@@ -918,7 +914,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     function test_lenderPositionTransfer_movesCommitmentRightsAndObligations() external {
         uint256 lineId = _openLineToPool();
-        uint256 lenderPositionId = _seedSettlementPosition(bob, 600e18);
+        uint256 lenderPositionId = _fundSettlementPosition(bob, 600e18);
 
         vm.prank(bob);
         facet.commitPooled(lineId, lenderPositionId, 400e18);
@@ -945,7 +941,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     function test_activateLine_fullCommitActivatesUnsecuredLineAndInitializesLiveState() external {
         uint256 lineId = _createDefaultLine();
-        uint256 lenderPositionId = _seedSettlementPosition(bob, TARGET_LIMIT);
+        uint256 lenderPositionId = _fundSettlementPosition(bob, TARGET_LIMIT);
         uint40 activatedAt = uint40(block.timestamp);
         uint40 expectedNextDueAt = activatedAt + PAYMENT_INTERVAL_SECS;
         uint40 expectedTermEndAt = activatedAt + FACILITY_TERM_SECS;
@@ -984,16 +980,14 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     function test_activateLine_borrowerAcceptsResizedBorrowerCollateralizedActivation() external {
         uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
-        bytes32 borrowerPositionKey = positionNft.getPositionKey(borrowerPositionId);
         uint256 acceptedAmount = 700e18;
         uint40 activatedAt = uint40(block.timestamp + 3 days + 1);
         uint40 expectedNextDueAt = activatedAt + PAYMENT_INTERVAL_SECS;
         uint40 expectedTermEndAt = activatedAt + FACILITY_TERM_SECS;
         uint40 expectedRefinanceEndAt = expectedTermEndAt + REFINANCE_WINDOW_SECS;
 
-        facet.setPoolInitialized(SETTLEMENT_POOL_ID, true);
-        facet.setPoolInitialized(COLLATERAL_POOL_ID, true);
-        facet.seedPrincipal(COLLATERAL_POOL_ID, borrowerPositionKey, COLLATERAL_AMOUNT);
+        facet.configurePoolForDeposits(COLLATERAL_POOL_ID, address(settlementToken), 1);
+        _depositToPosition(alice, borrowerPositionId, COLLATERAL_POOL_ID, COLLATERAL_AMOUNT);
 
         vm.prank(alice);
         uint256 lineId = facet.createLineProposal(borrowerPositionId, _borrowerPostedProposalParams());
@@ -1001,7 +995,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         vm.warp(block.timestamp + 3 days + 1);
         facet.transitionToPooledOpen(lineId);
 
-        uint256 lenderPositionId = _seedSettlementPosition(bob, acceptedAmount);
+        uint256 lenderPositionId = _fundSettlementPosition(bob, acceptedAmount);
         vm.prank(bob);
         facet.commitPooled(lineId, lenderPositionId, acceptedAmount);
 
@@ -1040,7 +1034,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     function test_activateLine_revertsWhenCommitmentsRemainBelowMinimumViableLine() external {
         uint256 lineId = _openLineToPool();
-        uint256 lenderPositionId = _seedSettlementPosition(bob, MINIMUM_VIABLE_LINE - 1);
+        uint256 lenderPositionId = _fundSettlementPosition(bob, MINIMUM_VIABLE_LINE - 1);
 
         vm.prank(bob);
         facet.commitPooled(lineId, lenderPositionId, MINIMUM_VIABLE_LINE - 1);
@@ -1056,7 +1050,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     function test_activateLine_revertsWhenNonBorrowerAttemptsResizedActivation() external {
         uint256 lineId = _openLineToPool();
-        uint256 lenderPositionId = _seedSettlementPosition(bob, 700e18);
+        uint256 lenderPositionId = _fundSettlementPosition(bob, 700e18);
         uint256 borrowerPositionId = facet.line(lineId).borrowerPositionId;
 
         vm.prank(bob);
@@ -1075,18 +1069,14 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         bytes32 lenderOneKey;
         bytes32 lenderTwoKey;
 
-        facet.setPoolInitialized(SETTLEMENT_POOL_ID, true);
-        facet.setPoolTrackedBalance(SETTLEMENT_POOL_ID, TARGET_LIMIT);
-        settlementToken.mint(address(facet), TARGET_LIMIT);
-
         vm.prank(alice);
         uint256 lineId = facet.createLineProposal(borrowerPositionId, _defaultProposalParamsNone());
 
         vm.warp(block.timestamp + 3 days + 1);
         facet.transitionToPooledOpen(lineId);
 
-        uint256 lenderPositionOne = _seedSettlementPosition(bob, 600e18);
-        uint256 lenderPositionTwo = _seedSettlementPosition(carol, 400e18);
+        uint256 lenderPositionOne = _fundSettlementPosition(bob, 600e18);
+        uint256 lenderPositionTwo = _fundSettlementPosition(carol, 400e18);
         lenderOneKey = positionNft.getPositionKey(lenderPositionOne);
         lenderTwoKey = positionNft.getPositionKey(lenderPositionTwo);
 
@@ -1426,18 +1416,14 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         params.maxDrawPerPeriod = TARGET_LIMIT;
 
         uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
-        facet.setPoolInitialized(SETTLEMENT_POOL_ID, true);
-        facet.setPoolTrackedBalance(SETTLEMENT_POOL_ID, TARGET_LIMIT);
-        settlementToken.mint(address(facet), TARGET_LIMIT);
-
         vm.prank(alice);
         uint256 lineId = facet.createLineProposal(borrowerPositionId, params);
 
         vm.warp(block.timestamp + 3 days + 1);
         facet.transitionToPooledOpen(lineId);
 
-        uint256 lenderPositionOne = _seedSettlementPosition(bob, 600e18);
-        uint256 lenderPositionTwo = _seedSettlementPosition(carol, 400e18);
+        uint256 lenderPositionOne = _fundSettlementPosition(bob, 600e18);
+        uint256 lenderPositionTwo = _fundSettlementPosition(carol, 400e18);
 
         vm.prank(bob);
         facet.commitPooled(lineId, lenderPositionOne, 600e18);
@@ -1631,17 +1617,8 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
         uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
         bytes32 borrowerPositionKey = positionNft.getPositionKey(borrowerPositionId);
-
-        facet.setPoolInitialized(SETTLEMENT_POOL_ID, true);
-        facet.setPoolUnderlying(SETTLEMENT_POOL_ID, address(settlementToken));
-        facet.setPoolTrackedBalance(SETTLEMENT_POOL_ID, TARGET_LIMIT);
-        settlementToken.mint(address(facet), TARGET_LIMIT);
-
-        facet.setPoolInitialized(COLLATERAL_POOL_ID, true);
-        facet.setPoolUnderlying(COLLATERAL_POOL_ID, address(settlementToken));
-        facet.setPoolTrackedBalance(COLLATERAL_POOL_ID, COLLATERAL_AMOUNT);
-        facet.setPoolTotalDeposits(COLLATERAL_POOL_ID, COLLATERAL_AMOUNT);
-        facet.seedPrincipal(COLLATERAL_POOL_ID, borrowerPositionKey, COLLATERAL_AMOUNT);
+        facet.configurePoolForDeposits(COLLATERAL_POOL_ID, address(settlementToken), 1);
+        _depositToPosition(alice, borrowerPositionId, COLLATERAL_POOL_ID, COLLATERAL_AMOUNT);
 
         vm.prank(alice);
         uint256 lineId = facet.createLineProposal(borrowerPositionId, params);
@@ -1649,8 +1626,8 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         vm.warp(block.timestamp + 3 days + 1);
         facet.transitionToPooledOpen(lineId);
 
-        uint256 lenderPositionOne = _seedSettlementPosition(bob, 600e18);
-        uint256 lenderPositionTwo = _seedSettlementPosition(carol, 400e18);
+        uint256 lenderPositionOne = _fundSettlementPosition(bob, 600e18);
+        uint256 lenderPositionTwo = _fundSettlementPosition(carol, 400e18);
 
         vm.prank(bob);
         facet.commitPooled(lineId, lenderPositionOne, 600e18);
@@ -1828,7 +1805,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
         (uint256 lineId, uint256 lenderPositionOne, uint256 lenderPositionTwo) =
             _createPooledActivatedLine(params, 700e18, 300e18);
-        uint256 lenderPositionThree = _seedSettlementPosition(dave, 300e18);
+        uint256 lenderPositionThree = _fundSettlementPosition(dave, 300e18);
         bytes32 lenderOneKey = positionNft.getPositionKey(lenderPositionOne);
         bytes32 lenderTwoKey = positionNft.getPositionKey(lenderPositionTwo);
         bytes32 lenderThreeKey = positionNft.getPositionKey(lenderPositionThree);
@@ -1994,16 +1971,14 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     function test_lineAndCommitmentViews_roundTripStoredStateAndLookups() external {
         uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
-        facet.setPoolInitialized(SETTLEMENT_POOL_ID, true);
-
         vm.prank(alice);
         uint256 lineId = facet.createLineProposal(borrowerPositionId, _defaultProposalParamsNone());
 
         vm.warp(block.timestamp + 3 days + 1);
         facet.transitionToPooledOpen(lineId);
 
-        uint256 lenderPositionOne = _seedSettlementPosition(bob, 400e18);
-        uint256 lenderPositionTwo = _seedSettlementPosition(carol, 600e18);
+        uint256 lenderPositionOne = _fundSettlementPosition(bob, 400e18);
+        uint256 lenderPositionTwo = _fundSettlementPosition(carol, 600e18);
 
         vm.prank(bob);
         facet.commitPooled(lineId, lenderPositionOne, 400e18);
@@ -2212,7 +2187,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
     function _createDefaultLine() internal returns (uint256 lineId) {
         uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
-        facet.setPoolInitialized(SETTLEMENT_POOL_ID, true);
+        facet.configurePoolForDeposits(SETTLEMENT_POOL_ID, address(settlementToken), 1);
 
         vm.prank(alice);
         lineId = facet.createLineProposal(borrowerPositionId, _defaultProposalParamsNone());
@@ -2231,15 +2206,12 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
     ) internal returns (uint256 lineId) {
         uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
 
-        facet.setPoolInitialized(params.settlementPoolId, true);
-        facet.setPoolUnderlying(params.settlementPoolId, address(settlementToken));
-        facet.setPoolTrackedBalance(params.settlementPoolId, trackedBalance);
-        settlementToken.mint(address(facet), trackedBalance);
+        facet.configurePoolForDeposits(params.settlementPoolId, address(settlementToken), 1);
 
         vm.prank(alice);
         lineId = facet.createLineProposal(borrowerPositionId, params);
 
-        uint256 lenderPositionId = _seedSettlementPosition(bob, committedAmount);
+        uint256 lenderPositionId = _fundSettlementPosition(bob, committedAmount);
 
         if (committedAmount == params.requestedTargetLimit) {
             vm.prank(bob);
@@ -2249,6 +2221,12 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
             facet.transitionToPooledOpen(lineId);
             vm.prank(bob);
             facet.commitPooled(lineId, lenderPositionId, committedAmount);
+        }
+
+        if (trackedBalance != committedAmount) {
+            // Keep one explicit liquidity override for the otherwise unreachable "pool balance drifted below
+            // funded principal" branch. Real funding still establishes the position and principal honestly.
+            facet.setPoolTrackedBalance(params.settlementPoolId, trackedBalance);
         }
 
         vm.prank(alice);
@@ -2262,10 +2240,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
     ) internal returns (uint256 lineId, uint256 lenderPositionOne, uint256 lenderPositionTwo) {
         uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
 
-        facet.setPoolInitialized(params.settlementPoolId, true);
-        facet.setPoolUnderlying(params.settlementPoolId, address(settlementToken));
-        facet.setPoolTrackedBalance(params.settlementPoolId, params.requestedTargetLimit);
-        settlementToken.mint(address(facet), params.requestedTargetLimit);
+        facet.configurePoolForDeposits(params.settlementPoolId, address(settlementToken), 1);
 
         vm.prank(alice);
         lineId = facet.createLineProposal(borrowerPositionId, params);
@@ -2273,8 +2248,8 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         vm.warp(block.timestamp + 3 days + 1);
         facet.transitionToPooledOpen(lineId);
 
-        lenderPositionOne = _seedSettlementPosition(bob, firstCommittedAmount);
-        lenderPositionTwo = _seedSettlementPosition(carol, secondCommittedAmount);
+        lenderPositionOne = _fundSettlementPosition(bob, firstCommittedAmount);
+        lenderPositionTwo = _fundSettlementPosition(carol, secondCommittedAmount);
 
         vm.prank(bob);
         facet.commitPooled(lineId, lenderPositionOne, firstCommittedAmount);
@@ -2285,9 +2260,17 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         facet.activateLine(lineId);
     }
 
-    function _seedSettlementPosition(address owner, uint256 principal) internal returns (uint256 positionId) {
+    function _fundSettlementPosition(address owner, uint256 principal) internal returns (uint256 positionId) {
         positionId = positionNft.mint(owner, SETTLEMENT_POOL_ID);
-        facet.seedPrincipal(SETTLEMENT_POOL_ID, positionNft.getPositionKey(positionId), principal);
+        _depositToPosition(owner, positionId, SETTLEMENT_POOL_ID, principal);
+    }
+
+    function _depositToPosition(address owner, uint256 positionId, uint256 pid, uint256 amount) internal {
+        settlementToken.mint(owner, amount);
+        vm.startPrank(owner);
+        settlementToken.approve(address(facet), amount);
+        facet.depositToPosition(positionId, pid, amount, amount);
+        vm.stopPrank();
     }
 
     function _mintAndApprove(address owner, uint256 amount) internal {
