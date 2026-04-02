@@ -336,6 +336,47 @@ contract EqualXCurveFacetTest is Test {
         assertEq(harness.yieldReserveOf(2), protocolFee - treasuryFee);
     }
 
+    function test_ExecuteCurveSwap_ExactBoundaryUsageClosesMarket() public {
+        vm.prank(alice);
+        uint256 curveId = harness.createEqualXCurve(_defaultDescriptor());
+
+        vm.warp(block.timestamp + 1 days);
+        LibEqualXCurveEngine.CurveExecutionPreview memory preview = harness.previewEqualXCurveQuote(curveId, 200e18);
+
+        vm.prank(bob);
+        harness.executeEqualXCurveSwap(curveId, 200e18, preview.totalQuote, preview.amountOut, uint64(block.timestamp + 1 days), bob);
+
+        (LibEqualXCurveStorage.CurveMarket memory market,,,,,) = harness.getEqualXCurveMarket(curveId);
+        assertEq(preview.amountOut, 100e18);
+        assertEq(market.remainingVolume, 0);
+        assertFalse(market.active);
+        assertEq(harness.lockedCapitalOf(alicePositionKey, 1), 0);
+    }
+
+    function test_ExecuteCurveSwap_FullCloseoutAfterMultipleSwaps() public {
+        vm.prank(alice);
+        uint256 curveId = harness.createEqualXCurve(_defaultDescriptor());
+
+        vm.warp(block.timestamp + 1 days);
+        LibEqualXCurveEngine.CurveExecutionPreview memory firstPreview = harness.previewEqualXCurveQuote(curveId, 20e18);
+        vm.prank(bob);
+        harness.executeEqualXCurveSwap(
+            curveId, 20e18, firstPreview.totalQuote, firstPreview.amountOut, uint64(block.timestamp + 1 days), bob
+        );
+
+        LibEqualXCurveEngine.CurveExecutionPreview memory secondPreview = harness.previewEqualXCurveQuote(curveId, 180e18);
+        vm.prank(bob);
+        harness.executeEqualXCurveSwap(
+            curveId, 180e18, secondPreview.totalQuote, secondPreview.amountOut, uint64(block.timestamp + 1 days), bob
+        );
+
+        (LibEqualXCurveStorage.CurveMarket memory market,,,,,) = harness.getEqualXCurveMarket(curveId);
+        assertEq(tokenA.balanceOf(bob), firstPreview.amountOut + secondPreview.amountOut);
+        assertEq(market.remainingVolume, 0);
+        assertFalse(market.active);
+        assertEq(harness.lockedCapitalOf(alicePositionKey, 1), 0);
+    }
+
     function test_ViewHelpers_MatchCurvePreviewAndStatus() public {
         vm.prank(alice);
         uint256 curveId = harness.createEqualXCurve(_defaultDescriptor());
@@ -392,6 +433,29 @@ contract EqualXCurveFacetTest is Test {
         assertFalse(market.active);
         assertEq(market.remainingVolume, 0);
         assertEq(harness.lockedCapitalOf(alicePositionKey, 1), 0);
+    }
+
+    function test_CancelCurve_AfterPartialUtilizationReleasesRemainingBackingOnly() public {
+        vm.prank(alice);
+        uint256 curveId = harness.createEqualXCurve(_defaultDescriptor());
+
+        vm.warp(block.timestamp + 1 days);
+        LibEqualXCurveEngine.CurveExecutionPreview memory preview = harness.previewEqualXCurveQuote(curveId, 20e18);
+        vm.prank(bob);
+        harness.executeEqualXCurveSwap(curveId, 20e18, preview.totalQuote, preview.amountOut, uint64(block.timestamp + 1 days), bob);
+
+        uint256 principalABeforeCancel = harness.principalOf(1, alicePositionKey);
+        uint256 principalBBeforeCancel = harness.principalOf(2, alicePositionKey);
+
+        vm.prank(alice);
+        harness.cancelEqualXCurve(curveId);
+
+        (LibEqualXCurveStorage.CurveMarket memory market,,,,,) = harness.getEqualXCurveMarket(curveId);
+        assertFalse(market.active);
+        assertEq(market.remainingVolume, 0);
+        assertEq(harness.lockedCapitalOf(alicePositionKey, 1), 0);
+        assertEq(harness.principalOf(1, alicePositionKey), principalABeforeCancel);
+        assertEq(harness.principalOf(2, alicePositionKey), principalBBeforeCancel);
     }
 
     function test_ExpireCurve_PermissionlesslyReleasesLockedBacking() public {
@@ -457,6 +521,59 @@ contract EqualXCurveFacetTest is Test {
         assertEq(harness.lockedCapitalOf(nativePositionKey, 3), 1 ether - preview.amountOut);
         assertEq(harness.trackedBalanceOf(3), 5 ether - preview.amountOut);
         assertEq(harness.nativeTrackedTotal(), nativeTrackedBefore - preview.amountOut);
+    }
+
+    function test_NativeBaseCurve_ExactBoundaryUsageClosesAndReleasesNativeTracking() public {
+        uint256 nativePositionId;
+        vm.deal(alice, 10 ether);
+        vm.startPrank(alice);
+        tokenB.approve(address(harness), type(uint256).max);
+        nativePositionId = harness.mintPosition(3);
+        harness.depositToPosition{value: 5 ether}(nativePositionId, 3, 5 ether, 5 ether);
+        harness.depositToPosition(nativePositionId, 2, 500e18, 500e18);
+        vm.stopPrank();
+
+        bytes32 nativePositionKey = positionNft.getPositionKey(nativePositionId);
+
+        LibEqualXCurveEngine.CurveDescriptor memory desc = LibEqualXCurveEngine.CurveDescriptor({
+            makerPositionKey: nativePositionKey,
+            makerPositionId: nativePositionId,
+            poolIdA: 3,
+            poolIdB: 2,
+            tokenA: address(0),
+            tokenB: address(tokenB),
+            side: false,
+            priceIsQuotePerBase: true,
+            maxVolume: 1 ether,
+            startPrice: 2e18,
+            endPrice: 2e18,
+            startTime: uint64(block.timestamp),
+            duration: 3 days,
+            generation: 1,
+            feeRateBps: 300,
+            feeAsset: LibEqualXTypes.FeeAsset.TokenIn,
+            salt: 3,
+            profileId: 1,
+            profileParams: bytes32(0)
+        });
+
+        vm.prank(alice);
+        uint256 curveId = harness.createEqualXCurve(desc);
+
+        vm.warp(block.timestamp + 1 days);
+        LibEqualXCurveEngine.CurveExecutionPreview memory preview = harness.previewEqualXCurveQuote(curveId, 2e18);
+        uint256 nativeTrackedBefore = harness.nativeTrackedTotal();
+
+        vm.prank(bob);
+        harness.executeEqualXCurveSwap(curveId, 2e18, preview.totalQuote, preview.amountOut, uint64(block.timestamp + 1 days), bob);
+
+        (LibEqualXCurveStorage.CurveMarket memory market,,,,,) = harness.getEqualXCurveMarket(curveId);
+        assertEq(preview.amountOut, 1 ether);
+        assertEq(market.remainingVolume, 0);
+        assertFalse(market.active);
+        assertEq(harness.lockedCapitalOf(nativePositionKey, 3), 0);
+        assertEq(harness.trackedBalanceOf(3), 4 ether);
+        assertEq(harness.nativeTrackedTotal(), nativeTrackedBefore - 1 ether);
     }
 
     function _defaultDescriptor() internal view returns (LibEqualXCurveEngine.CurveDescriptor memory desc) {

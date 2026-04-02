@@ -49,6 +49,10 @@ contract EqualXSoloAmmHarness is PoolManagementFacet, PositionManagementFacet, E
         LibAppStorage.s().foundationReceiver = receiver;
     }
 
+    function setManagedPoolCreationFee(uint256 fee) external {
+        LibAppStorage.s().managedPoolCreationFee = fee;
+    }
+
     function setFeeSplits(uint256 treasuryBps, uint256 activeCreditBps) external {
         if (treasuryBps > type(uint16).max || activeCreditBps > type(uint16).max) revert();
         LibAppStorage.AppStorage storage store = LibAppStorage.s();
@@ -230,6 +234,72 @@ contract EqualXSoloAmmFacetTest is Test {
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
         );
+    }
+
+    function test_CreateSoloAmm_BackingBlockedByManagedPoolDepositCap() public {
+        harness.setManagedPoolCreationFee(1 wei);
+        vm.deal(alice, 1 wei);
+
+        Types.PoolConfig memory config = _poolConfig();
+        config.isCapped = true;
+        config.depositCap = 100e18;
+
+        vm.prank(alice);
+        harness.initManagedPool{value: 1 wei}(4, address(tokenB), config);
+
+        vm.startPrank(alice);
+        uint256 managedPositionId = harness.mintPosition(4);
+        harness.depositToPosition(managedPositionId, 1, 100e18, 100e18);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        harness.addToWhitelist(4, managedPositionId);
+
+        vm.expectRevert(abi.encodeWithSignature("DepositCapExceeded(uint256,uint256)", 150e18, 100e18));
+        vm.prank(alice);
+        harness.depositToPosition(managedPositionId, 4, 150e18, 150e18);
+    }
+
+    function test_CreateSoloAmm_BackingBlockedByManagedPoolWhitelistUntilApproved() public {
+        harness.setManagedPoolCreationFee(1 wei);
+        vm.deal(alice, 1 wei);
+
+        vm.prank(alice);
+        harness.initManagedPool{value: 1 wei}(4, address(tokenB), _poolConfig());
+
+        vm.prank(alice);
+        uint256 managedPositionId = harness.mintPosition(4);
+        bytes32 managedPositionKey = positionNft.getPositionKey(managedPositionId);
+
+        vm.expectRevert(
+            abi.encodeWithSignature("WhitelistRequired(bytes32,uint256)", managedPositionKey, 4)
+        );
+        vm.prank(alice);
+        harness.depositToPosition(managedPositionId, 4, 100e18, 100e18);
+
+        vm.prank(alice);
+        harness.addToWhitelist(4, managedPositionId);
+
+        vm.startPrank(alice);
+        harness.depositToPosition(managedPositionId, 1, 100e18, 100e18);
+        harness.depositToPosition(managedPositionId, 4, 100e18, 100e18);
+        uint256 marketId = harness.createEqualXSoloAmmMarket(
+            managedPositionId,
+            1,
+            4,
+            100e18,
+            100e18,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 3 days),
+            300,
+            LibEqualXTypes.FeeAsset.TokenIn,
+            LibEqualXTypes.InvariantMode.Volatile
+        );
+        vm.stopPrank();
+
+        LibEqualXSoloAmmStorage.SoloAmmMarket memory market = harness.getEqualXSoloAmmMarket(marketId);
+        assertTrue(market.active);
+        assertEq(market.poolIdB, 4);
     }
 
     function test_WithdrawFromPosition_BlockedWhileSoloAmmBackingIsEncumbered() public {
@@ -476,6 +546,50 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(harness.principalOf(2, alicePositionKey), 500e18 - (100e18 - reserveBForPrincipal));
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 0);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 0);
+    }
+
+    function test_Finalize_AfterPartialUtilizationZeroesActiveCreditAndLeavesClaimableYield() public {
+        vm.prank(alice);
+        uint256 marketId = harness.createEqualXSoloAmmMarket(
+            alicePositionId,
+            1,
+            2,
+            100e18,
+            100e18,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 5 days),
+            300,
+            LibEqualXTypes.FeeAsset.TokenIn,
+            LibEqualXTypes.InvariantMode.Volatile
+        );
+
+        vm.warp(block.timestamp + 1 days);
+        tokenA.mint(bob, 100e18);
+        vm.prank(bob);
+        tokenA.approve(address(harness), type(uint256).max);
+
+        EqualXSoloAmmFacet.SoloAmmSwapPreview memory preview =
+            harness.previewEqualXSoloAmmSwapExactIn(marketId, address(tokenA), 10e18);
+
+        vm.prank(bob);
+        harness.swapEqualXSoloAmmExactIn(marketId, address(tokenA), 10e18, 10e18, preview.amountOut, bob);
+
+        vm.warp(block.timestamp + 5 days);
+        vm.prank(bob);
+        harness.finalizeEqualXSoloAmmMarket(marketId);
+
+        assertEq(harness.activeCreditPrincipalTotalOf(1), 0);
+        assertEq(harness.activeCreditPrincipalTotalOf(2), 0);
+
+        uint256 claimable = harness.previewPositionYield(alicePositionId, 1);
+        assertGt(claimable, 0);
+
+        uint256 reserveBeforeClaim = harness.yieldReserveOf(1);
+        vm.prank(alice);
+        uint256 claimed = harness.claimPositionYield(alicePositionId, 1, alice, 0);
+
+        assertEq(claimed, claimable);
+        assertEq(harness.yieldReserveOf(1), reserveBeforeClaim - claimed);
     }
 
     function _poolConfig() internal pure returns (Types.PoolConfig memory cfg) {

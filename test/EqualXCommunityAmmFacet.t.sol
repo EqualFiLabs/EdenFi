@@ -55,6 +55,10 @@ contract EqualXCommunityAmmHarness is
         LibAppStorage.s().foundationReceiver = receiver;
     }
 
+    function setManagedPoolCreationFee(uint256 fee) external {
+        LibAppStorage.s().managedPoolCreationFee = fee;
+    }
+
     function setFeeSplits(uint256 treasuryBps, uint256 activeCreditBps) external {
         if (treasuryBps > type(uint16).max || activeCreditBps > type(uint16).max) revert();
         LibAppStorage.AppStorage storage store = LibAppStorage.s();
@@ -337,6 +341,39 @@ contract EqualXCommunityAmmFacetTest is Test {
         harness.joinEqualXCommunityAmmMarket(marketId, charliePositionId, 500e18, 500e18);
     }
 
+    function test_JoinCommunityAmm_BackingBlockedByManagedPoolMaxUserCount() public {
+        harness.setManagedPoolCreationFee(1 wei);
+        vm.deal(alice, 1 wei);
+
+        Types.PoolConfig memory config = _poolConfig();
+        config.maxUserCount = 1;
+
+        vm.prank(alice);
+        harness.initManagedPool{value: 1 wei}(4, address(tokenB), config);
+
+        vm.startPrank(alice);
+        uint256 aliceManagedPositionId = harness.mintPosition(4);
+        harness.depositToPosition(aliceManagedPositionId, 1, 100e18, 100e18);
+        vm.stopPrank();
+
+        vm.startPrank(charlie);
+        uint256 charlieManagedPositionId = harness.mintPosition(4);
+        harness.depositToPosition(charlieManagedPositionId, 1, 100e18, 100e18);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        harness.addToWhitelist(4, aliceManagedPositionId);
+        vm.prank(alice);
+        harness.addToWhitelist(4, charlieManagedPositionId);
+
+        vm.prank(alice);
+        harness.depositToPosition(aliceManagedPositionId, 4, 100e18, 100e18);
+
+        vm.expectRevert(abi.encodeWithSignature("MaxUserCountExceeded(uint256)", 1));
+        vm.prank(charlie);
+        harness.depositToPosition(charlieManagedPositionId, 4, 100e18, 100e18);
+    }
+
     function test_Leave_ReconcilesBackingAndContributions() public {
         uint256 marketId = _createJoinedCommunityMarket();
 
@@ -467,6 +504,35 @@ contract EqualXCommunityAmmFacetTest is Test {
         LibEqualXCommunityAmmStorage.CommunityAmmMarket memory cancelled = harness.getEqualXCommunityAmmMarket(cancelledMarketId);
         assertTrue(cancelled.finalized);
         assertFalse(cancelled.active);
+    }
+
+    function test_LeaveLastMaker_FinalizesEmptyMarketAfterPartialUtilization() public {
+        uint256 marketId = _createJoinedCommunityMarket();
+
+        vm.warp(block.timestamp + 1 days);
+        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory preview =
+            harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), 15e18);
+        vm.prank(bob);
+        harness.swapEqualXCommunityAmmExactIn(marketId, address(tokenA), 15e18, 15e18, preview.amountOut, bob);
+
+        vm.prank(charlie);
+        harness.leaveEqualXCommunityAmmMarket(marketId, charliePositionId);
+
+        vm.prank(alice);
+        harness.leaveEqualXCommunityAmmMarket(marketId, alicePositionId);
+
+        LibEqualXCommunityAmmStorage.CommunityAmmMarket memory market = harness.getEqualXCommunityAmmMarket(marketId);
+        assertTrue(market.finalized);
+        assertFalse(market.active);
+        assertEq(market.totalShares, 0);
+        assertEq(market.makerCount, 0);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 0);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 0);
+        assertEq(harness.encumberedCapitalOf(charliePositionKey, 1), 0);
+        assertEq(harness.encumberedCapitalOf(charliePositionKey, 2), 0);
+        assertEq(harness.activeCreditPrincipalTotalOf(1), 0);
+        assertEq(harness.activeCreditPrincipalTotalOf(2), 0);
+        assertGt(harness.yieldReserveOf(1), 0);
     }
 
     function _poolConfig() internal pure returns (Types.PoolConfig memory cfg) {
