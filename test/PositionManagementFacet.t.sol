@@ -68,6 +68,32 @@ contract PositionManagementFacetTest is LaunchFixture {
         vm.stopPrank();
     }
 
+    function test_DepositSettlesExistingYieldBeforePrincipalIncreaseAndClaimRemainsAvailable() public {
+        uint256 positionId = _seedYieldBearingPosition();
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+
+        uint256 claimableBefore = PositionManagementFacet(diamond).previewPositionYield(positionId, 1);
+        assertGt(claimableBefore, 0);
+
+        eve.mint(alice, 10e18);
+        vm.startPrank(alice);
+        eve.approve(diamond, 10e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 10e18, 10e18);
+        vm.stopPrank();
+
+        assertEq(testSupport.principalOf(1, positionKey), 110e18);
+
+        uint256 claimableAfter = PositionManagementFacet(diamond).previewPositionYield(positionId, 1);
+        assertEq(claimableAfter, claimableBefore);
+
+        uint256 balanceBeforeClaim = eve.balanceOf(alice);
+        vm.prank(alice);
+        uint256 claimed = PositionManagementFacet(diamond).claimPositionYield(positionId, 1, alice, claimableAfter);
+
+        assertEq(claimed, claimableBefore);
+        assertEq(eve.balanceOf(alice), balanceBeforeClaim + claimableBefore);
+    }
+
     function test_PositionCanDepositWithdrawAndCleanupAcrossJoinedPools() public {
         eve.mint(alice, 20e18);
         alt.mint(alice, 30e18);

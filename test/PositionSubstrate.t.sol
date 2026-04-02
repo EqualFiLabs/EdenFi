@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Smoke coverage only: this suite intentionally seeds substrate state directly.
+// It is a synthetic substrate check, not an end-to-end EqualFi protocol proof.
+// Real-flow counterparts live in launch-backed suites such as PositionManagementFacet,
+// EqualIndexLaunch, EqualScaleAlpha, and the options launch coverage.
 pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
