@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
 import {ERC721BoundMSCA} from "@agent-wallet-core/core/ERC721BoundMSCA.sol";

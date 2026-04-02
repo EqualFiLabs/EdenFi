@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
 /// @notice Isolated diamond storage for the EqualScale Alpha credit-line module.
