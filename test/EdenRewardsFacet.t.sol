@@ -2,161 +2,67 @@
 pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {Test} from "forge-std/Test.sol";
 
+import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
+import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
+import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
+import {EqualIndexLendingFacet} from "src/equalindex/EqualIndexLendingFacet.sol";
+import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
-import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
-import {LibDiamond} from "src/libraries/LibDiamond.sol";
+import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
-import {LibEqualIndexStorage} from "src/libraries/LibEqualIndexStorage.sol";
-import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {InvalidParameterRange, InvalidUnderlying, Unauthorized} from "src/libraries/Errors.sol";
-import {PositionNFT} from "src/nft/PositionNFT.sol";
 
-contract MockERC20Rewards is ERC20 {
-    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
+import {LaunchFixture} from "test/utils/LaunchFixture.t.sol";
 
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-}
-
-contract MockFeeOnTransferRewards is ERC20 {
-    uint256 internal constant BPS = 10_000;
-
-    uint256 public feeBps = 1000;
-    address public feeSink = address(0xdead);
-
-    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
-
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-
-    function _update(address from, address to, uint256 value) internal override {
-        if (from == address(0) || to == address(0) || feeBps == 0) {
-            super._update(from, to, value);
-            return;
-        }
-
-        uint256 fee = (value * feeBps) / BPS;
-        uint256 remainder = value - fee;
-        super._update(from, feeSink, fee);
-        super._update(from, to, remainder);
-    }
-}
-
-contract EdenRewardsFacetHarness is EdenRewardsFacet {
-    function setOwner(address owner_) external {
-        LibDiamond.setContractOwner(owner_);
-    }
-
-    function setTimelock(address timelock_) external {
-        LibAppStorage.s().timelock = timelock_;
-    }
-
-    function setPositionNFT(address positionNFT_) external {
-        LibPositionNFT.s().positionNFTContract = positionNFT_;
-        LibPositionNFT.s().nftModeEnabled = positionNFT_ != address(0);
-    }
-
-    function setEqualIndexPool(uint256 indexId, uint256 poolId) external {
-        LibEqualIndexStorage.s().indexToPoolId[indexId] = poolId;
-        LibAppStorage.s().pools[poolId].initialized = true;
-        LibAppStorage.s().pools[poolId].lastMaintenanceTimestamp = uint64(block.timestamp);
-    }
-
-    function setPoolDeposits(uint256 poolId, uint256 totalDeposits) external {
-        LibAppStorage.s().pools[poolId].initialized = true;
-        LibAppStorage.s().pools[poolId].totalDeposits = totalDeposits;
-    }
-
-    function setPoolPrincipal(uint256 poolId, bytes32 positionKey, uint256 principal) external {
-        LibAppStorage.s().pools[poolId].initialized = true;
-        LibAppStorage.s().pools[poolId].userPrincipal[positionKey] = principal;
-    }
-
-    function accruedReward(bytes32 positionKey, uint256 programId) external view returns (uint256) {
-        return LibEdenRewardsStorage.s().accruedRewards[programId][positionKey];
-    }
-}
-
-contract EdenRewardsFacetTest is Test {
-    uint256 internal constant INDEX_ID = 7;
-    uint256 internal constant POOL_ID = 107;
-
-    EdenRewardsFacetHarness internal facet;
-
-    address internal owner = makeAddr("owner");
-    address internal timelock = makeAddr("timelock");
+contract EdenRewardsFacetTest is LaunchFixture {
     address internal manager = makeAddr("manager");
     address internal stranger = makeAddr("stranger");
-    address internal alice = makeAddr("alice");
 
-    MockERC20Rewards internal rewardAsset;
-    MockERC20Rewards internal altRewardAsset;
-    MockFeeOnTransferRewards internal fotRewardAsset;
-    PositionNFT internal positionNft;
-    uint256 internal alicePositionId;
-    bytes32 internal alicePositionKey;
-
-    function setUp() public {
-        facet = new EdenRewardsFacetHarness();
-        facet.setOwner(owner);
-        facet.setTimelock(timelock);
-        facet.setEqualIndexPool(INDEX_ID, POOL_ID);
-        facet.setPoolDeposits(POOL_ID, 100e18);
-
-        rewardAsset = new MockERC20Rewards("Reward", "RWD");
-        altRewardAsset = new MockERC20Rewards("AltReward", "ALT");
-        fotRewardAsset = new MockFeeOnTransferRewards("FoTReward", "FTR");
-
-        positionNft = new PositionNFT();
-        positionNft.setMinter(address(this));
-        facet.setPositionNFT(address(positionNft));
-        alicePositionId = positionNft.mint(alice, 1);
-        alicePositionKey = positionNft.getPositionKey(alicePositionId);
-        facet.setPoolPrincipal(POOL_ID, alicePositionKey, 100e18);
+    function setUp() public override {
+        super.setUp();
+        _bootstrapCorePools();
     }
 
     function test_CreateRewardProgram_PersistsEqualIndexTargetAndDiscovery() public {
-        vm.prank(timelock);
-        uint256 programId = facet.createRewardProgram(
-            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION,
-            INDEX_ID,
-            address(rewardAsset),
-            manager,
-            5e18,
-            100,
-            500,
-            true
-        );
+        uint256 alicePositionId = _fundEvePosition(alice, 20e18);
+        uint256 indexId = _createRewardIndex("Reward Index", "RIDX");
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, indexId, 10e18);
+
+        uint256 startTime = block.timestamp + 8 days;
+        uint256 endTime = startTime + 400;
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), manager, 5e18, startTime, endTime, true);
 
         (
             LibEdenRewardsStorage.RewardProgramConfig memory config,
             LibEdenRewardsStorage.RewardProgramState memory state
-        ) = facet.getRewardProgram(programId);
+        ) = EdenRewardsFacet(diamond).getRewardProgram(programId);
 
         assertEq(programId, 0);
         assertEq(uint8(config.target.targetType), uint8(LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION));
-        assertEq(config.target.targetId, INDEX_ID);
-        assertEq(config.rewardToken, address(rewardAsset));
+        assertEq(config.target.targetId, indexId);
+        assertEq(config.rewardToken, address(alt));
         assertEq(config.manager, manager);
-        assertEq(state.eligibleSupply, 100e18);
+        assertEq(state.eligibleSupply, 10e18);
 
-        uint256[] memory programIds =
-            facet.getRewardProgramIdsByTarget(LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION, INDEX_ID);
+        uint256[] memory programIds = EdenRewardsFacet(diamond).getRewardProgramIdsByTarget(
+            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION, indexId
+        );
         assertEq(programIds.length, 1);
         assertEq(programIds[0], programId);
     }
 
     function test_CreateRewardProgram_RevertsForInvalidConfigAndUnauthorizedCaller() public {
+        uint256 indexId = _createRewardIndex("Invalid Reward Index", "IRI");
+
         vm.prank(stranger);
         vm.expectRevert(bytes("LibAccess: not timelock"));
-        facet.createRewardProgram(
+        EdenRewardsFacet(diamond).createRewardProgram(
             LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION,
-            INDEX_ID,
-            address(rewardAsset),
+            indexId,
+            address(alt),
             manager,
             1e18,
             0,
@@ -164,12 +70,12 @@ contract EdenRewardsFacetTest is Test {
             true
         );
 
-        vm.startPrank(timelock);
+        vm.startPrank(address(timelockController));
 
         vm.expectRevert(InvalidUnderlying.selector);
-        facet.createRewardProgram(
+        EdenRewardsFacet(diamond).createRewardProgram(
             LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION,
-            INDEX_ID,
+            indexId,
             address(0),
             manager,
             1e18,
@@ -179,10 +85,10 @@ contract EdenRewardsFacetTest is Test {
         );
 
         vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "manager"));
-        facet.createRewardProgram(
+        EdenRewardsFacet(diamond).createRewardProgram(
             LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION,
-            INDEX_ID,
-            address(rewardAsset),
+            indexId,
+            address(alt),
             address(0),
             1e18,
             0,
@@ -191,10 +97,10 @@ contract EdenRewardsFacetTest is Test {
         );
 
         vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "rewardRatePerSecond"));
-        facet.createRewardProgram(
+        EdenRewardsFacet(diamond).createRewardProgram(
             LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION,
-            INDEX_ID,
-            address(rewardAsset),
+            indexId,
+            address(alt),
             manager,
             0,
             0,
@@ -203,111 +109,271 @@ contract EdenRewardsFacetTest is Test {
         );
 
         vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "rewardWindow"));
-        facet.createRewardProgram(
+        EdenRewardsFacet(diamond).createRewardProgram(
             LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION,
-            INDEX_ID,
-            address(rewardAsset),
+            indexId,
+            address(alt),
             manager,
             1e18,
             10,
             10,
             true
         );
+
+        vm.stopPrank();
     }
 
     function test_ManagerAndGovernanceCanDriveLifecycle() public {
-        vm.prank(timelock);
-        uint256 programId = facet.createRewardProgram(
-            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION,
-            INDEX_ID,
-            address(rewardAsset),
-            manager,
-            1e18,
-            0,
-            1000,
-            true
-        );
+        uint256 alicePositionId = _fundEvePosition(alice, 20e18);
+        uint256 indexId = _createRewardIndex("Lifecycle Reward Index", "LRI");
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, indexId, 10e18);
+
+        uint256 programId =
+            _createEqualIndexRewardProgram(indexId, address(alt), manager, 1e18, 0, block.timestamp + 8 days, true);
 
         vm.prank(manager);
-        facet.setRewardProgramEnabled(programId, false);
+        EdenRewardsFacet(diamond).setRewardProgramEnabled(programId, false);
 
         vm.prank(manager);
-        facet.pauseRewardProgram(programId);
+        EdenRewardsFacet(diamond).pauseRewardProgram(programId);
 
         vm.prank(manager);
-        facet.resumeRewardProgram(programId);
+        EdenRewardsFacet(diamond).resumeRewardProgram(programId);
 
         vm.prank(stranger);
         vm.expectRevert(Unauthorized.selector);
-        facet.endRewardProgram(programId);
+        EdenRewardsFacet(diamond).endRewardProgram(programId);
 
-        vm.prank(timelock);
-        facet.endRewardProgram(programId);
+        vm.prank(address(timelockController));
+        EdenRewardsFacet(diamond).endRewardProgram(programId);
         vm.warp(block.timestamp + 1);
 
-        vm.prank(timelock);
-        facet.closeRewardProgram(programId);
+        vm.prank(address(timelockController));
+        EdenRewardsFacet(diamond).closeRewardProgram(programId);
 
-        (LibEdenRewardsStorage.RewardProgramConfig memory config,) = facet.getRewardProgram(programId);
+        (LibEdenRewardsStorage.RewardProgramConfig memory config,) = EdenRewardsFacet(diamond).getRewardProgram(programId);
         assertTrue(config.closed);
-        assertFalse(config.enabled);
-        assertFalse(config.paused);
+        assertTrue(!config.enabled);
+        assertTrue(!config.paused);
     }
 
     function test_FundAccrueAndClaim_ForEqualIndexTarget() public {
-        vm.prank(timelock);
-        uint256 programId = facet.createRewardProgram(
-            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION,
-            INDEX_ID,
-            address(rewardAsset),
-            manager,
-            10e18,
-            block.timestamp,
-            block.timestamp + 100,
-            true
-        );
+        uint256 alicePositionId = _fundEvePosition(alice, 20e18);
+        uint256 indexId = _createRewardIndex("Claim Reward Index", "CRI");
 
-        rewardAsset.mint(address(this), 1_000e18);
-        rewardAsset.approve(address(facet), 1_000e18);
-        facet.fundRewardProgram(programId, 1_000e18, 1_000e18);
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, indexId, 10e18);
+
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), manager, 10e18, 0, 0, true);
+
+        alt.mint(address(this), 1_000e18);
+        _fundRewardProgram(address(this), programId, alt, 1_000e18);
 
         vm.warp(block.timestamp + 10);
 
+        EdenRewardsFacet.RewardProgramPositionView memory preview =
+            EdenRewardsFacet(diamond).previewRewardProgramPosition(programId, alicePositionId);
+        assertEq(preview.eligibleBalance, 10e18);
+        assertEq(preview.claimableRewards, 100e18);
+
         vm.prank(alice);
-        uint256 claimed = facet.claimRewardProgram(programId, alicePositionId, alice);
+        uint256 claimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, alicePositionId, alice);
 
         assertEq(claimed, 100e18);
-        assertEq(rewardAsset.balanceOf(alice), 100e18);
-        assertEq(facet.accruedReward(alicePositionKey, programId), 0);
+        assertEq(alt.balanceOf(alice), 100e18);
+
+        preview = EdenRewardsFacet(diamond).previewRewardProgramPosition(programId, alicePositionId);
+        assertEq(preview.claimableRewards, 0);
     }
 
     function test_ClaimRewardProgram_GrossesUpFeeOnTransferRewards() public {
-        vm.prank(timelock);
-        uint256 programId = facet.createRewardProgram(
-            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION,
-            INDEX_ID,
-            address(fotRewardAsset),
-            manager,
-            10e18,
-            block.timestamp,
-            block.timestamp + 100,
-            true
-        );
+        uint256 alicePositionId = _fundEvePosition(alice, 20e18);
+        uint256 indexId = _createRewardIndex("FoT Reward Index", "FRI");
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, indexId, 10e18);
+
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(fot), manager, 10e18, 0, 0, true);
 
         vm.prank(manager);
-        facet.setRewardProgramTransferFeeBps(programId, 1000);
+        EdenRewardsFacet(diamond).setRewardProgramTransferFeeBps(programId, 1000);
 
-        fotRewardAsset.mint(address(this), 1_000e18);
-        fotRewardAsset.approve(address(facet), 1_000e18);
-        facet.fundRewardProgram(programId, 180e18, 200e18);
+        fot.mint(address(this), 1_000e18);
+        vm.startPrank(address(this));
+        fot.approve(diamond, 200e18);
+        EdenRewardsFacet(diamond).fundRewardProgram(programId, 180e18, 200e18);
+        vm.stopPrank();
 
         vm.warp(block.timestamp + 10);
 
         vm.prank(alice);
-        uint256 claimed = facet.claimRewardProgram(programId, alicePositionId, alice);
+        uint256 claimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, alicePositionId, alice);
 
         assertEq(claimed, 100e18);
-        assertEq(fotRewardAsset.balanceOf(alice), 100e18);
-        assertEq(facet.accruedReward(alicePositionKey, programId), 0);
+        assertEq(fot.balanceOf(alice), 100e18);
+    }
+
+    function test_EqualIndexRewards_WalletHeldUnitsDoNotEarnButPositionHeldUnitsDo() public {
+        eve.mint(alice, 40e18);
+        eve.mint(bob, 20e18);
+
+        uint256 bobEmptyPositionId = _mintPosition(bob, 1);
+        uint256 alicePositionId = _mintPosition(alice, 1);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 40e18);
+        PositionManagementFacet(diamond).depositToPosition(alicePositionId, 1, 40e18, 40e18);
+        vm.stopPrank();
+
+        uint256 indexId = _createRewardIndex("Wallet Reward Index", "WRI");
+
+        vm.startPrank(bob);
+        eve.approve(diamond, 20e18);
+        uint256[] memory maxInputs = new uint256[](1);
+        maxInputs[0] = 10e18;
+        EqualIndexActionsFacetV3(diamond).mint(indexId, 10e18, bob, maxInputs);
+        vm.stopPrank();
+
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), address(this), 10e18, 0, 0, true);
+        alt.mint(address(this), 200e18);
+        _fundRewardProgram(address(this), programId, alt, 100e18);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory state) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(state.eligibleSupply, 0);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "nothing claimable"));
+        EdenRewardsFacet(diamond).claimRewardProgram(programId, bobEmptyPositionId, bob);
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, indexId, 10e18);
+
+        (, state) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(state.eligibleSupply, 10e18);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(alice);
+        uint256 claimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, alicePositionId, alice);
+
+        assertEq(claimed, 100e18);
+        assertEq(alt.balanceOf(alice), 100e18);
+        assertEq(ERC20(EqualIndexAdminFacetV3(diamond).getIndex(indexId).token).balanceOf(bob), 10e18);
+    }
+
+    function test_EqualIndexRewards_MintFromPositionSettlesBeforeBalanceIncrease() public {
+        uint256 alicePositionId = _fundEvePosition(alice, 20e18);
+        uint256 bobPositionId = _fundEvePosition(bob, 20e18);
+        uint256 indexId = _createRewardIndex("Mint Reward Index", "MRI");
+
+        vm.prank(bob);
+        EqualIndexPositionFacet(diamond).mintFromPosition(bobPositionId, indexId, 10e18);
+
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), address(this), 30e18, 0, 0, true);
+        alt.mint(address(this), 1_000e18);
+        _fundRewardProgram(address(this), programId, alt, 1_000e18);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, indexId, 10e18);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory state) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(state.eligibleSupply, 20e18);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(alice);
+        uint256 aliceClaimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, alicePositionId, alice);
+        vm.prank(bob);
+        uint256 bobClaimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, bobPositionId, bob);
+
+        assertEq(aliceClaimed, 150e18);
+        assertEq(bobClaimed, 450e18);
+    }
+
+    function test_EqualIndexRewards_BurnFromPositionSettlesBeforeBalanceDecrease() public {
+        uint256 alicePositionId = _fundEvePosition(alice, 20e18);
+        uint256 bobPositionId = _fundEvePosition(bob, 20e18);
+        uint256 indexId = _createRewardIndex("Burn Reward Index", "BRI");
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, indexId, 10e18);
+        vm.prank(bob);
+        EqualIndexPositionFacet(diamond).mintFromPosition(bobPositionId, indexId, 10e18);
+
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), address(this), 30e18, 0, 0, true);
+        alt.mint(address(this), 1_000e18);
+        _fundRewardProgram(address(this), programId, alt, 1_000e18);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).burnFromPosition(alicePositionId, indexId, 5e18);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory state) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(state.eligibleSupply, 15e18);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(alice);
+        uint256 aliceClaimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, alicePositionId, alice);
+        vm.prank(bob);
+        uint256 bobClaimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, bobPositionId, bob);
+
+        assertEq(aliceClaimed, 250e18);
+        assertEq(bobClaimed, 350e18);
+    }
+
+    function test_EqualIndexRewards_RecoverySettlesBeforePrincipalWriteDown() public {
+        uint256 alicePositionId = _fundEvePosition(alice, 20e18);
+        uint256 bobPositionId = _fundEvePosition(bob, 10e18);
+        uint256 indexId = _createRewardIndex("Recover Reward Index", "RRI");
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, indexId, 2e18);
+        vm.prank(bob);
+        EqualIndexPositionFacet(diamond).mintFromPosition(bobPositionId, indexId, 1e18);
+
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(
+                EqualIndexLendingFacet.configureLending.selector, indexId, 10_000, 0, 1 days, 30 days
+            )
+        );
+
+        vm.prank(alice);
+        uint256 loanId = EqualIndexLendingFacet(diamond).borrowFromPosition(alicePositionId, indexId, 1e18, 1 days);
+
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), address(this), 30e18, 0, 0, true);
+        alt.mint(address(this), 1_000e18);
+        _fundRewardProgram(address(this), programId, alt, 1_000e18);
+
+        vm.warp(block.timestamp + 10);
+        EqualIndexLendingFacet(diamond).recoverExpiredIndexLoan(loanId);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory state) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(state.eligibleSupply, 2e18);
+
+        vm.warp(block.timestamp + 10);
+        vm.prank(alice);
+        uint256 aliceClaimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, alicePositionId, alice);
+        vm.prank(bob);
+        uint256 bobClaimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, bobPositionId, bob);
+
+        assertEq(aliceClaimed, 350e18);
+        assertEq(bobClaimed, 250e18);
+    }
+
+    function _fundEvePosition(address user, uint256 amount) internal returns (uint256 positionId) {
+        eve.mint(user, amount);
+        positionId = _mintPosition(user, 1);
+
+        vm.startPrank(user);
+        eve.approve(diamond, amount);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, amount, amount);
+        vm.stopPrank();
+    }
+
+    function _createRewardIndex(string memory name_, string memory symbol_) internal returns (uint256 indexId) {
+        (indexId,) = _createIndexThroughTimelock(_singleAssetIndexParams(name_, symbol_, address(eve), 0, 0));
     }
 }
