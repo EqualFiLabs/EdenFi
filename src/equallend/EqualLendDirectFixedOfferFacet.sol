@@ -196,6 +196,15 @@ contract EqualLendDirectFixedOfferFacet {
             uint256[] storage borrowerOffers = LibEqualLendDirectStorage.ids(store.fixedBorrowerOfferIndex, positionKey);
             _cancelFixedBorrowerOffer(borrowerOffers[borrowerOffers.length - 1], false);
         }
+        while (LibEqualLendDirectStorage.count(store.rollingLenderOfferIndex, positionKey) > 0) {
+            uint256[] storage lenderRollingOffers = LibEqualLendDirectStorage.ids(store.rollingLenderOfferIndex, positionKey);
+            _cancelRollingLenderOffer(lenderRollingOffers[lenderRollingOffers.length - 1], false);
+        }
+        while (LibEqualLendDirectStorage.count(store.rollingBorrowerOfferIndex, positionKey) > 0) {
+            uint256[] storage borrowerRollingOffers =
+                LibEqualLendDirectStorage.ids(store.rollingBorrowerOfferIndex, positionKey);
+            _cancelRollingBorrowerOffer(borrowerRollingOffers[borrowerRollingOffers.length - 1], false);
+        }
     }
 
     function hasOpenOffers(bytes32 positionKey) external view returns (bool) {
@@ -242,6 +251,38 @@ contract EqualLendDirectFixedOfferFacet {
         );
 
         emit FixedOfferCancelled(offerId, LibEqualLendDirectStorage.OfferKind.FixedBorrower, offer.borrowerPositionKey);
+    }
+
+    function _cancelRollingLenderOffer(uint256 offerId, bool enforceOwner) internal {
+        LibEqualLendDirectStorage.DirectStorage storage store = LibEqualLendDirectStorage.s();
+        LibEqualLendDirectStorage.RollingLenderOffer storage offer = store.rollingLenderOffers[offerId];
+        if (offer.offerId == 0 || offer.cancelled || offer.filled) revert DirectError_InvalidOffer();
+        if (enforceOwner) {
+            _requireOwnedPosition(offer.lenderPositionId);
+        }
+
+        offer.cancelled = true;
+        LibEqualLendDirectStorage.removeRollingLenderOffer(store, offer.lenderPositionKey, offerId);
+        LibEqualLendDirectAccounting.decreaseOfferEscrow(offer.lenderPositionKey, offer.lenderPoolId, offer.principal);
+
+        emit FixedOfferCancelled(offerId, LibEqualLendDirectStorage.OfferKind.RollingLender, offer.lenderPositionKey);
+    }
+
+    function _cancelRollingBorrowerOffer(uint256 offerId, bool enforceOwner) internal {
+        LibEqualLendDirectStorage.DirectStorage storage store = LibEqualLendDirectStorage.s();
+        LibEqualLendDirectStorage.RollingBorrowerOffer storage offer = store.rollingBorrowerOffers[offerId];
+        if (offer.offerId == 0 || offer.cancelled || offer.filled) revert DirectError_InvalidOffer();
+        if (enforceOwner) {
+            _requireOwnedPosition(offer.borrowerPositionId);
+        }
+
+        offer.cancelled = true;
+        LibEqualLendDirectStorage.removeRollingBorrowerOffer(store, offer.borrowerPositionKey, offerId);
+        LibEqualLendDirectAccounting.decreaseLockedCapital(
+            offer.borrowerPositionKey, offer.collateralPoolId, offer.collateralLocked
+        );
+
+        emit FixedOfferCancelled(offerId, LibEqualLendDirectStorage.OfferKind.RollingBorrower, offer.borrowerPositionKey);
     }
 
     function _requireOwnedPosition(uint256 positionId) internal view returns (bytes32 positionKey) {
