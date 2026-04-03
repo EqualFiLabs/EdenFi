@@ -117,6 +117,15 @@ contract EqualLendDirectFixedAgreementHarness is
         return (store.lenderRatioOffers[offerId], store.offerKindById[offerId]);
     }
 
+    function getBorrowerRatioOffer(uint256 offerId)
+        external
+        view
+        returns (LibEqualLendDirectStorage.BorrowerRatioTrancheOffer memory offer, LibEqualLendDirectStorage.OfferKind kind)
+    {
+        LibEqualLendDirectStorage.DirectStorage storage store = LibEqualLendDirectStorage.s();
+        return (store.borrowerRatioOffers[offerId], store.offerKindById[offerId]);
+    }
+
     function encumbranceOf(bytes32 positionKey, uint256 poolId)
         external
         view
@@ -471,6 +480,171 @@ contract EqualLendDirectFixedAgreementFacetTest is Test {
         assertEq(sameAssetToken.balanceOf(bob), _borrowerNetFor(40 ether, 900, 14 days), "same-asset borrower proceeds");
     }
 
+    function test_acceptBorrowerRatioTrancheOffer_partialFillCancelReleasesOnlyUnfilledCollateral() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 1, 200 ether, borrowToken);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 2, 400 ether, collateralToken);
+        bytes32 lenderKey = positionNft.getPositionKey(lenderPositionId);
+        bytes32 borrowerKey = positionNft.getPositionKey(borrowerPositionId);
+
+        vm.prank(bob);
+        uint256 offerId = harness.postBorrowerRatioTrancheOffer(
+            EqualLendDirectFixedOfferFacet.BorrowerRatioTrancheOfferParams({
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                collateralCap: 120 ether,
+                priceNumerator: 1,
+                priceDenominator: 2,
+                minCollateralPerFill: 40 ether,
+                aprBps: 900,
+                durationSeconds: 14 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
+
+        vm.prank(alice);
+        uint256 agreementId = harness.acceptBorrowerRatioTrancheOffer(
+            offerId, lenderPositionId, 50 ether, _borrowerNetFor(25 ether, 900, 14 days)
+        );
+
+        (
+            LibEqualLendDirectStorage.BorrowerRatioTrancheOffer memory offer,
+            LibEqualLendDirectStorage.OfferKind kind
+        ) = harness.getBorrowerRatioOffer(offerId);
+        assertEq(uint256(kind), uint256(LibEqualLendDirectStorage.OfferKind.RatioTrancheBorrower), "borrower ratio offer kind");
+        assertEq(offer.collateralRemaining, 70 ether, "remaining collateral after partial fill");
+        assertFalse(offer.filled, "borrower ratio offer should stay live after partial fill");
+        assertTrue(harness.hasOpenOffers(borrowerKey), "open borrower ratio offer not tracked after partial fill");
+
+        (LibEqualLendDirectStorage.FixedAgreement memory agreement,) = harness.getFixedAgreement(agreementId);
+        assertEq(agreement.principal, 25 ether, "partial borrower ratio principal");
+        assertEq(agreement.collateralLocked, 50 ether, "partial borrower ratio collateral");
+
+        (uint256 borrowerLocked,,) = harness.encumbranceOf(borrowerKey, 2);
+        (, uint256 lenderEncumbered, uint256 lenderEscrow) = harness.encumbranceOf(lenderKey, 1);
+        assertEq(borrowerLocked, 120 ether, "borrower ratio locked collateral after partial fill");
+        assertEq(lenderEncumbered, 25 ether, "lender exposure after borrower ratio partial fill");
+        assertEq(lenderEscrow, 0, "unexpected lender escrow for borrower ratio fill");
+        assertEq(harness.borrowedPrincipalOf(borrowerKey, 1), 25 ether, "borrowed principal after borrower ratio partial fill");
+        assertEq(harness.principalOf(1, lenderKey), 175 ether, "lender principal after borrower ratio partial fill");
+        assertEq(borrowToken.balanceOf(bob), _borrowerNetFor(25 ether, 900, 14 days), "borrower proceeds after borrower ratio partial fill");
+
+        vm.prank(bob);
+        harness.cancelBorrowerRatioTrancheOffer(offerId);
+
+        (offer,) = harness.getBorrowerRatioOffer(offerId);
+        assertTrue(offer.cancelled, "borrower ratio offer not cancelled after partial fill");
+        assertTrue(offer.filled, "borrower ratio offer not terminal after cancellation");
+        assertEq(offer.collateralRemaining, 0, "borrower ratio remaining collateral after cancellation");
+        assertFalse(harness.hasOpenOffers(borrowerKey), "borrower ratio offer still tracked after cancellation");
+
+        (borrowerLocked,,) = harness.encumbranceOf(borrowerKey, 2);
+        assertEq(borrowerLocked, 50 ether, "unfilled collateral not released on cancellation");
+        lenderEncumbered;
+        lenderEscrow;
+    }
+
+    function test_acceptBorrowerRatioTrancheOffer_multiFillDepletesOffer() external {
+        uint256 lenderOnePositionId = _mintAndDeposit(alice, 1, 200 ether, borrowToken);
+        address carol = makeAddr("carol");
+        uint256 lenderTwoPositionId = _mintAndDeposit(carol, 1, 200 ether, borrowToken);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 2, 300 ether, collateralToken);
+        bytes32 lenderOneKey = positionNft.getPositionKey(lenderOnePositionId);
+        bytes32 lenderTwoKey = positionNft.getPositionKey(lenderTwoPositionId);
+        bytes32 borrowerKey = positionNft.getPositionKey(borrowerPositionId);
+
+        vm.prank(bob);
+        uint256 offerId = harness.postBorrowerRatioTrancheOffer(
+            EqualLendDirectFixedOfferFacet.BorrowerRatioTrancheOfferParams({
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                collateralCap: 180 ether,
+                priceNumerator: 1,
+                priceDenominator: 2,
+                minCollateralPerFill: 60 ether,
+                aprBps: 1_000,
+                durationSeconds: 21 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: true
+            })
+        );
+
+        vm.prank(alice);
+        uint256 firstAgreementId = harness.acceptBorrowerRatioTrancheOffer(
+            offerId, lenderOnePositionId, 60 ether, _borrowerNetFor(30 ether, 1_000, 21 days)
+        );
+
+        vm.prank(carol);
+        uint256 secondAgreementId = harness.acceptBorrowerRatioTrancheOffer(
+            offerId, lenderTwoPositionId, 120 ether, _borrowerNetFor(60 ether, 1_000, 21 days)
+        );
+
+        _assertBorrowerRatioMultiFillDepletion(
+            offerId, firstAgreementId, secondAgreementId, lenderOneKey, lenderTwoKey, borrowerKey
+        );
+    }
+
+    function test_acceptBorrowerRatioTrancheOffer_sameAssetUsesSharedDebtAndSingleLock() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 3, 200 ether, sameAssetToken);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 3, 300 ether, sameAssetToken);
+        bytes32 lenderKey = positionNft.getPositionKey(lenderPositionId);
+        bytes32 borrowerKey = positionNft.getPositionKey(borrowerPositionId);
+
+        vm.prank(bob);
+        uint256 offerId = harness.postBorrowerRatioTrancheOffer(
+            EqualLendDirectFixedOfferFacet.BorrowerRatioTrancheOfferParams({
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: 3,
+                collateralPoolId: 3,
+                borrowAsset: address(sameAssetToken),
+                collateralAsset: address(sameAssetToken),
+                collateralCap: 80 ether,
+                priceNumerator: 1,
+                priceDenominator: 2,
+                minCollateralPerFill: 20 ether,
+                aprBps: 900,
+                durationSeconds: 14 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: true,
+                allowLenderCall: false
+            })
+        );
+
+        vm.prank(alice);
+        uint256 agreementId =
+            harness.acceptBorrowerRatioTrancheOffer(offerId, lenderPositionId, 40 ether, _borrowerNetFor(20 ether, 900, 14 days));
+
+        (LibEqualLendDirectStorage.FixedAgreement memory agreement,) = harness.getFixedAgreement(agreementId);
+        assertEq(agreement.principal, 20 ether, "same-asset borrower ratio principal");
+        assertEq(agreement.collateralLocked, 40 ether, "same-asset borrower ratio collateral");
+
+        (uint256 borrowerLocked,,) = harness.encumbranceOf(borrowerKey, 3);
+        (, uint256 lenderEncumbered, uint256 lenderEscrow) = harness.encumbranceOf(lenderKey, 3);
+        assertEq(borrowerLocked, 80 ether, "same-asset borrower ratio total lock");
+        assertEq(lenderEncumbered, 20 ether, "same-asset borrower ratio lender exposure");
+        assertEq(lenderEscrow, 0, "same-asset borrower ratio lender escrow");
+
+        assertEq(harness.principalOf(3, lenderKey), 180 ether, "same-asset borrower ratio lender principal");
+        assertEq(harness.totalDepositsOf(3), 480 ether, "same-asset borrower ratio pool deposits");
+        assertEq(harness.borrowedPrincipalOf(borrowerKey, 3), 20 ether, "same-asset borrower ratio borrowed principal");
+        assertEq(harness.sameAssetDebtOf(3, borrowerKey), 20 ether, "same-asset borrower ratio pool debt");
+        assertEq(harness.sameAssetDebtByAsset(borrowerKey, address(sameAssetToken)), 20 ether, "same-asset borrower ratio stored debt");
+        assertEq(harness.activeCreditPrincipalTotalOf(3), 20 ether, "same-asset borrower ratio active credit total");
+
+        (uint256 debtPrincipal,, uint256 debtIndexSnapshot) = harness.activeCreditDebtStateOf(3, borrowerKey);
+        assertEq(debtPrincipal, 20 ether, "same-asset borrower ratio active credit debt principal");
+        assertEq(debtIndexSnapshot, 0, "same-asset borrower ratio active credit index snapshot");
+        assertEq(sameAssetToken.balanceOf(bob), _borrowerNetFor(20 ether, 900, 14 days), "same-asset borrower ratio proceeds");
+    }
+
     function _expectedFeeSplit(uint256 principal, uint16 aprBps, uint64 duration)
         internal
         pure
@@ -564,6 +738,44 @@ contract EqualLendDirectFixedAgreementFacetTest is Test {
         assertEq(harness.totalDepositsOf(1), 120 ether, "pool deposits after multi-fill");
         assertEq(harness.borrowedPrincipalOf(borrowerOneKey, 1), 60 ether, "first borrower borrowed principal");
         assertEq(harness.borrowedPrincipalOf(borrowerTwoKey, 1), 120 ether, "second borrower borrowed principal");
+    }
+
+    function _assertBorrowerRatioMultiFillDepletion(
+        uint256 offerId,
+        uint256 firstAgreementId,
+        uint256 secondAgreementId,
+        bytes32 lenderOneKey,
+        bytes32 lenderTwoKey,
+        bytes32 borrowerKey
+    ) internal view {
+        (
+            LibEqualLendDirectStorage.BorrowerRatioTrancheOffer memory offer,
+            LibEqualLendDirectStorage.OfferKind kind
+        ) = harness.getBorrowerRatioOffer(offerId);
+        assertEq(uint256(kind), uint256(LibEqualLendDirectStorage.OfferKind.RatioTrancheBorrower), "borrower ratio kind after depletion");
+        assertEq(offer.collateralRemaining, 0, "borrower ratio offer not depleted");
+        assertTrue(offer.filled, "borrower ratio offer not marked filled");
+        assertFalse(harness.hasOpenOffers(borrowerKey), "depleted borrower ratio offer still tracked");
+
+        (LibEqualLendDirectStorage.FixedAgreement memory firstAgreement,) = harness.getFixedAgreement(firstAgreementId);
+        (LibEqualLendDirectStorage.FixedAgreement memory secondAgreement,) = harness.getFixedAgreement(secondAgreementId);
+        assertEq(firstAgreement.principal, 30 ether, "first borrower ratio agreement principal");
+        assertEq(firstAgreement.collateralLocked, 60 ether, "first borrower ratio agreement collateral");
+        assertEq(secondAgreement.principal, 60 ether, "second borrower ratio agreement principal");
+        assertEq(secondAgreement.collateralLocked, 120 ether, "second borrower ratio agreement collateral");
+
+        (uint256 borrowerLocked,,) = harness.encumbranceOf(borrowerKey, 2);
+        (, uint256 lenderOneEncumbered, uint256 lenderOneEscrow) = harness.encumbranceOf(lenderOneKey, 1);
+        (, uint256 lenderTwoEncumbered, uint256 lenderTwoEscrow) = harness.encumbranceOf(lenderTwoKey, 1);
+        assertEq(borrowerLocked, 180 ether, "borrower ratio total lock after depletion");
+        assertEq(lenderOneEncumbered, 30 ether, "first lender exposure after depletion");
+        assertEq(lenderOneEscrow, 0, "first lender escrow after depletion");
+        assertEq(lenderTwoEncumbered, 60 ether, "second lender exposure after depletion");
+        assertEq(lenderTwoEscrow, 0, "second lender escrow after depletion");
+        assertEq(harness.principalOf(1, lenderOneKey), 170 ether, "first lender principal after depletion");
+        assertEq(harness.principalOf(1, lenderTwoKey), 140 ether, "second lender principal after depletion");
+        assertEq(harness.totalDepositsOf(1), 310 ether, "lender pool deposits after borrower ratio multi-fill");
+        assertEq(harness.borrowedPrincipalOf(borrowerKey, 1), 90 ether, "borrowed principal after borrower ratio multi-fill");
     }
 
     function _assertCrossAssetAgreement(uint256 agreementId, uint256 lenderPositionId, uint256 borrowerPositionId)
