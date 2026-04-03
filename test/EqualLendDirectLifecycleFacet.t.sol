@@ -20,6 +20,7 @@ import {
     DirectError_EarlyRepayNotAllowed,
     DirectError_GracePeriodActive
 } from "src/libraries/Errors.sol";
+import {NotNFTOwner} from "src/libraries/Errors.sol";
 
 contract MockERC20DirectLifecycle is ERC20 {
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
@@ -135,6 +136,29 @@ contract EqualLendDirectLifecycleHarness is
     function activeCreditPrincipalTotalOf(uint256 pid) external view returns (uint256) {
         return LibAppStorage.s().pools[pid].activeCreditPrincipalTotal;
     }
+
+    function borrowerAgreementCount(bytes32 positionKey) external view returns (uint256) {
+        return LibEqualLendDirectStorage.count(LibEqualLendDirectStorage.s().borrowerAgreementIndex, positionKey);
+    }
+
+    function lenderAgreementCount(bytes32 positionKey) external view returns (uint256) {
+        return LibEqualLendDirectStorage.count(LibEqualLendDirectStorage.s().lenderAgreementIndex, positionKey);
+    }
+
+    function borrowerAgreementIds(bytes32 positionKey) external view returns (uint256[] memory ids) {
+        return _copyIds(LibEqualLendDirectStorage.ids(LibEqualLendDirectStorage.s().borrowerAgreementIndex, positionKey));
+    }
+
+    function lenderAgreementIds(bytes32 positionKey) external view returns (uint256[] memory ids) {
+        return _copyIds(LibEqualLendDirectStorage.ids(LibEqualLendDirectStorage.s().lenderAgreementIndex, positionKey));
+    }
+
+    function _copyIds(uint256[] storage source) internal view returns (uint256[] memory ids) {
+        ids = new uint256[](source.length);
+        for (uint256 i = 0; i < source.length; ++i) {
+            ids[i] = source[i];
+        }
+    }
 }
 
 contract EqualLendDirectLifecycleFacetTest is Test {
@@ -225,6 +249,8 @@ contract EqualLendDirectLifecycleFacetTest is Test {
         assertEq(borrowerLocked, 0, "borrower collateral still locked");
         assertEq(lenderEncumbered, 0, "lender exposure still encumbered");
         assertEq(harness.principalOf(3, lenderKey), 100 ether, "lender principal not restored");
+        assertEq(harness.borrowerAgreementCount(borrowerKey), 0, "borrower agreement index after repay");
+        assertEq(harness.lenderAgreementCount(lenderKey), 0, "lender agreement index after repay");
 
         uint256 aliceBefore = sameAssetToken.balanceOf(alice);
         vm.prank(alice);
@@ -283,6 +309,8 @@ contract EqualLendDirectLifecycleFacetTest is Test {
         vm.prank(alice);
         harness.withdrawFromPosition(lenderPositionId, 2, 80 ether, 80 ether);
         assertEq(collateralToken.balanceOf(alice) - aliceBefore, 80 ether, "lender collateral withdraw");
+        assertEq(harness.borrowerAgreementCount(borrowerKey), 0, "borrower agreement index after exercise");
+        assertEq(harness.lenderAgreementCount(positionNft.getPositionKey(lenderPositionId)), 0, "lender agreement index after exercise");
     }
 
     function test_recover_afterGracePeriod_permissionlessClearsStateAndDistributesCollateral() external {
@@ -333,11 +361,110 @@ contract EqualLendDirectLifecycleFacetTest is Test {
         assertEq(harness.principalOf(2, lenderKey), 80 ether, "lender collateral principal after recover");
         assertEq(collateralToken.balanceOf(treasury) - treasuryBefore, 2 ether, "treasury default share");
         assertEq(harness.yieldReserveOf(2), 18 ether, "fee-index reserve from recover");
+        assertEq(harness.borrowerAgreementCount(borrowerKey), 0, "borrower agreement index after recover");
+        assertEq(harness.lenderAgreementCount(lenderKey), 0, "lender agreement index after recover");
 
         uint256 aliceBefore = collateralToken.balanceOf(alice);
         vm.prank(alice);
         harness.withdrawFromPosition(lenderPositionId, 2, 80 ether, 80 ether);
         assertEq(collateralToken.balanceOf(alice) - aliceBefore, 80 ether, "lender collateral withdraw after recover");
+    }
+
+    function test_callDirect_followsTransferredLenderOwnership() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 1, 100 ether, borrowToken);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 2, 150 ether, collateralToken);
+
+        vm.prank(alice);
+        uint256 offerId = harness.postFixedLenderOffer(
+            EqualLendDirectFixedOfferFacet.FixedLenderOfferParams({
+                lenderPositionId: lenderPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principal: 80 ether,
+                collateralLocked: 100 ether,
+                aprBps: 800,
+                durationSeconds: 21 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: true
+            })
+        );
+
+        vm.prank(bob);
+        uint256 agreementId = harness.acceptFixedLenderOffer(offerId, borrowerPositionId, _borrowerNetFor(80 ether, 800, 21 days));
+
+        vm.prank(alice);
+        positionNft.transferFrom(alice, carol, lenderPositionId);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(NotNFTOwner.selector, alice, lenderPositionId));
+        harness.callDirect(agreementId);
+
+        vm.prank(carol);
+        harness.callDirect(agreementId);
+
+        (LibEqualLendDirectStorage.FixedAgreement memory agreement,) = harness.getFixedAgreement(agreementId);
+        assertEq(agreement.dueTimestamp, uint64(block.timestamp), "transferred lender did not control call");
+    }
+
+    function test_repay_ratioOriginatedAgreement_clearsGenericAgreementIndexes() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 1, 200 ether, borrowToken);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 2, 300 ether, collateralToken);
+        bytes32 lenderKey = positionNft.getPositionKey(lenderPositionId);
+        bytes32 borrowerKey = positionNft.getPositionKey(borrowerPositionId);
+
+        vm.prank(bob);
+        uint256 offerId = harness.postBorrowerRatioTrancheOffer(
+            EqualLendDirectFixedOfferFacet.BorrowerRatioTrancheOfferParams({
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                collateralCap: 120 ether,
+                priceNumerator: 1,
+                priceDenominator: 2,
+                minCollateralPerFill: 40 ether,
+                aprBps: 900,
+                durationSeconds: 14 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
+
+        vm.prank(alice);
+        uint256 agreementId = harness.acceptBorrowerRatioTrancheOffer(
+            offerId, lenderPositionId, 60 ether, _borrowerNetFor(30 ether, 900, 14 days)
+        );
+
+        uint256[] memory borrowerAgreementIdsBefore = harness.borrowerAgreementIds(borrowerKey);
+        uint256[] memory lenderAgreementIdsBefore = harness.lenderAgreementIds(lenderKey);
+
+        assertEq(harness.borrowerAgreementCount(borrowerKey), 1, "borrower agreement count before ratio repay");
+        assertEq(harness.lenderAgreementCount(lenderKey), 1, "lender agreement count before ratio repay");
+        assertEq(borrowerAgreementIdsBefore.length, 1, "borrower agreement ids before ratio repay");
+        assertEq(lenderAgreementIdsBefore.length, 1, "lender agreement ids before ratio repay");
+        assertEq(borrowerAgreementIdsBefore[0], agreementId, "borrower agreement id before ratio repay");
+        assertEq(lenderAgreementIdsBefore[0], agreementId, "lender agreement id before ratio repay");
+
+        borrowToken.mint(bob, 30 ether);
+        vm.prank(bob);
+        borrowToken.approve(address(harness), 30 ether);
+
+        vm.prank(bob);
+        harness.repay(agreementId, 30 ether);
+
+        (LibEqualLendDirectStorage.FixedAgreement memory agreement,) = harness.getFixedAgreement(agreementId);
+        uint256[] memory borrowerAgreementIdsAfter = harness.borrowerAgreementIds(borrowerKey);
+        uint256[] memory lenderAgreementIdsAfter = harness.lenderAgreementIds(lenderKey);
+        assertEq(uint256(agreement.status), uint256(LibEqualLendDirectStorage.AgreementStatus.Repaid), "ratio agreement status");
+        assertEq(harness.borrowerAgreementCount(borrowerKey), 0, "borrower agreement count after ratio repay");
+        assertEq(harness.lenderAgreementCount(lenderKey), 0, "lender agreement count after ratio repay");
+        assertEq(borrowerAgreementIdsAfter.length, 0, "borrower agreement ids after ratio repay");
+        assertEq(lenderAgreementIdsAfter.length, 0, "lender agreement ids after ratio repay");
     }
 
     function _borrowerNetFor(uint256 principal, uint16 aprBps, uint64 duration) internal pure returns (uint256) {

@@ -138,7 +138,10 @@ contract EqualLendDirectViewFacet {
     {
         LibEqualLendDirectStorage.DirectStorage storage store = LibEqualLendDirectStorage.s();
         _requireAgreementKind(store, agreementId, LibEqualLendDirectStorage.AgreementKind.Fixed);
-        return store.fixedAgreements[agreementId];
+        LibEqualLendDirectStorage.FixedAgreement memory agreement = store.fixedAgreements[agreementId];
+        agreement.lender = _positionOwner(agreement.lenderPositionId);
+        agreement.borrower = _positionOwner(agreement.borrowerPositionId);
+        return agreement;
     }
 
     function getRollingAgreement(uint256 agreementId)
@@ -148,7 +151,10 @@ contract EqualLendDirectViewFacet {
     {
         LibEqualLendDirectStorage.DirectStorage storage store = LibEqualLendDirectStorage.s();
         _requireAgreementKind(store, agreementId, LibEqualLendDirectStorage.AgreementKind.Rolling);
-        return store.rollingAgreements[agreementId];
+        LibEqualLendDirectStorage.RollingAgreement memory agreement = store.rollingAgreements[agreementId];
+        agreement.lender = _positionOwner(agreement.lenderPositionId);
+        agreement.borrower = _positionOwner(agreement.borrowerPositionId);
+        return agreement;
     }
 
     function getBorrowerOfferIds(uint256 positionId) external view returns (PositionOfferIds memory lookup) {
@@ -270,6 +276,10 @@ contract EqualLendDirectViewFacet {
 
     function _positionKey(uint256 positionId) internal view returns (bytes32) {
         return PositionNFT(LibPositionNFT.s().positionNFTContract).getPositionKey(positionId);
+    }
+
+    function _positionOwner(uint256 positionId) internal view returns (address) {
+        return PositionNFT(LibPositionNFT.s().positionNFTContract).ownerOf(positionId);
     }
 
     function _requireOfferKind(

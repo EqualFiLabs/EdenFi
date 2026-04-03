@@ -18,6 +18,7 @@ import {LibEqualLendDirectStorage} from "src/libraries/LibEqualLendDirectStorage
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {Types} from "src/libraries/Types.sol";
 import {RollingError_AmortizationDisabled, RollingError_RecoveryNotEligible} from "src/libraries/Errors.sol";
+import {NotNFTOwner} from "src/libraries/Errors.sol";
 
 contract MockERC20RollingPayments is ERC20 {
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
@@ -179,6 +180,31 @@ contract EqualLendDirectRollingPaymentHarness is
     function rollingLenderAgreementCount(bytes32 positionKey) external view returns (uint256) {
         return LibEqualLendDirectStorage.count(LibEqualLendDirectStorage.s().rollingLenderAgreementIndex, positionKey);
     }
+
+    function borrowerAgreementIds(bytes32 positionKey) external view returns (uint256[] memory ids) {
+        return _copyIds(LibEqualLendDirectStorage.ids(LibEqualLendDirectStorage.s().borrowerAgreementIndex, positionKey));
+    }
+
+    function lenderAgreementIds(bytes32 positionKey) external view returns (uint256[] memory ids) {
+        return _copyIds(LibEqualLendDirectStorage.ids(LibEqualLendDirectStorage.s().lenderAgreementIndex, positionKey));
+    }
+
+    function hasOpenOffers(bytes32 positionKey) external view returns (bool) {
+        LibEqualLendDirectStorage.DirectStorage storage store = LibEqualLendDirectStorage.s();
+        return LibEqualLendDirectStorage.count(store.fixedLenderOfferIndex, positionKey) != 0
+            || LibEqualLendDirectStorage.count(store.fixedBorrowerOfferIndex, positionKey) != 0
+            || LibEqualLendDirectStorage.count(store.lenderRatioOfferIndex, positionKey) != 0
+            || LibEqualLendDirectStorage.count(store.borrowerRatioOfferIndex, positionKey) != 0
+            || LibEqualLendDirectStorage.count(store.rollingLenderOfferIndex, positionKey) != 0
+            || LibEqualLendDirectStorage.count(store.rollingBorrowerOfferIndex, positionKey) != 0;
+    }
+
+    function _copyIds(uint256[] storage source) internal view returns (uint256[] memory ids) {
+        ids = new uint256[](source.length);
+        for (uint256 i = 0; i < source.length; ++i) {
+            ids[i] = source[i];
+        }
+    }
 }
 
 contract EqualLendDirectRollingPaymentFacetTest is Test {
@@ -209,6 +235,7 @@ contract EqualLendDirectRollingPaymentFacetTest is Test {
 
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
+    address internal carol = makeAddr("carol");
     address internal treasury = makeAddr("treasury");
 
     function setUp() public {
@@ -345,6 +372,38 @@ contract EqualLendDirectRollingPaymentFacetTest is Test {
         assertEq(harness.trackedBalanceOf(3), 210 ether + paymentAmount, "tracked balance credit");
     }
 
+    function test_makeRollingPayment_followsTransferredBorrowerOwnership() external {
+        (uint256 agreementId,,, uint64 acceptTs) = _setupCrossAssetAgreement(false, true);
+        uint256 borrowerPositionId = 2;
+        borrowerPositionId = _borrowerPositionIdOfAgreement(agreementId);
+
+        vm.warp(acceptTs + 10 days);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);
+        RollingAccrualExpectation memory accrual = _previewAccrual(agreement, block.timestamp);
+        uint256 totalInterestDue = accrual.arrearsDue + accrual.currentInterestDue;
+
+        borrowToken.mint(bob, totalInterestDue);
+        borrowToken.mint(carol, totalInterestDue);
+
+        vm.prank(bob);
+        positionNft.transferFrom(bob, carol, borrowerPositionId);
+
+        vm.startPrank(bob);
+        borrowToken.approve(address(harness), totalInterestDue);
+        vm.expectRevert(abi.encodeWithSelector(NotNFTOwner.selector, bob, borrowerPositionId));
+        harness.makeRollingPayment(agreementId, totalInterestDue, totalInterestDue, 0);
+        vm.stopPrank();
+
+        vm.startPrank(carol);
+        borrowToken.approve(address(harness), totalInterestDue);
+        harness.makeRollingPayment(agreementId, totalInterestDue, totalInterestDue, 0);
+        vm.stopPrank();
+
+        (LibEqualLendDirectStorage.RollingAgreement memory afterAgreement,) = harness.getRollingAgreement(agreementId);
+        assertEq(afterAgreement.paymentCount, 1, "transferred borrower payment did not settle");
+    }
+
     function test_repayRollingInFull_clearsRollingAgreementAndUnlocksCollateral() external {
         (uint256 agreementId, bytes32 lenderKey, bytes32 borrowerKey, uint64 acceptTs) = _setupSameAssetAgreement(true, true);
 
@@ -359,6 +418,9 @@ contract EqualLendDirectRollingPaymentFacetTest is Test {
         _assertCloseoutState(
             agreementId, lenderKey, borrowerKey, 100 ether + firstInterestDue + closeoutInterest, address(sameAssetToken)
         );
+
+        assertEq(harness.borrowerAgreementIds(borrowerKey).length, 0, "borrower agreement ids after full rolling repay");
+        assertEq(harness.lenderAgreementIds(lenderKey).length, 0, "lender agreement ids after full rolling repay");
     }
 
     function test_exerciseRolling_clearsStateAndRefundsUnusedCollateral() external {
@@ -489,6 +551,11 @@ contract EqualLendDirectRollingPaymentFacetTest is Test {
         acceptTs = uint64(block.timestamp);
         vm.prank(bob);
         agreementId = harness.acceptRollingLenderOffer(offerId, borrowerPositionId, 0, 60 ether);
+    }
+
+    function _borrowerPositionIdOfAgreement(uint256 agreementId) internal view returns (uint256) {
+        (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);
+        return agreement.borrowerPositionId;
     }
 
     function _setupSameAssetAgreement(bool allowAmortization, bool allowEarlyRepay)

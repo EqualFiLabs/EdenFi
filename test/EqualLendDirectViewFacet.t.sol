@@ -231,6 +231,8 @@ contract EqualLendDirectViewFacetTest is Test {
 
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
+    address internal carol = makeAddr("carol");
+    address internal dave = makeAddr("dave");
     address internal treasury = makeAddr("treasury");
     address internal timelock = makeAddr("timelock");
 
@@ -592,6 +594,74 @@ contract EqualLendDirectViewFacetTest is Test {
         );
         status = harness.getRollingStatus(capAgreementId);
         assertTrue(status.isAtPaymentCap, "rolling status at payment cap");
+    }
+
+    function test_agreementReads_resolveLiveOwnersAfterPositionTransfer() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 1, 500 ether, borrowToken);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 2, 600 ether, collateralToken);
+
+        uint256 fixedAgreementId = harness.seedFixedAgreement(
+            EqualLendDirectViewHarness.SeedFixedAgreementParams({
+                lenderPositionId: lenderPositionId,
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principal: 90 ether,
+                userInterest: _fixedInterest(90 ether, 700, 14 days),
+                dueTimestamp: block.timestamp + 14 days,
+                collateralLocked: 130 ether,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: true
+            })
+        );
+        uint256 rollingAgreementId = harness.seedRollingAgreement(
+            EqualLendDirectViewHarness.SeedRollingAgreementParams({
+                lenderPositionId: lenderPositionId,
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principal: 110 ether,
+                outstandingPrincipal: 105 ether,
+                collateralLocked: 150 ether,
+                upfrontPremium: 2 ether,
+                nextDue: block.timestamp + 7 days,
+                lastAccrualTimestamp: block.timestamp,
+                arrears: 0,
+                paymentCount: 0,
+                paymentIntervalSeconds: 7 days,
+                rollingApyBps: 900,
+                gracePeriodSeconds: 2 days,
+                maxPaymentCount: 3,
+                allowAmortization: true,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false
+            })
+        );
+
+        vm.prank(alice);
+        positionNft.transferFrom(alice, carol, lenderPositionId);
+        vm.prank(bob);
+        positionNft.transferFrom(bob, dave, borrowerPositionId);
+
+        LibEqualLendDirectStorage.FixedAgreement memory fixedAgreement = harness.getFixedAgreement(fixedAgreementId);
+        LibEqualLendDirectStorage.RollingAgreement memory rollingAgreement = harness.getRollingAgreement(rollingAgreementId);
+        EqualLendDirectViewFacet.PositionAgreementIds memory borrowerAgreements =
+            harness.getBorrowerAgreementIds(borrowerPositionId);
+        EqualLendDirectViewFacet.PositionAgreementIds memory lenderAgreements = harness.getLenderAgreementIds(lenderPositionId);
+
+        assertEq(fixedAgreement.lender, carol, "fixed agreement lender owner");
+        assertEq(fixedAgreement.borrower, dave, "fixed agreement borrower owner");
+        assertEq(rollingAgreement.lender, carol, "rolling agreement lender owner");
+        assertEq(rollingAgreement.borrower, dave, "rolling agreement borrower owner");
+        assertEq(borrowerAgreements.allAgreementIds.length, 2, "borrower agreements after transfer");
+        assertEq(lenderAgreements.allAgreementIds.length, 2, "lender agreements after transfer");
+        assertEq(borrowerAgreements.fixedAgreementIds[0], fixedAgreementId, "borrower fixed agreement after transfer");
+        assertEq(lenderAgreements.rollingAgreementIds[0], rollingAgreementId, "lender rolling agreement after transfer");
     }
 
     function test_trancheStatus_tracksRemainingCapacityFillabilityAndDepletion() external {
