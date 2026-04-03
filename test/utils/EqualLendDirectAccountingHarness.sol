@@ -371,7 +371,8 @@ contract EqualLendDirectAccountingHarness {
                 collateralAsset: collateralAsset,
                 principal: principal,
                 collateralToLock: collateralToLock,
-                convertOfferEscrow: true
+                convertOfferEscrow: true,
+                lockCollateralNow: true
             })
         );
     }

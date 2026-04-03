@@ -23,6 +23,7 @@ library LibEqualLendDirectAccounting {
         uint256 principal;
         uint256 collateralToLock;
         bool convertOfferEscrow;
+        bool lockCollateralNow;
     }
 
     struct PrincipalSettlementParams {
@@ -150,7 +151,9 @@ library LibEqualLendDirectAccounting {
             increaseLiveExposure(params.lenderPositionKey, params.lenderPoolId, params.principal);
         }
 
-        increaseLockedCapital(params.borrowerPositionKey, params.collateralPoolId, params.collateralToLock);
+        if (params.lockCollateralNow) {
+            increaseLockedCapital(params.borrowerPositionKey, params.collateralPoolId, params.collateralToLock);
+        }
         _increaseBorrowedPrincipal(store, params.borrowerPositionKey, params.lenderPoolId, params.principal);
 
         sameAsset = params.borrowAsset == params.collateralAsset;
