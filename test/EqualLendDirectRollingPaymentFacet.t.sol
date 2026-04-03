@@ -17,7 +17,7 @@ import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibEqualLendDirectStorage} from "src/libraries/LibEqualLendDirectStorage.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {Types} from "src/libraries/Types.sol";
-import {RollingError_AmortizationDisabled} from "src/libraries/Errors.sol";
+import {RollingError_AmortizationDisabled, RollingError_RecoveryNotEligible} from "src/libraries/Errors.sol";
 
 contract MockERC20RollingPayments is ERC20 {
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
@@ -41,6 +41,19 @@ contract EqualLendDirectRollingPaymentHarness is
 
     function setTimelock(address timelock_) external {
         LibAppStorage.s().timelock = timelock_;
+    }
+
+    function setTreasury(address treasury_) external {
+        LibAppStorage.s().treasury = treasury_;
+    }
+
+    function setFeeSplits(uint256 treasuryBps, uint256 activeCreditBps) external {
+        if (treasuryBps > type(uint16).max || activeCreditBps > type(uint16).max) revert();
+        LibAppStorage.AppStorage storage store = LibAppStorage.s();
+        store.treasuryShareBps = uint16(treasuryBps);
+        store.treasuryShareConfigured = true;
+        store.activeCreditShareBps = uint16(activeCreditBps);
+        store.activeCreditShareConfigured = true;
     }
 
     function setPositionNFT(address nft) external {
@@ -131,6 +144,10 @@ contract EqualLendDirectRollingPaymentHarness is
         return LibAppStorage.s().pools[pid].totalDeposits;
     }
 
+    function yieldReserveOf(uint256 pid) external view returns (uint256) {
+        return LibAppStorage.s().pools[pid].yieldReserve;
+    }
+
     function borrowedPrincipalOf(bytes32 positionKey, uint256 lenderPoolId) external view returns (uint256) {
         return LibEqualLendDirectStorage.s().borrowedPrincipalByPool[positionKey][lenderPoolId];
     }
@@ -172,6 +189,18 @@ contract EqualLendDirectRollingPaymentFacetTest is Test {
         uint256 dueCountDelta;
     }
 
+    struct TerminalExpectation {
+        uint256 collateralSeized;
+        uint256 penaltyPaid;
+        uint256 interestDue;
+        uint256 principalDue;
+        uint256 debtValueApplied;
+        uint256 borrowerRefund;
+        uint256 lenderShare;
+        uint256 treasuryShare;
+        uint256 feeIndexShare;
+    }
+
     EqualLendDirectRollingPaymentHarness internal harness;
     PositionNFT internal positionNft;
     MockERC20RollingPayments internal borrowToken;
@@ -180,11 +209,14 @@ contract EqualLendDirectRollingPaymentFacetTest is Test {
 
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
+    address internal treasury = makeAddr("treasury");
 
     function setUp() public {
         harness = new EqualLendDirectRollingPaymentHarness();
         harness.setOwner(address(this));
         harness.setTimelock(address(this));
+        harness.setTreasury(treasury);
+        harness.setFeeSplits(1_000, 0);
         harness.setDirectConfig(100, 10_000, 10_000, 8_000, 1 days);
         harness.setRollingConfig(1 days, 24, 2_500, 300, 2_000, 500, 1);
 
@@ -327,6 +359,101 @@ contract EqualLendDirectRollingPaymentFacetTest is Test {
         _assertCloseoutState(
             agreementId, lenderKey, borrowerKey, 100 ether + firstInterestDue + closeoutInterest, address(sameAssetToken)
         );
+    }
+
+    function test_exerciseRolling_clearsStateAndRefundsUnusedCollateral() external {
+        (uint256 agreementId, bytes32 lenderKey, bytes32 borrowerKey, uint64 acceptTs) = _setupSameAssetAgreement(true, true);
+
+        vm.warp(acceptTs + 10 days);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);
+        TerminalExpectation memory expected = _previewTerminalExpectation(agreement, 150 ether, block.timestamp, false);
+        uint256 treasuryBefore = sameAssetToken.balanceOf(treasury);
+
+        vm.prank(bob);
+        harness.exerciseRolling(agreementId);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory afterAgreement,) = harness.getRollingAgreement(agreementId);
+        assertEq(uint256(afterAgreement.status), uint256(LibEqualLendDirectStorage.AgreementStatus.Exercised), "status");
+        assertEq(afterAgreement.outstandingPrincipal, 0, "outstanding principal");
+        assertEq(afterAgreement.arrears, 0, "arrears");
+
+        assertEq(harness.borrowedPrincipalOf(borrowerKey, 3), 0, "borrowed principal");
+        assertEq(harness.sameAssetDebtOf(3, borrowerKey), 0, "same-asset debt");
+        assertEq(harness.sameAssetDebtByAsset(borrowerKey, address(sameAssetToken)), 0, "same-asset debt by asset");
+        assertEq(harness.activeCreditPrincipalTotalOf(3), 0, "active credit principal total");
+
+        (uint256 borrowerLocked,,) = harness.encumbranceOf(borrowerKey, 3);
+        (, uint256 lenderEncumbered,) = harness.encumbranceOf(lenderKey, 3);
+        assertEq(borrowerLocked, 0, "borrower lock");
+        assertEq(lenderEncumbered, 0, "lender exposure");
+
+        assertEq(harness.principalOf(3, lenderKey), 60 ether + expected.lenderShare, "lender recovered principal");
+        assertEq(
+            harness.principalOf(3, borrowerKey),
+            150 ether - expected.debtValueApplied,
+            "borrower refunded principal"
+        );
+        assertEq(sameAssetToken.balanceOf(treasury) - treasuryBefore, expected.treasuryShare, "treasury share");
+        assertEq(harness.yieldReserveOf(3), expected.feeIndexShare, "fee-index reserve");
+
+        assertEq(harness.borrowerAgreementCount(borrowerKey), 0, "borrower agreement index");
+        assertEq(harness.lenderAgreementCount(lenderKey), 0, "lender agreement index");
+        assertEq(harness.rollingBorrowerAgreementCount(borrowerKey), 0, "rolling borrower agreement index");
+        assertEq(harness.rollingLenderAgreementCount(lenderKey), 0, "rolling lender agreement index");
+    }
+
+    function test_recoverRolling_revertsBeforeNextDuePlusGrace() external {
+        (uint256 agreementId,,, uint64 acceptTs) = _setupCrossAssetAgreement(false, true);
+
+        vm.warp(acceptTs + 8 days);
+
+        vm.prank(alice);
+        vm.expectRevert(RollingError_RecoveryNotEligible.selector);
+        harness.recoverRolling(agreementId);
+    }
+
+    function test_recoverRolling_afterGrace_routesRecoveryAndClearsIndexes() external {
+        (uint256 agreementId, bytes32 lenderKey, bytes32 borrowerKey, uint64 acceptTs) = _setupCrossAssetAgreement(false, true);
+
+        vm.warp(acceptTs + 8 days + 1);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);
+        TerminalExpectation memory expected = _previewTerminalExpectation(agreement, 150 ether, block.timestamp, true);
+        uint256 treasuryBefore = collateralToken.balanceOf(treasury);
+
+        vm.prank(alice);
+        harness.recoverRolling(agreementId);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory afterAgreement,) = harness.getRollingAgreement(agreementId);
+        assertEq(uint256(afterAgreement.status), uint256(LibEqualLendDirectStorage.AgreementStatus.Defaulted), "status");
+        assertEq(afterAgreement.outstandingPrincipal, 0, "outstanding principal");
+        assertEq(afterAgreement.arrears, 0, "arrears");
+
+        assertEq(harness.borrowedPrincipalOf(borrowerKey, 1), 0, "borrowed principal");
+
+        (uint256 borrowerLocked,,) = harness.encumbranceOf(borrowerKey, 2);
+        (, uint256 lenderEncumbered,) = harness.encumbranceOf(lenderKey, 1);
+        assertEq(borrowerLocked, 0, "borrower lock");
+        assertEq(lenderEncumbered, 0, "lender exposure");
+
+        assertEq(harness.principalOf(2, lenderKey), expected.lenderShare, "lender collateral principal");
+        assertEq(
+            harness.principalOf(2, borrowerKey),
+            150 ether - expected.debtValueApplied - expected.penaltyPaid,
+            "borrower refund balance"
+        );
+        assertEq(
+            collateralToken.balanceOf(treasury) - treasuryBefore,
+            expected.treasuryShare + expected.penaltyPaid,
+            "treasury recovery"
+        );
+        assertEq(harness.yieldReserveOf(2), expected.feeIndexShare, "fee-index reserve");
+
+        assertEq(harness.borrowerAgreementCount(borrowerKey), 0, "borrower agreement index");
+        assertEq(harness.lenderAgreementCount(lenderKey), 0, "lender agreement index");
+        assertEq(harness.rollingBorrowerAgreementCount(borrowerKey), 0, "rolling borrower agreement index");
+        assertEq(harness.rollingLenderAgreementCount(lenderKey), 0, "rolling lender agreement index");
     }
 
     function _setupCrossAssetAgreement(bool allowAmortization, bool allowEarlyRepay)
@@ -475,6 +602,37 @@ contract EqualLendDirectRollingPaymentFacetTest is Test {
         }
 
         return Math.mulDiv(principal, uint256(apyBps) * durationSeconds, 365 days * 10_000, Math.Rounding.Ceil);
+    }
+
+    function _previewTerminalExpectation(
+        LibEqualLendDirectStorage.RollingAgreement memory agreement,
+        uint256 borrowerPrincipal,
+        uint256 asOf,
+        bool applyPenalty
+    ) internal pure returns (TerminalExpectation memory expected) {
+        RollingAccrualExpectation memory accrual = _previewAccrual(agreement, asOf);
+        expected.interestDue = accrual.arrearsDue + accrual.currentInterestDue;
+        expected.principalDue = agreement.outstandingPrincipal;
+
+        uint256 totalDebt = expected.interestDue + expected.principalDue;
+        expected.collateralSeized = borrowerPrincipal < agreement.collateralLocked ? borrowerPrincipal : agreement.collateralLocked;
+
+        uint256 availableForDebt = expected.collateralSeized;
+        if (applyPenalty) {
+            expected.penaltyPaid = (totalDebt * 500) / 10_000;
+            if (expected.penaltyPaid > expected.collateralSeized) {
+                expected.penaltyPaid = expected.collateralSeized;
+            }
+            availableForDebt -= expected.penaltyPaid;
+        }
+
+        expected.debtValueApplied = availableForDebt < totalDebt ? availableForDebt : totalDebt;
+        expected.borrowerRefund = availableForDebt - expected.debtValueApplied;
+
+        expected.lenderShare = (expected.debtValueApplied * 8_000) / 10_000;
+        uint256 remainder = expected.debtValueApplied - expected.lenderShare;
+        expected.treasuryShare = (remainder * 1_000) / 10_000;
+        expected.feeIndexShare = remainder - expected.treasuryShare;
     }
 
     function _currentInterestDue(uint256 agreementId) internal view returns (uint256) {
