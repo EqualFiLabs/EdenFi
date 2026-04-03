@@ -16,6 +16,15 @@ import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockCon
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {FlashLoanFacet} from "src/equallend/FlashLoanFacet.sol";
+import {EqualLendDirectFixedOfferFacet} from "src/equallend/EqualLendDirectFixedOfferFacet.sol";
+import {EqualLendDirectFixedAgreementFacet} from "src/equallend/EqualLendDirectFixedAgreementFacet.sol";
+import {EqualLendDirectLifecycleFacet} from "src/equallend/EqualLendDirectLifecycleFacet.sol";
+import {EqualLendDirectRollingOfferFacet} from "src/equallend/EqualLendDirectRollingOfferFacet.sol";
+import {EqualLendDirectRollingAgreementFacet} from "src/equallend/EqualLendDirectRollingAgreementFacet.sol";
+import {EqualLendDirectRollingPaymentFacet} from "src/equallend/EqualLendDirectRollingPaymentFacet.sol";
+import {EqualLendDirectRollingLifecycleFacet} from "src/equallend/EqualLendDirectRollingLifecycleFacet.sol";
+import {EqualLendDirectConfigFacet} from "src/equallend/EqualLendDirectConfigFacet.sol";
+import {EqualLendDirectViewFacet} from "src/equallend/EqualLendDirectViewFacet.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
@@ -42,7 +51,8 @@ interface IPoolManagementFacetInitDefault {
 contract DeployEqualFi is Script {
     string internal constant DEFAULT_OPTION_TOKEN_BASE_URI = "ipfs://equalfi/options";
     uint256 internal constant DIAMOND_CORE_FACET_COUNT = 3;
-    uint256 internal constant SUBSTRATE_LAUNCH_FACET_COUNT = 18;
+    uint256 internal constant DIRECT_LAUNCH_FACET_COUNT = 9;
+    uint256 internal constant SUBSTRATE_LAUNCH_FACET_COUNT = 18 + DIRECT_LAUNCH_FACET_COUNT;
     uint256 internal constant EDEN_REWARDS_FACET_COUNT = 1;
     uint256 internal constant LAUNCH_FACET_COUNT = SUBSTRATE_LAUNCH_FACET_COUNT + EDEN_REWARDS_FACET_COUNT;
     uint256 internal constant TOTAL_FACET_COUNT = DIAMOND_CORE_FACET_COUNT + LAUNCH_FACET_COUNT;
@@ -222,6 +232,42 @@ contract DeployEqualFi is Script {
         {
             EqualIndexLendingFacet facet = new EqualIndexLendingFacet();
             cuts[i++] = _cut(address(facet), _selectorsEqualIndexLending());
+        }
+        {
+            EqualLendDirectFixedOfferFacet facet = new EqualLendDirectFixedOfferFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualLendDirectFixedOffer());
+        }
+        {
+            EqualLendDirectFixedAgreementFacet facet = new EqualLendDirectFixedAgreementFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualLendDirectFixedAgreement());
+        }
+        {
+            EqualLendDirectLifecycleFacet facet = new EqualLendDirectLifecycleFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualLendDirectLifecycle());
+        }
+        {
+            EqualLendDirectRollingOfferFacet facet = new EqualLendDirectRollingOfferFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualLendDirectRollingOffer());
+        }
+        {
+            EqualLendDirectRollingAgreementFacet facet = new EqualLendDirectRollingAgreementFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualLendDirectRollingAgreement());
+        }
+        {
+            EqualLendDirectRollingPaymentFacet facet = new EqualLendDirectRollingPaymentFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualLendDirectRollingPayment());
+        }
+        {
+            EqualLendDirectRollingLifecycleFacet facet = new EqualLendDirectRollingLifecycleFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualLendDirectRollingLifecycle());
+        }
+        {
+            EqualLendDirectConfigFacet facet = new EqualLendDirectConfigFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualLendDirectConfig());
+        }
+        {
+            EqualLendDirectViewFacet facet = new EqualLendDirectViewFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualLendDirectView());
         }
         {
             PositionAgentConfigFacet facet = new PositionAgentConfigFacet();
@@ -408,6 +454,91 @@ contract DeployEqualFi is Script {
         s[13] = EqualIndexLendingFacet.quoteBorrowFee.selector;
         s[14] = EqualIndexLendingFacet.getBorrowFeeTiers.selector;
         s[15] = EqualIndexLendingFacet.lendingModuleId.selector;
+    }
+
+    function _selectorsEqualLendDirectFixedOffer() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](10);
+        s[0] = EqualLendDirectFixedOfferFacet.postFixedLenderOffer.selector;
+        s[1] = EqualLendDirectFixedOfferFacet.postFixedBorrowerOffer.selector;
+        s[2] = EqualLendDirectFixedOfferFacet.postLenderRatioTrancheOffer.selector;
+        s[3] = EqualLendDirectFixedOfferFacet.postBorrowerRatioTrancheOffer.selector;
+        s[4] = EqualLendDirectFixedOfferFacet.cancelFixedOffer.selector;
+        s[5] = EqualLendDirectFixedOfferFacet.cancelLenderRatioTrancheOffer.selector;
+        s[6] = EqualLendDirectFixedOfferFacet.cancelBorrowerRatioTrancheOffer.selector;
+        s[7] = EqualLendDirectFixedOfferFacet.cancelOffersForPosition.selector;
+        s[8] = EqualLendDirectFixedOfferFacet.hasOpenOffers.selector;
+        s[9] = EqualLendDirectFixedOfferFacet.getPositionTokenURI.selector;
+    }
+
+    function _selectorsEqualLendDirectFixedAgreement() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = EqualLendDirectFixedAgreementFacet.acceptFixedLenderOffer.selector;
+        s[1] = EqualLendDirectFixedAgreementFacet.acceptFixedBorrowerOffer.selector;
+        s[2] = EqualLendDirectFixedAgreementFacet.acceptLenderRatioTrancheOffer.selector;
+        s[3] = EqualLendDirectFixedAgreementFacet.acceptBorrowerRatioTrancheOffer.selector;
+    }
+
+    function _selectorsEqualLendDirectLifecycle() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = EqualLendDirectLifecycleFacet.repay.selector;
+        s[1] = EqualLendDirectLifecycleFacet.exerciseDirect.selector;
+        s[2] = EqualLendDirectLifecycleFacet.callDirect.selector;
+        s[3] = EqualLendDirectLifecycleFacet.recover.selector;
+    }
+
+    function _selectorsEqualLendDirectRollingOffer() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = EqualLendDirectRollingOfferFacet.postRollingLenderOffer.selector;
+        s[1] = EqualLendDirectRollingOfferFacet.postRollingBorrowerOffer.selector;
+        s[2] = EqualLendDirectRollingOfferFacet.cancelRollingOffer.selector;
+    }
+
+    function _selectorsEqualLendDirectRollingAgreement() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = EqualLendDirectRollingAgreementFacet.acceptRollingLenderOffer.selector;
+        s[1] = EqualLendDirectRollingAgreementFacet.acceptRollingBorrowerOffer.selector;
+    }
+
+    function _selectorsEqualLendDirectRollingPayment() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = EqualLendDirectRollingPaymentFacet.makeRollingPayment.selector;
+    }
+
+    function _selectorsEqualLendDirectRollingLifecycle() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = EqualLendDirectRollingLifecycleFacet.exerciseRolling.selector;
+        s[1] = EqualLendDirectRollingLifecycleFacet.recoverRolling.selector;
+        s[2] = EqualLendDirectRollingLifecycleFacet.repayRollingInFull.selector;
+    }
+
+    function _selectorsEqualLendDirectConfig() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = EqualLendDirectConfigFacet.setDirectConfig.selector;
+        s[1] = EqualLendDirectConfigFacet.setRollingConfig.selector;
+    }
+
+    function _selectorsEqualLendDirectView() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](20);
+        s[0] = EqualLendDirectViewFacet.getDirectConfig.selector;
+        s[1] = EqualLendDirectViewFacet.getDirectRollingConfig.selector;
+        s[2] = EqualLendDirectViewFacet.getOfferKind.selector;
+        s[3] = EqualLendDirectViewFacet.getAgreementKind.selector;
+        s[4] = EqualLendDirectViewFacet.getFixedLenderOffer.selector;
+        s[5] = EqualLendDirectViewFacet.getFixedBorrowerOffer.selector;
+        s[6] = EqualLendDirectViewFacet.getLenderRatioTrancheOffer.selector;
+        s[7] = EqualLendDirectViewFacet.getBorrowerRatioTrancheOffer.selector;
+        s[8] = EqualLendDirectViewFacet.getRollingLenderOffer.selector;
+        s[9] = EqualLendDirectViewFacet.getRollingBorrowerOffer.selector;
+        s[10] = EqualLendDirectViewFacet.getFixedAgreement.selector;
+        s[11] = EqualLendDirectViewFacet.getRollingAgreement.selector;
+        s[12] = EqualLendDirectViewFacet.getBorrowerOfferIds.selector;
+        s[13] = EqualLendDirectViewFacet.getLenderOfferIds.selector;
+        s[14] = EqualLendDirectViewFacet.getBorrowerAgreementIds.selector;
+        s[15] = EqualLendDirectViewFacet.getLenderAgreementIds.selector;
+        s[16] = EqualLendDirectViewFacet.previewRollingPayment.selector;
+        s[17] = EqualLendDirectViewFacet.getRollingStatus.selector;
+        s[18] = EqualLendDirectViewFacet.getLenderRatioTrancheStatus.selector;
+        s[19] = EqualLendDirectViewFacet.getBorrowerRatioTrancheStatus.selector;
     }
 
     function _selectorsPositionAgentConfig() internal pure returns (bytes4[] memory s) {

@@ -106,6 +106,8 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         assertTrue(loupe.facetAddress(OptionsViewFacet.getOptionSeriesProductiveCollateral.selector) != address(0));
         assertTrue(loupe.facetAddress(EdenRewardsFacet.createRewardProgram.selector) != address(0));
 
+        _assertDirectFacetSurfaceInstalled(loupe);
+
         assertEq(OptionTokenViewFacet(deployment.diamond).getOptionToken(), deployment.optionToken);
         assertTrue(deployment.optionToken != address(0));
         assertEq(OptionToken(deployment.optionToken).owner(), deployment.timelockController);
@@ -158,6 +160,40 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         assertEq(uint8(config.target.targetType), uint8(LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION));
         assertEq(config.target.targetId, 7);
         assertEq(config.rewardToken, address(rewardToken));
+    }
+
+    function _assertDirectFacetSurfaceInstalled(IDiamondLoupe loupe) internal view {
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualLendDirectFixedOffer());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualLendDirectFixedAgreement());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualLendDirectLifecycle());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualLendDirectRollingOffer());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualLendDirectRollingAgreement());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualLendDirectRollingPayment());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualLendDirectRollingLifecycle());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualLendDirectConfig());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualLendDirectView());
+    }
+
+    function _assertFacetSelectorsInstalled(IDiamondLoupe loupe, bytes4[] memory expectedSelectors) internal view {
+        address facet = loupe.facetAddress(expectedSelectors[0]);
+        assertTrue(facet != address(0));
+
+        bytes4[] memory installedSelectors = loupe.facetFunctionSelectors(facet);
+        assertEq(installedSelectors.length, expectedSelectors.length);
+
+        for (uint256 i; i < expectedSelectors.length; ++i) {
+            assertEq(loupe.facetAddress(expectedSelectors[i]), facet);
+            assertTrue(_containsSelector(installedSelectors, expectedSelectors[i]));
+        }
+    }
+
+    function _containsSelector(bytes4[] memory selectors, bytes4 needle) internal pure returns (bool found) {
+        for (uint256 i; i < selectors.length; ++i) {
+            if (selectors[i] == needle) {
+                return true;
+            }
+        }
+        return false;
     }
 
     function _timelockCall(FixedDelayTimelockController controller, address target, bytes memory data) internal {
