@@ -3,8 +3,10 @@ pragma solidity ^0.8.20;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {
+    DirectError_InvalidFillAmount,
     DirectError_InvalidConfiguration,
     DirectError_InvalidOffer,
+    DirectError_InvalidRatio,
     DirectError_InvalidTimestamp,
     InsufficientPrincipal,
     SolvencyViolation
@@ -31,6 +33,33 @@ contract EqualLendDirectFixedAgreementFacet is ReentrancyGuardModifiers {
         uint64 dueTimestamp;
     }
 
+    struct LenderAgreementParams {
+        bytes32 lenderPositionKey;
+        bytes32 borrowerPositionKey;
+        address lender;
+        address borrower;
+        uint256 lenderPositionId;
+        uint256 borrowerPositionId;
+        uint256 lenderPoolId;
+        uint256 collateralPoolId;
+        address borrowAsset;
+        address collateralAsset;
+        uint256 principal;
+        uint256 userInterest;
+        uint64 dueTimestamp;
+        uint256 collateralLocked;
+        bool allowEarlyRepay;
+        bool allowEarlyExercise;
+        bool allowLenderCall;
+    }
+
+    struct LenderRatioFillContext {
+        bytes32 lenderKey;
+        address borrowerOwner;
+        uint256 collateralRequired;
+        FixedFeeQuote quote;
+    }
+
     bytes32 internal constant DIRECT_FIXED_INTEREST_FEE_SOURCE = keccak256("DIRECT_FIXED_INTEREST");
     bytes32 internal constant DIRECT_FIXED_PLATFORM_FEE_SOURCE = keccak256("DIRECT_FIXED_PLATFORM");
 
@@ -43,6 +72,14 @@ contract EqualLendDirectFixedAgreementFacet is ReentrancyGuardModifiers {
         uint256 indexed offerId,
         uint256 indexed agreementId,
         uint256 indexed lenderPositionId
+    );
+    event LenderRatioTrancheOfferAccepted(
+        uint256 indexed offerId,
+        uint256 indexed agreementId,
+        uint256 indexed borrowerPositionId,
+        uint256 principalFilled,
+        uint256 principalRemaining,
+        uint256 collateralLocked
     );
 
     function acceptFixedLenderOffer(uint256 offerId, uint256 borrowerPositionId, uint256 minReceived)
@@ -81,6 +118,37 @@ contract EqualLendDirectFixedAgreementFacet is ReentrancyGuardModifiers {
         bytes32 lenderKey = _requireOwnedAcceptancePosition(lenderPositionId);
         agreementId = _acceptFixedBorrowerOffer(store, offer, lenderKey, lenderPositionId, minReceived);
         emit FixedBorrowerOfferAccepted(offerId, agreementId, lenderPositionId);
+    }
+
+    function acceptLenderRatioTrancheOffer(
+        uint256 offerId,
+        uint256 borrowerPositionId,
+        uint256 principalAmount,
+        uint256 minReceived
+    ) external nonReentrant returns (uint256 agreementId) {
+        if (principalAmount == 0) revert DirectError_InvalidFillAmount();
+
+        LibEqualLendDirectStorage.DirectStorage storage store = LibEqualLendDirectStorage.s();
+        LibEqualLendDirectStorage.LenderRatioTrancheOffer storage offer = store.lenderRatioOffers[offerId];
+        if (
+            store.offerKindById[offerId] != LibEqualLendDirectStorage.OfferKind.RatioTrancheLender || offer.cancelled
+                || offer.filled
+        ) {
+            revert DirectError_InvalidOffer();
+        }
+        if (offer.lenderPositionId == borrowerPositionId) revert DirectError_InvalidOffer();
+
+        bytes32 borrowerKey = _requireOwnedAcceptancePosition(borrowerPositionId);
+        agreementId = _acceptLenderRatioTrancheOffer(store, offer, borrowerKey, borrowerPositionId, principalAmount, minReceived);
+
+        emit LenderRatioTrancheOfferAccepted(
+            offerId,
+            agreementId,
+            borrowerPositionId,
+            principalAmount,
+            offer.principalRemaining,
+            store.fixedAgreements[agreementId].collateralLocked
+        );
     }
 
     function _acceptFixedLenderOffer(
@@ -195,6 +263,115 @@ contract EqualLendDirectFixedAgreementFacet is ReentrancyGuardModifiers {
         _distributeBorrowerOfferFees(lenderPool, lenderKey, store.config, offer, quote);
     }
 
+    function _acceptLenderRatioTrancheOffer(
+        LibEqualLendDirectStorage.DirectStorage storage store,
+        LibEqualLendDirectStorage.LenderRatioTrancheOffer storage offer,
+        bytes32 borrowerKey,
+        uint256 borrowerPositionId,
+        uint256 principalAmount,
+        uint256 minReceived
+    ) internal returns (uint256 agreementId) {
+        if (principalAmount < offer.minPrincipalPerFill || principalAmount > offer.principalRemaining) {
+            revert DirectError_InvalidFillAmount();
+        }
+
+        LenderRatioFillContext memory ctx;
+        ctx.lenderKey = offer.lenderPositionKey;
+        ctx.borrowerOwner = msg.sender;
+        ctx.collateralRequired = _validateLenderRatioFill(offer, borrowerKey, principalAmount, ctx.lenderKey);
+        ctx.quote = _quoteFixedFees(principalAmount, offer.aprBps, offer.durationSeconds, store.config);
+
+        Types.PoolData storage lenderPool = LibPositionHelpers.pool(offer.lenderPoolId);
+        if (principalAmount > lenderPool.trackedBalance) {
+            revert InsufficientPrincipal(principalAmount, lenderPool.trackedBalance);
+        }
+
+        LibEqualLendDirectAccounting.originate(
+            store,
+            LibEqualLendDirectAccounting.OriginationParams({
+                lenderPositionKey: ctx.lenderKey,
+                borrowerPositionKey: borrowerKey,
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: offer.lenderPoolId,
+                collateralPoolId: offer.collateralPoolId,
+                borrowAsset: offer.borrowAsset,
+                collateralAsset: offer.collateralAsset,
+                principal: principalAmount,
+                collateralToLock: ctx.collateralRequired,
+                convertOfferEscrow: true,
+                lockCollateralNow: true
+            })
+        );
+
+        agreementId = _storeLenderAgreement(
+            store,
+            LenderAgreementParams({
+                lenderPositionKey: ctx.lenderKey,
+                borrowerPositionKey: borrowerKey,
+                lender: offer.lender,
+                borrower: ctx.borrowerOwner,
+                lenderPositionId: offer.lenderPositionId,
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: offer.lenderPoolId,
+                collateralPoolId: offer.collateralPoolId,
+                borrowAsset: offer.borrowAsset,
+                collateralAsset: offer.collateralAsset,
+                principal: principalAmount,
+                userInterest: ctx.quote.interestAmount,
+                dueTimestamp: ctx.quote.dueTimestamp,
+                collateralLocked: ctx.collateralRequired,
+                allowEarlyRepay: offer.allowEarlyRepay,
+                allowEarlyExercise: offer.allowEarlyExercise,
+                allowLenderCall: offer.allowLenderCall
+            })
+        );
+
+        offer.principalRemaining -= principalAmount;
+        if (offer.principalRemaining == 0) {
+            offer.filled = true;
+            LibEqualLendDirectStorage.removeLenderRatioOffer(store, ctx.lenderKey, offer.offerId);
+        }
+
+        LibCurrency.transferWithMin(offer.borrowAsset, ctx.borrowerOwner, principalAmount - ctx.quote.totalFee, minReceived);
+        _distributeDirectFees(
+            lenderPool,
+            ctx.lenderKey,
+            store.config,
+            offer.borrowAsset,
+            offer.collateralAsset,
+            offer.lenderPoolId,
+            offer.collateralPoolId,
+            ctx.quote.interestAmount,
+            ctx.quote.platformFee
+        );
+    }
+
+    function _validateLenderRatioFill(
+        LibEqualLendDirectStorage.LenderRatioTrancheOffer storage offer,
+        bytes32 borrowerKey,
+        uint256 principalAmount,
+        bytes32 lenderKey
+    ) internal returns (uint256 collateralRequired) {
+        collateralRequired = Math.mulDiv(principalAmount, offer.priceNumerator, offer.priceDenominator);
+        if (collateralRequired == 0) revert DirectError_InvalidRatio();
+
+        _validateAcceptanceContext(lenderKey, borrowerKey, offer.lenderPoolId, offer.collateralPoolId);
+
+        Types.PoolData storage lenderPool = LibPositionHelpers.pool(offer.lenderPoolId);
+        Types.PoolData storage collateralPool = LibPositionHelpers.pool(offer.collateralPoolId);
+
+        _requireLenderFundingState(lenderPool, lenderKey, offer.lenderPoolId, principalAmount, true);
+        _requireBorrowerCollateralState(
+            collateralPool,
+            borrowerKey,
+            offer.collateralPoolId,
+            collateralRequired,
+            offer.borrowAsset == offer.collateralAsset,
+            principalAmount
+        );
+        _checkLenderSolvency(lenderPool, lenderKey, principalAmount);
+    }
+
     function _storeLenderOfferAgreement(
         LibEqualLendDirectStorage.DirectStorage storage store,
         LibEqualLendDirectStorage.FixedLenderOffer storage offer,
@@ -205,32 +382,60 @@ contract EqualLendDirectFixedAgreementFacet is ReentrancyGuardModifiers {
         uint256 userInterest,
         uint64 dueTimestamp
     ) internal returns (uint256 agreementId) {
+        agreementId = _storeLenderAgreement(
+            store,
+            LenderAgreementParams({
+                lenderPositionKey: lenderKey,
+                borrowerPositionKey: borrowerKey,
+                lender: offer.lender,
+                borrower: borrower,
+                lenderPositionId: offer.lenderPositionId,
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: offer.lenderPoolId,
+                collateralPoolId: offer.collateralPoolId,
+                borrowAsset: offer.borrowAsset,
+                collateralAsset: offer.collateralAsset,
+                principal: offer.principal,
+                userInterest: userInterest,
+                dueTimestamp: dueTimestamp,
+                collateralLocked: offer.collateralLocked,
+                allowEarlyRepay: offer.allowEarlyRepay,
+                allowEarlyExercise: offer.allowEarlyExercise,
+                allowLenderCall: offer.allowLenderCall
+            })
+        );
+    }
+
+    function _storeLenderAgreement(LibEqualLendDirectStorage.DirectStorage storage store, LenderAgreementParams memory params)
+        internal
+        returns (uint256 agreementId)
+    {
         agreementId = LibEqualLendDirectStorage.allocateAgreementId(store);
         store.agreementKindById[agreementId] = LibEqualLendDirectStorage.AgreementKind.Fixed;
         store.fixedAgreements[agreementId] = LibEqualLendDirectStorage.FixedAgreement({
             agreementId: agreementId,
             kind: LibEqualLendDirectStorage.AgreementKind.Fixed,
             status: LibEqualLendDirectStorage.AgreementStatus.Active,
-            lenderPositionKey: lenderKey,
-            borrowerPositionKey: borrowerKey,
-            lender: offer.lender,
-            borrower: borrower,
-            lenderPositionId: offer.lenderPositionId,
-            borrowerPositionId: borrowerPositionId,
-            lenderPoolId: offer.lenderPoolId,
-            collateralPoolId: offer.collateralPoolId,
-            borrowAsset: offer.borrowAsset,
-            collateralAsset: offer.collateralAsset,
-            principal: offer.principal,
-            userInterest: userInterest,
-            dueTimestamp: dueTimestamp,
-            collateralLocked: offer.collateralLocked,
-            allowEarlyRepay: offer.allowEarlyRepay,
-            allowEarlyExercise: offer.allowEarlyExercise,
-            allowLenderCall: offer.allowLenderCall
+            lenderPositionKey: params.lenderPositionKey,
+            borrowerPositionKey: params.borrowerPositionKey,
+            lender: params.lender,
+            borrower: params.borrower,
+            lenderPositionId: params.lenderPositionId,
+            borrowerPositionId: params.borrowerPositionId,
+            lenderPoolId: params.lenderPoolId,
+            collateralPoolId: params.collateralPoolId,
+            borrowAsset: params.borrowAsset,
+            collateralAsset: params.collateralAsset,
+            principal: params.principal,
+            userInterest: params.userInterest,
+            dueTimestamp: params.dueTimestamp,
+            collateralLocked: params.collateralLocked,
+            allowEarlyRepay: params.allowEarlyRepay,
+            allowEarlyExercise: params.allowEarlyExercise,
+            allowLenderCall: params.allowLenderCall
         });
-        LibEqualLendDirectStorage.addBorrowerAgreement(store, borrowerKey, agreementId);
-        LibEqualLendDirectStorage.addLenderAgreement(store, lenderKey, agreementId);
+        LibEqualLendDirectStorage.addBorrowerAgreement(store, params.borrowerPositionKey, agreementId);
+        LibEqualLendDirectStorage.addLenderAgreement(store, params.lenderPositionKey, agreementId);
     }
 
     function _storeBorrowerOfferAgreement(

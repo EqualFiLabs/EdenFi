@@ -16,6 +16,7 @@ import {Types} from "src/libraries/Types.sol";
 import {
     DirectError_InvalidAsset,
     DirectError_InvalidConfiguration,
+    DirectError_InvalidRatio,
     InsufficientPrincipal,
     NotNFTOwner
 } from "src/libraries/Errors.sol";
@@ -66,6 +67,15 @@ contract EqualLendDirectFixedOfferHarness is
     {
         LibEqualLendDirectStorage.DirectStorage storage store = LibEqualLendDirectStorage.s();
         return (store.fixedBorrowerOffers[offerId], store.offerKindById[offerId]);
+    }
+
+    function getLenderRatioOffer(uint256 offerId)
+        external
+        view
+        returns (LibEqualLendDirectStorage.LenderRatioTrancheOffer memory offer, LibEqualLendDirectStorage.OfferKind kind)
+    {
+        LibEqualLendDirectStorage.DirectStorage storage store = LibEqualLendDirectStorage.s();
+        return (store.lenderRatioOffers[offerId], store.offerKindById[offerId]);
     }
 
     function encumbranceOf(bytes32 positionKey, uint256 poolId)
@@ -333,6 +343,192 @@ contract EqualLendDirectFixedOfferFacetTest is Test {
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(NotNFTOwner.selector, bob, lenderPositionId));
         harness.cancelFixedOffer(offerId);
+    }
+
+    function test_lenderRatioOffer_escrowsPrincipalCapAndBlocksTransferUntilCancel() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 1, 100 ether, borrowToken);
+        bytes32 lenderKey = positionNft.getPositionKey(lenderPositionId);
+
+        vm.prank(alice);
+        uint256 offerId = harness.postLenderRatioTrancheOffer(
+            EqualLendDirectFixedOfferFacet.LenderRatioTrancheOfferParams({
+                lenderPositionId: lenderPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principalCap: 60 ether,
+                priceNumerator: 2,
+                priceDenominator: 1,
+                minPrincipalPerFill: 10 ether,
+                aprBps: 700,
+                durationSeconds: 30 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: true
+            })
+        );
+
+        (
+            LibEqualLendDirectStorage.LenderRatioTrancheOffer memory offer,
+            LibEqualLendDirectStorage.OfferKind kind
+        ) = harness.getLenderRatioOffer(offerId);
+        assertEq(uint256(kind), uint256(LibEqualLendDirectStorage.OfferKind.RatioTrancheLender), "ratio offer kind");
+        assertEq(offer.principalCap, 60 ether, "ratio principal cap");
+        assertEq(offer.principalRemaining, 60 ether, "ratio principal remaining");
+        assertEq(offer.minPrincipalPerFill, 10 ether, "ratio min fill");
+
+        (,, uint256 offerEscrowedCapital) = harness.encumbranceOf(lenderKey, 1);
+        assertEq(offerEscrowedCapital, 60 ether, "ratio offer escrow");
+        assertTrue(harness.hasOpenOffers(lenderKey), "open ratio offer not tracked");
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(PositionNFT.PositionNFTHasOpenOffers.selector, lenderKey));
+        positionNft.transferFrom(alice, bob, lenderPositionId);
+
+        vm.prank(alice);
+        harness.cancelLenderRatioTrancheOffer(offerId);
+
+        (offer,) = harness.getLenderRatioOffer(offerId);
+        assertTrue(offer.cancelled, "ratio offer not cancelled");
+        assertTrue(offer.filled, "ratio offer not terminal after cancel");
+        assertEq(offer.principalRemaining, 0, "ratio principal remaining after cancel");
+        (,, offerEscrowedCapital) = harness.encumbranceOf(lenderKey, 1);
+        assertEq(offerEscrowedCapital, 0, "ratio offer escrow after cancel");
+        assertFalse(harness.hasOpenOffers(lenderKey), "open ratio offer after cancel");
+
+        vm.prank(alice);
+        positionNft.transferFrom(alice, bob, lenderPositionId);
+        assertEq(positionNft.ownerOf(lenderPositionId), bob, "ratio transfer after cancel");
+    }
+
+    function test_lenderRatioPostingValidations_checkRatioMinFillDurationAndAvailablePrincipal() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 1, 100 ether, borrowToken);
+
+        vm.prank(alice);
+        vm.expectRevert(DirectError_InvalidRatio.selector);
+        harness.postLenderRatioTrancheOffer(
+            EqualLendDirectFixedOfferFacet.LenderRatioTrancheOfferParams({
+                lenderPositionId: lenderPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principalCap: 20 ether,
+                priceNumerator: 0,
+                priceDenominator: 1,
+                minPrincipalPerFill: 5 ether,
+                aprBps: 500,
+                durationSeconds: 14 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
+
+        vm.prank(alice);
+        vm.expectRevert(DirectError_InvalidRatio.selector);
+        harness.postLenderRatioTrancheOffer(
+            EqualLendDirectFixedOfferFacet.LenderRatioTrancheOfferParams({
+                lenderPositionId: lenderPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principalCap: 20 ether,
+                priceNumerator: 1,
+                priceDenominator: 1,
+                minPrincipalPerFill: 21 ether,
+                aprBps: 500,
+                durationSeconds: 14 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
+
+        vm.prank(alice);
+        vm.expectRevert(DirectError_InvalidRatio.selector);
+        harness.postLenderRatioTrancheOffer(
+            EqualLendDirectFixedOfferFacet.LenderRatioTrancheOfferParams({
+                lenderPositionId: lenderPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principalCap: 20 ether,
+                priceNumerator: 1,
+                priceDenominator: type(uint256).max,
+                minPrincipalPerFill: 1 ether,
+                aprBps: 500,
+                durationSeconds: 14 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
+
+        vm.prank(alice);
+        vm.expectRevert(DirectError_InvalidConfiguration.selector);
+        harness.postLenderRatioTrancheOffer(
+            EqualLendDirectFixedOfferFacet.LenderRatioTrancheOfferParams({
+                lenderPositionId: lenderPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principalCap: 20 ether,
+                priceNumerator: 2,
+                priceDenominator: 1,
+                minPrincipalPerFill: 5 ether,
+                aprBps: 500,
+                durationSeconds: 0,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
+
+        vm.prank(alice);
+        harness.postLenderRatioTrancheOffer(
+            EqualLendDirectFixedOfferFacet.LenderRatioTrancheOfferParams({
+                lenderPositionId: lenderPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principalCap: 80 ether,
+                priceNumerator: 2,
+                priceDenominator: 1,
+                minPrincipalPerFill: 20 ether,
+                aprBps: 500,
+                durationSeconds: 14 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(InsufficientPrincipal.selector, 30 ether, 20 ether));
+        harness.postLenderRatioTrancheOffer(
+            EqualLendDirectFixedOfferFacet.LenderRatioTrancheOfferParams({
+                lenderPositionId: lenderPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principalCap: 30 ether,
+                priceNumerator: 2,
+                priceDenominator: 1,
+                minPrincipalPerFill: 10 ether,
+                aprBps: 500,
+                durationSeconds: 14 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
     }
 
     function _mintAndDeposit(address user, uint256 homePoolId, uint256 amount, MockERC20Direct token)
