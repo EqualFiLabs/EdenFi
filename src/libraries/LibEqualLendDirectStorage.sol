@@ -256,6 +256,8 @@ library LibEqualLendDirectStorage {
         mapping(uint256 => RollingBorrowerOffer) rollingBorrowerOffers;
         mapping(uint256 => FixedAgreement) fixedAgreements;
         mapping(uint256 => RollingAgreement) rollingAgreements;
+        mapping(bytes32 => mapping(uint256 => uint256)) borrowedPrincipalByPool;
+        mapping(bytes32 => mapping(address => uint256)) sameAssetDebtByAsset;
         PositionIdIndex fixedLenderOfferIndex;
         PositionIdIndex fixedBorrowerOfferIndex;
         PositionIdIndex lenderRatioOfferIndex;
@@ -308,6 +310,22 @@ library LibEqualLendDirectStorage {
     function isTerminalStatus(AgreementStatus status) internal pure returns (bool) {
         return status == AgreementStatus.Repaid || status == AgreementStatus.Defaulted
             || status == AgreementStatus.Exercised;
+    }
+
+    function borrowedPrincipal(DirectStorage storage store, bytes32 borrowerPositionKey, uint256 lenderPoolId)
+        internal
+        view
+        returns (uint256)
+    {
+        return store.borrowedPrincipalByPool[borrowerPositionKey][lenderPoolId];
+    }
+
+    function sameAssetDebt(DirectStorage storage store, bytes32 borrowerPositionKey, address asset)
+        internal
+        view
+        returns (uint256)
+    {
+        return store.sameAssetDebtByAsset[borrowerPositionKey][asset];
     }
 
     function addFixedLenderOffer(DirectStorage storage store, bytes32 positionKey, uint256 offerId) internal {
