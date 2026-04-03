@@ -7,6 +7,7 @@ import {EqualLendDirectAccountingHarness} from "test/utils/EqualLendDirectAccoun
 
 contract EqualLendDirectAccountingInvariantHandler is Test {
     EqualLendDirectAccountingHarness public immutable harness;
+    uint256 public constant INITIAL_LENDER_CAPITAL = 1_000 ether;
 
     bytes32 public constant FIXED_LENDER_KEY = keccak256("fixed-lender");
     bytes32 public constant FIXED_BORROWER_KEY = keccak256("fixed-borrower");
@@ -213,8 +214,8 @@ contract EqualLendDirectAccountingInvariantHandler is Test {
     }
 
     function _seedVariant(uint256 lenderPoolId, bytes32 lenderKey, uint256 collateralPoolId) private {
-        harness.setPool(lenderPoolId, BORROW_ASSET, 1_000 ether, 1_000 ether, 1);
-        harness.setUserPrincipal(lenderPoolId, lenderKey, 1_000 ether);
+        harness.setPool(lenderPoolId, BORROW_ASSET, INITIAL_LENDER_CAPITAL, INITIAL_LENDER_CAPITAL, 1);
+        harness.setUserPrincipal(lenderPoolId, lenderKey, INITIAL_LENDER_CAPITAL);
         harness.setPool(collateralPoolId, COLLATERAL_ASSET, 0, 0, 0);
     }
 }
@@ -253,6 +254,16 @@ contract LibEqualLendDirectAccountingInvariantTest is StdInvariant, Test {
             handler.RATIO_LENDER_KEY(),
             handler.RATIO_BORROWER_POSITION_ID()
         );
+    }
+
+    function invariant_LenderCapitalCompositionStaysAlignedAndBoundedAcrossVariants() public view {
+        uint256 fixedCapital = _lenderCapitalComposition(handler.FIXED_LENDER_POOL(), handler.FIXED_LENDER_KEY());
+        uint256 rollingCapital = _lenderCapitalComposition(handler.ROLLING_LENDER_POOL(), handler.ROLLING_LENDER_KEY());
+        uint256 ratioCapital = _lenderCapitalComposition(handler.RATIO_LENDER_POOL(), handler.RATIO_LENDER_KEY());
+
+        assertEq(fixedCapital, rollingCapital, "fixed vs rolling lender capital composition");
+        assertEq(fixedCapital, ratioCapital, "fixed vs ratio lender capital composition");
+        assertLe(fixedCapital, handler.INITIAL_LENDER_CAPITAL(), "lender capital composition exceeds initial capital");
     }
 
     function invariant_DirectDebtAndEncumbranceTransitionsStayAlignedAcrossVariants() public view {
@@ -384,5 +395,11 @@ contract LibEqualLendDirectAccountingInvariantTest is StdInvariant, Test {
         assertEq(leftUserSameAssetDebt, rightUserSameAssetDebt, "user same asset mismatch");
         assertEq(leftTokenSameAssetDebt, rightTokenSameAssetDebt, "token same asset mismatch");
         assertEq(leftDebtState, rightDebtState, "debt state mismatch");
+    }
+
+    function _lenderCapitalComposition(uint256 poolId, bytes32 lenderKey) private view returns (uint256 total) {
+        (uint256 principal,,,,,,,) = harness.poolState(poolId, lenderKey, 0);
+        (, uint256 exposure, uint256 escrow) = harness.encumbranceOf(lenderKey, poolId);
+        return principal + exposure + escrow;
     }
 }
