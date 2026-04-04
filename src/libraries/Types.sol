@@ -159,6 +159,18 @@ library Types {
         bool active;
     }
 
+    struct SscMaintenancePreview {
+        uint256 tokenId;
+        uint256 poolId;
+        uint256 settledPrincipal;
+        uint256 totalSameAssetDebt;
+        uint256 outstandingDebt;
+        uint256 requiredLockedCapital;
+        uint256 freeEquity;
+        uint256 remainingBorrowRunway;
+        bool unsafeAfterMaintenance;
+    }
+
     struct SscDrawPreview {
         uint256 requestedAmount;
         uint256 settledPrincipal;

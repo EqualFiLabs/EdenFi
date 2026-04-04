@@ -13,6 +13,8 @@ import {
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
+import {LibFeeIndex} from "src/libraries/LibFeeIndex.sol";
+import {LibMaintenance} from "src/libraries/LibMaintenance.sol";
 import {LibPositionHelpers} from "src/libraries/LibPositionHelpers.sol";
 import {ReentrancyGuardModifiers} from "src/libraries/LibReentrancyGuard.sol";
 import {LibSelfSecuredCreditAccounting} from "src/libraries/LibSelfSecuredCreditAccounting.sol";
@@ -43,6 +45,16 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
     event SelfSecuredCreditClosed(
         uint256 indexed tokenId, address indexed owner, uint256 indexed poolId, uint256 totalDebtRepaid
     );
+
+    function previewSelfSecuredCreditMaintenance(uint256 tokenId, uint256 pid)
+        external
+        view
+        returns (Types.SscMaintenancePreview memory preview)
+    {
+        Types.PoolData storage pool = LibPositionHelpers.pool(pid);
+        bytes32 positionKey = LibPositionHelpers.positionKey(tokenId);
+        preview = _previewMaintenanceState(tokenId, positionKey, pid, pool);
+    }
 
     function drawSelfSecuredCredit(uint256 tokenId, uint256 pid, uint256 amount, uint256 minReceived)
         external
@@ -176,7 +188,8 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
         uint256 additionalDebt
     ) internal view {
         uint256 principal = pool.userPrincipal[positionKey];
-        uint256 newDebt = lineState.outstandingDebt + additionalDebt;
+        uint256 currentSameAssetDebt = pool.userSameAssetDebt[positionKey];
+        uint256 newDebt = currentSameAssetDebt + additionalDebt;
         uint16 ltvBps = pool.poolConfig.depositorLTVBps;
 
         if (ltvBps == 0 || ltvBps > BPS_DENOMINATOR) {
@@ -196,5 +209,86 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
         if (requiredPrincipal > principal) {
             revert InsufficientPrincipal(requiredPrincipal, principal);
         }
+    }
+
+    function _previewMaintenanceState(
+        uint256 tokenId,
+        bytes32 positionKey,
+        uint256 pid,
+        Types.PoolData storage pool
+    ) internal view returns (Types.SscMaintenancePreview memory preview) {
+        preview.tokenId = tokenId;
+        preview.poolId = pid;
+        preview.settledPrincipal = LibFeeIndex.previewSettledPrincipal(pid, positionKey);
+        preview.totalSameAssetDebt = pool.userSameAssetDebt[positionKey];
+
+        Types.SscLine storage lineState = LibSelfSecuredCreditStorage.line(positionKey, pid);
+        preview.outstandingDebt = lineState.outstandingDebt;
+        preview.requiredLockedCapital =
+            LibSelfSecuredCreditAccounting.requiredLockedCapitalForDebt(lineState.outstandingDebt, pool.poolConfig.depositorLTVBps);
+
+        uint256 totalEncumbered = _totalEncumberedWithUpdatedLock(positionKey, pid, lineState, preview.requiredLockedCapital);
+        uint256 withdrawalBlocker = preview.totalSameAssetDebt > totalEncumbered ? preview.totalSameAssetDebt : totalEncumbered;
+        if (preview.settledPrincipal > withdrawalBlocker) {
+            preview.freeEquity = preview.settledPrincipal - withdrawalBlocker;
+        }
+
+        uint256 maxDebt = Math.mulDiv(preview.settledPrincipal, pool.poolConfig.depositorLTVBps, BPS_DENOMINATOR);
+        if (maxDebt > preview.totalSameAssetDebt) {
+            preview.remainingBorrowRunway = maxDebt - preview.totalSameAssetDebt;
+        }
+
+        uint256 trackedAfterMaintenance = _previewTrackedBalanceAfterMaintenance(pool, pid);
+        if (preview.remainingBorrowRunway > trackedAfterMaintenance) {
+            preview.remainingBorrowRunway = trackedAfterMaintenance;
+        }
+
+        preview.unsafeAfterMaintenance =
+            preview.totalSameAssetDebt > maxDebt || totalEncumbered > preview.settledPrincipal;
+    }
+
+    function _totalEncumberedWithUpdatedLock(
+        bytes32 positionKey,
+        uint256 pid,
+        Types.SscLine storage lineState,
+        uint256 requiredLockedCapital
+    ) internal view returns (uint256 totalEncumbered) {
+        uint256 currentTotal = LibEncumbrance.total(positionKey, pid);
+        if (currentTotal > lineState.requiredLockedCapital) {
+            totalEncumbered = currentTotal - lineState.requiredLockedCapital + requiredLockedCapital;
+        } else {
+            totalEncumbered = requiredLockedCapital;
+        }
+    }
+
+    function _previewTrackedBalanceAfterMaintenance(Types.PoolData storage pool, uint256 pid)
+        internal
+        view
+        returns (uint256 trackedAfterMaintenance)
+    {
+        trackedAfterMaintenance = pool.trackedBalance;
+
+        if (LibAppStorage.s().foundationReceiver == address(0) || !pool.initialized) {
+            return trackedAfterMaintenance;
+        }
+
+        (uint256 totalDepositsAfterAccrual,) = LibMaintenance.previewState(pid);
+        uint256 accrued = pool.totalDeposits > totalDepositsAfterAccrual ? pool.totalDeposits - totalDepositsAfterAccrual : 0;
+        uint256 outstandingMaintenance = pool.pendingMaintenance + accrued;
+        if (outstandingMaintenance == 0) {
+            return trackedAfterMaintenance;
+        }
+
+        uint256 paid = outstandingMaintenance;
+        if (paid > trackedAfterMaintenance) {
+            paid = trackedAfterMaintenance;
+        }
+
+        uint256 contractBalance = LibCurrency.balanceOfSelf(pool.underlying);
+        if (paid > contractBalance) {
+            paid = contractBalance;
+        }
+
+        return trackedAfterMaintenance - paid;
     }
 }

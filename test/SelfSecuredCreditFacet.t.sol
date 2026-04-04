@@ -21,6 +21,7 @@ contract SelfSecuredCreditFacetTest is LaunchFixture {
         super.setUp();
         _bootstrapCorePools();
         _installTestSupportFacet();
+        testSupport.setFoundationReceiver(treasury);
     }
 
     function test_LiveLaunch_SelfSecuredCredit_InstallsLifecycleSelectors() external view {
@@ -29,6 +30,7 @@ contract SelfSecuredCreditFacetTest is LaunchFixture {
         assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.drawSelfSecuredCredit.selector) != address(0));
         assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.repaySelfSecuredCredit.selector) != address(0));
         assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.closeSelfSecuredCredit.selector) != address(0));
+        assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.previewSelfSecuredCreditMaintenance.selector) != address(0));
     }
 
     function test_LiveFlow_SelfSecuredCredit_DepositDrawRepayCloseWithdrawAndCleanup() external {
@@ -116,6 +118,86 @@ contract SelfSecuredCreditFacetTest is LaunchFixture {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(InsufficientPoolLiquidity.selector, 800 ether, 500 ether));
         SelfSecuredCreditFacet(diamond).drawSelfSecuredCredit(alicePositionId, 1, 800 ether, 800 ether);
+    }
+
+    function test_MaintenancePreview_ReducesSafeHeadroomOverTime() external {
+        uint256 positionId = _mintPosition(alice, 1);
+
+        eve.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        eve.approve(diamond, 100 ether);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 100 ether, 100 ether);
+        SelfSecuredCreditFacet(diamond).drawSelfSecuredCredit(positionId, 1, 60 ether, 60 ether);
+        vm.stopPrank();
+
+        Types.SscMaintenancePreview memory beforeWarp =
+            SelfSecuredCreditFacet(diamond).previewSelfSecuredCreditMaintenance(positionId, 1);
+        assertEq(beforeWarp.settledPrincipal, 100 ether);
+        assertEq(beforeWarp.requiredLockedCapital, 75 ether);
+        assertEq(beforeWarp.freeEquity, 25 ether);
+        assertEq(beforeWarp.remainingBorrowRunway, 20 ether);
+        assertTrue(!beforeWarp.unsafeAfterMaintenance);
+
+        vm.warp(block.timestamp + 365 days);
+
+        Types.SscMaintenancePreview memory afterWarp =
+            SelfSecuredCreditFacet(diamond).previewSelfSecuredCreditMaintenance(positionId, 1);
+        assertEq(afterWarp.settledPrincipal, 99 ether);
+        assertEq(afterWarp.requiredLockedCapital, 75 ether);
+        assertEq(afterWarp.freeEquity, 24 ether);
+        assertEq(afterWarp.remainingBorrowRunway, 19.2 ether);
+        assertTrue(!afterWarp.unsafeAfterMaintenance);
+    }
+
+    function test_Draw_SettlesMaintenanceBeforeDebtSensitiveChecks() external {
+        uint256 positionId = _mintPosition(alice, 1);
+
+        eve.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        eve.approve(diamond, 100 ether);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 100 ether, 100 ether);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 365 days);
+
+        Types.SscMaintenancePreview memory preview =
+            SelfSecuredCreditFacet(diamond).previewSelfSecuredCreditMaintenance(positionId, 1);
+        assertEq(preview.settledPrincipal, 99 ether);
+        assertEq(preview.remainingBorrowRunway, 79.2 ether);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(SolvencyViolation.selector, 99 ether, 79.5 ether, 8_000));
+        SelfSecuredCreditFacet(diamond).drawSelfSecuredCredit(positionId, 1, 79.5 ether, 79.5 ether);
+    }
+
+    function test_HighLtvSscPosition_CannotIgnoreMaintenanceIndefinitely() external {
+        uint256 positionId = _mintPosition(alice, 1);
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+
+        eve.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        eve.approve(diamond, 100 ether);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 100 ether, 100 ether);
+        SelfSecuredCreditFacet(diamond).drawSelfSecuredCredit(positionId, 1, 80 ether, 80 ether);
+        vm.stopPrank();
+
+        Types.SscMaintenancePreview memory beforeWarp =
+            SelfSecuredCreditFacet(diamond).previewSelfSecuredCreditMaintenance(positionId, 1);
+        assertEq(beforeWarp.remainingBorrowRunway, 0);
+        assertTrue(!beforeWarp.unsafeAfterMaintenance);
+        assertEq(testSupport.lockedCapitalOf(positionKey, 1), 100 ether);
+
+        vm.warp(block.timestamp + 365 days);
+
+        Types.SscMaintenancePreview memory afterWarp =
+            SelfSecuredCreditFacet(diamond).previewSelfSecuredCreditMaintenance(positionId, 1);
+        assertEq(afterWarp.settledPrincipal, 99 ether);
+        assertEq(afterWarp.remainingBorrowRunway, 0);
+        assertTrue(afterWarp.unsafeAfterMaintenance);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(InsufficientPrincipal.selector, 100 ether, 99 ether));
+        PositionManagementFacet(diamond).withdrawFromPosition(positionId, 1, 1 ether, 1 ether);
     }
 
     function test_LiveFlow_SelfSecuredCredit_TransferPreservesActiveLineForNewOwner() external {

@@ -424,10 +424,11 @@ contract DeployEqualFi is Script {
     }
 
     function _selectorsSelfSecuredCredit() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = SelfSecuredCreditFacet.drawSelfSecuredCredit.selector;
         s[1] = SelfSecuredCreditFacet.repaySelfSecuredCredit.selector;
         s[2] = SelfSecuredCreditFacet.closeSelfSecuredCredit.selector;
+        s[3] = SelfSecuredCreditFacet.previewSelfSecuredCreditMaintenance.selector;
     }
 
     function _selectorsEqualIndexAdmin() internal pure returns (bytes4[] memory s) {
