@@ -235,6 +235,37 @@ contract EqualXSoloInvariantHandler is Test {
         assertEq(amountOut, preview.amountOut);
     }
 
+    function scheduleRebalance(uint256 reserveABpsSeed, uint256 reserveBBpsSeed) external {
+        if (!_marketLive()) return;
+        if (harness.getEqualXSoloAmmPendingRebalance(marketId).exists) return;
+
+        LibEqualXSoloAmmStorage.SoloAmmMarket memory market = harness.getEqualXSoloAmmMarket(marketId);
+        uint256 targetReserveA = _boundedRebalanceTarget(market.reserveA, reserveABpsSeed);
+        uint256 targetReserveB = _boundedRebalanceTarget(market.reserveB, reserveBBpsSeed);
+
+        vm.prank(maker);
+        harness.scheduleEqualXSoloAmmRebalance(marketId, targetReserveA, targetReserveB);
+    }
+
+    function cancelRebalance() external {
+        if (marketId == 0) return;
+        EqualXViewFacet.EqualXSoloAmmPendingRebalanceView memory pending = harness.getEqualXSoloAmmPendingRebalance(marketId);
+        if (!pending.exists) return;
+        if (!_marketActive()) return;
+
+        vm.prank(maker);
+        harness.cancelEqualXSoloAmmRebalance(marketId);
+    }
+
+    function executeRebalance() external {
+        if (!_marketLive()) return;
+        EqualXViewFacet.EqualXSoloAmmPendingRebalanceView memory pending = harness.getEqualXSoloAmmPendingRebalance(marketId);
+        if (!pending.exists || block.timestamp < pending.executeAfter) return;
+
+        vm.prank(taker);
+        harness.executeEqualXSoloAmmRebalance(marketId);
+    }
+
     function close(uint256 modeSeed) external {
         if (!_marketActive()) return;
         LibEqualXSoloAmmStorage.SoloAmmMarket memory market = harness.getEqualXSoloAmmMarket(marketId);
@@ -263,6 +294,14 @@ contract EqualXSoloInvariantHandler is Test {
     function _marketLive() internal view returns (bool) {
         if (!_marketActive()) return false;
         return harness.getEqualXSoloAmmStatus(marketId).live;
+    }
+
+    function _boundedRebalanceTarget(uint256 reserve, uint256 bpsSeed) internal pure returns (uint256 target) {
+        uint256 bps = bound(bpsSeed, 9000, 11000);
+        target = Math.mulDiv(reserve, bps, 10_000);
+        if (target == 0) {
+            target = 1;
+        }
     }
 
     function _syncFundedPrincipals() internal {
@@ -691,12 +730,15 @@ contract EqualXSoloInvariantTest is StdInvariant, Test {
         handler = new EqualXSoloInvariantHandler(harness, positionNft, tokenA, tokenB, maker, taker);
         handler.seedInitialState();
 
-        bytes4[] memory selectors = new bytes4[](5);
+        bytes4[] memory selectors = new bytes4[](8);
         selectors[0] = handler.createMarket.selector;
         selectors[1] = handler.swap.selector;
         selectors[2] = handler.close.selector;
         selectors[3] = handler.replenishBacking.selector;
-        selectors[4] = handler.warpTime.selector;
+        selectors[4] = handler.scheduleRebalance.selector;
+        selectors[5] = handler.cancelRebalance.selector;
+        selectors[6] = handler.executeRebalance.selector;
+        selectors[7] = handler.warpTime.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
 
@@ -705,16 +747,28 @@ contract EqualXSoloInvariantTest is StdInvariant, Test {
         if (marketId == 0) return;
 
         LibEqualXSoloAmmStorage.SoloAmmMarket memory market = harness.getEqualXSoloAmmMarket(marketId);
+        EqualXViewFacet.EqualXSoloAmmPendingRebalanceView memory pending = harness.getEqualXSoloAmmPendingRebalance(marketId);
         bytes32 makerKey = handler.makerPositionKey();
         if (market.active) {
             assertEq(harness.encumberedCapitalOf(makerKey, market.poolIdA), market.reserveA);
             assertEq(harness.encumberedCapitalOf(makerKey, market.poolIdB), market.reserveB);
+            assertEq(harness.activeCreditPrincipalTotalOf(1), market.baselineReserveA);
+            assertEq(harness.activeCreditPrincipalTotalOf(2), market.baselineReserveB);
             assertEq(harness.principalOf(1, makerKey), handler.fundedPrincipalA());
             assertEq(harness.principalOf(2, makerKey), handler.fundedPrincipalB());
         } else if (market.finalized) {
             assertFalse(market.active);
             assertEq(harness.encumberedCapitalOf(makerKey, market.poolIdA), 0);
             assertEq(harness.encumberedCapitalOf(makerKey, market.poolIdB), 0);
+            assertEq(harness.activeCreditPrincipalTotalOf(1), 0);
+            assertEq(harness.activeCreditPrincipalTotalOf(2), 0);
+            assertFalse(pending.exists);
+        }
+
+        if (pending.exists) {
+            assertTrue(market.active);
+            assertFalse(market.finalized);
+            assertGt(pending.executeAfter, 0);
         }
     }
 
