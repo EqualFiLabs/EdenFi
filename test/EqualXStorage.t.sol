@@ -220,6 +220,12 @@ contract EqualXStorageHarness is EqualXViewFacet {
         market.finalized = finalized;
     }
 
+    function setSoloRebalanceTiming(uint256 marketId, uint64 lastRebalanceExecutionAt, uint64 rebalanceTimelock) external {
+        LibEqualXSoloAmmStorage.SoloAmmMarket storage market = LibEqualXSoloAmmStorage.s().markets[marketId];
+        market.lastRebalanceExecutionAt = lastRebalanceExecutionAt;
+        market.rebalanceTimelock = rebalanceTimelock;
+    }
+
     function setCommunityState(uint256 marketId, bool active, bool finalized) external {
         LibEqualXCommunityAmmStorage.CommunityAmmMarket storage market = LibEqualXCommunityAmmStorage.s().markets[marketId];
         market.active = active;
@@ -408,12 +414,16 @@ contract EqualXStorageTest is Test {
     }
 
     function test_SoloAmmStorageTracksPendingRebalanceStateAndDefaultFloor() public {
+        vm.warp(block.timestamp + 10 minutes);
         uint256 soloId = harness.createSolo(POSITION_KEY_ONE, 10, TOKEN_A, TOKEN_B);
 
         assertEq(harness.getSoloMinRebalanceTimelock(), 1 minutes);
 
+        harness.setSoloRebalanceTiming(soloId, uint64(block.timestamp - 5 minutes), 30 minutes);
         harness.setSoloPendingRebalance(soloId, 100e18, 200e18, 105e18, 190e18, uint64(block.timestamp + 15 minutes), true);
         LibEqualXSoloAmmStorage.SoloAmmPendingRebalance memory pending = harness.getSoloPendingRebalance(soloId);
+        EqualXViewFacet.EqualXSoloAmmPendingRebalanceView memory pendingView =
+            harness.getEqualXSoloAmmPendingRebalance(soloId);
 
         assertEq(pending.snapshotReserveA, 100e18);
         assertEq(pending.snapshotReserveB, 200e18);
@@ -421,6 +431,14 @@ contract EqualXStorageTest is Test {
         assertEq(pending.targetReserveB, 190e18);
         assertEq(pending.executeAfter, uint64(block.timestamp + 15 minutes));
         assertTrue(pending.exists);
+        assertTrue(pendingView.exists);
+        assertEq(pendingView.snapshotReserveA, 100e18);
+        assertEq(pendingView.snapshotReserveB, 200e18);
+        assertEq(pendingView.targetReserveA, 105e18);
+        assertEq(pendingView.targetReserveB, 190e18);
+        assertEq(pendingView.executeAfter, uint64(block.timestamp + 15 minutes));
+        assertEq(pendingView.lastRebalanceExecutionAt, uint64(block.timestamp - 5 minutes));
+        assertEq(pendingView.rebalanceTimelock, 30 minutes);
     }
 
     function test_SoloAmmStorageSlotDoesNotCollideWithCoreStorages() public {

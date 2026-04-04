@@ -37,6 +37,7 @@ import {PositionMSCAImpl} from "src/agent-wallet/erc6900/PositionMSCAImpl.sol";
 import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
 import {EqualScaleAlphaAdminFacet} from "src/equalscale/EqualScaleAlphaAdminFacet.sol";
 import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.sol";
+import {EqualXViewFacet} from "src/equalx/EqualXViewFacet.sol";
 import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {OptionTokenAdminFacet} from "src/options/OptionTokenAdminFacet.sol";
 import {OptionTokenViewFacet} from "src/options/OptionTokenViewFacet.sol";
@@ -52,7 +53,7 @@ contract DeployEqualFi is Script {
     string internal constant DEFAULT_OPTION_TOKEN_BASE_URI = "ipfs://equalfi/options";
     uint256 internal constant DIAMOND_CORE_FACET_COUNT = 3;
     uint256 internal constant DIRECT_LAUNCH_FACET_COUNT = 9;
-    uint256 internal constant SUBSTRATE_LAUNCH_FACET_COUNT = 18 + DIRECT_LAUNCH_FACET_COUNT;
+    uint256 internal constant SUBSTRATE_LAUNCH_FACET_COUNT = 19 + DIRECT_LAUNCH_FACET_COUNT;
     uint256 internal constant EDEN_REWARDS_FACET_COUNT = 1;
     uint256 internal constant LAUNCH_FACET_COUNT = SUBSTRATE_LAUNCH_FACET_COUNT + EDEN_REWARDS_FACET_COUNT;
     uint256 internal constant TOTAL_FACET_COUNT = DIAMOND_CORE_FACET_COUNT + LAUNCH_FACET_COUNT;
@@ -296,6 +297,10 @@ contract DeployEqualFi is Script {
         {
             EqualScaleAlphaViewFacet facet = new EqualScaleAlphaViewFacet();
             cuts[i++] = _cut(address(facet), _selectorsEqualScaleAlphaView());
+        }
+        {
+            EqualXViewFacet facet = new EqualXViewFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualXView());
         }
         {
             OptionTokenAdminFacet facet = new OptionTokenAdminFacet();
@@ -623,6 +628,37 @@ contract DeployEqualFi is Script {
         s[9] = EqualScaleAlphaViewFacet.getTreasuryTelemetry.selector;
         s[10] = EqualScaleAlphaViewFacet.getRefinanceStatus.selector;
         s[11] = EqualScaleAlphaViewFacet.getLineLossSummary.selector;
+    }
+
+    function _selectorsEqualXView() internal pure virtual returns (bytes4[] memory s) {
+        s = new bytes4[](27);
+        s[0] = EqualXViewFacet.getEqualXSoloAmmMarket.selector;
+        s[1] = EqualXViewFacet.getEqualXCommunityAmmMarket.selector;
+        s[2] = EqualXViewFacet.getEqualXCurveMarket.selector;
+        s[3] = EqualXViewFacet.getEqualXCurveProfile.selector;
+        s[4] = EqualXViewFacet.isEqualXCurveProfileApproved.selector;
+        s[5] = EqualXViewFacet.getEqualXBuiltInCurveProfiles.selector;
+        s[6] = EqualXViewFacet.getEqualXSoloAmmStatus.selector;
+        s[7] = EqualXViewFacet.getEqualXSoloAmmPendingRebalance.selector;
+        s[8] = EqualXViewFacet.getEqualXCommunityAmmStatus.selector;
+        s[9] = EqualXViewFacet.getEqualXCurveStatus.selector;
+        s[10] = EqualXViewFacet.getEqualXMarketsByPosition.selector;
+        s[11] = EqualXViewFacet.getEqualXMarketsByPositionId.selector;
+        s[12] = EqualXViewFacet.getEqualXMarketsByPositionAndType.selector;
+        s[13] = EqualXViewFacet.getEqualXMarketsByPositionIdAndType.selector;
+        s[14] = EqualXViewFacet.getEqualXMarketsByPair.selector;
+        s[15] = EqualXViewFacet.getEqualXMarketsByPairAndType.selector;
+        s[16] = EqualXViewFacet.getEqualXActiveMarkets.selector;
+        s[17] = EqualXViewFacet.getEqualXActiveMarketsByPosition.selector;
+        s[18] = EqualXViewFacet.getEqualXActiveMarketsByPositionId.selector;
+        s[19] = EqualXViewFacet.getEqualXActiveMarketsByPair.selector;
+        s[20] = EqualXViewFacet.quoteEqualXSoloAmmExactIn.selector;
+        s[21] = EqualXViewFacet.quoteEqualXCommunityAmmExactIn.selector;
+        s[22] = EqualXViewFacet.quoteEqualXCurveExactIn.selector;
+        s[23] = EqualXViewFacet.getEqualXSoloAmmMakerFeeBuckets.selector;
+        s[24] = EqualXViewFacet.getEqualXCommunityMakerView.selector;
+        s[25] = EqualXViewFacet.getEqualXCommunityMakerViewById.selector;
+        s[26] = EqualXViewFacet.previewEqualXCommunityMakerFees.selector;
     }
 
     function _selectorsOptionTokenAdmin() internal pure returns (bytes4[] memory s) {

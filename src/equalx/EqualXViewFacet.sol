@@ -60,6 +60,17 @@ contract EqualXViewFacet {
         uint256 pendingFeesB;
     }
 
+    struct EqualXSoloAmmPendingRebalanceView {
+        bool exists;
+        uint256 snapshotReserveA;
+        uint256 snapshotReserveB;
+        uint256 targetReserveA;
+        uint256 targetReserveB;
+        uint64 executeAfter;
+        uint64 lastRebalanceExecutionAt;
+        uint64 rebalanceTimelock;
+    }
+
     function getEqualXSoloAmmMarket(uint256 marketId)
         external
         view
@@ -119,6 +130,26 @@ contract EqualXViewFacet {
     function getEqualXSoloAmmStatus(uint256 marketId) external view returns (EqualXLinearMarketStatus memory status) {
         LibEqualXSoloAmmStorage.SoloAmmMarket storage market = LibEqualXSoloAmmStorage.s().markets[marketId];
         status = _buildLinearStatus(market.makerPositionId != 0, market.active, market.finalized, market.startTime, market.endTime);
+    }
+
+    function getEqualXSoloAmmPendingRebalance(uint256 marketId)
+        external
+        view
+        returns (EqualXSoloAmmPendingRebalanceView memory pendingView)
+    {
+        LibEqualXSoloAmmStorage.SoloAmmStorage storage store = LibEqualXSoloAmmStorage.s();
+        LibEqualXSoloAmmStorage.SoloAmmMarket storage market = store.markets[marketId];
+        if (market.makerPositionId == 0) revert EqualXView_InvalidMarket(LibEqualXTypes.MarketType.SOLO_AMM, marketId);
+
+        LibEqualXSoloAmmStorage.SoloAmmPendingRebalance storage pending = store.pendingRebalances[marketId];
+        pendingView.exists = pending.exists;
+        pendingView.snapshotReserveA = pending.snapshotReserveA;
+        pendingView.snapshotReserveB = pending.snapshotReserveB;
+        pendingView.targetReserveA = pending.targetReserveA;
+        pendingView.targetReserveB = pending.targetReserveB;
+        pendingView.executeAfter = pending.executeAfter;
+        pendingView.lastRebalanceExecutionAt = market.lastRebalanceExecutionAt;
+        pendingView.rebalanceTimelock = market.rebalanceTimelock;
     }
 
     function getEqualXCommunityAmmStatus(uint256 marketId)

@@ -738,6 +738,42 @@ contract EqualXSoloAmmFacetTest is Test {
         assertFalse(status.expired);
     }
 
+    function test_ViewHelpers_ExposeSoloPendingRebalanceAndTiming() public {
+        uint256 marketId = _createSoloMarket(uint64(block.timestamp), uint64(block.timestamp + 5 days), DEFAULT_REBALANCE_TIMELOCK);
+
+        EqualXViewFacet.EqualXSoloAmmPendingRebalanceView memory emptyView =
+            harness.getEqualXSoloAmmPendingRebalance(marketId);
+        assertFalse(emptyView.exists);
+        assertEq(emptyView.executeAfter, 0);
+        assertEq(emptyView.lastRebalanceExecutionAt, 0);
+        assertEq(emptyView.rebalanceTimelock, DEFAULT_REBALANCE_TIMELOCK);
+
+        vm.prank(alice);
+        uint64 executeAfter = harness.scheduleEqualXSoloAmmRebalance(marketId, 105e18, 95e18);
+
+        EqualXViewFacet.EqualXSoloAmmPendingRebalanceView memory pendingView =
+            harness.getEqualXSoloAmmPendingRebalance(marketId);
+        assertTrue(pendingView.exists);
+        assertEq(pendingView.snapshotReserveA, 100e18);
+        assertEq(pendingView.snapshotReserveB, 100e18);
+        assertEq(pendingView.targetReserveA, 105e18);
+        assertEq(pendingView.targetReserveB, 95e18);
+        assertEq(pendingView.executeAfter, executeAfter);
+        assertEq(pendingView.lastRebalanceExecutionAt, 0);
+        assertEq(pendingView.rebalanceTimelock, DEFAULT_REBALANCE_TIMELOCK);
+
+        vm.warp(executeAfter);
+        vm.prank(bob);
+        harness.executeEqualXSoloAmmRebalance(marketId);
+
+        EqualXViewFacet.EqualXSoloAmmPendingRebalanceView memory clearedView =
+            harness.getEqualXSoloAmmPendingRebalance(marketId);
+        assertFalse(clearedView.exists);
+        assertEq(clearedView.executeAfter, 0);
+        assertEq(clearedView.lastRebalanceExecutionAt, executeAfter);
+        assertEq(clearedView.rebalanceTimelock, DEFAULT_REBALANCE_TIMELOCK);
+    }
+
     function test_SwapExactIn_RejectsBeforeStartAndAfterExpiry() public {
         uint256 marketId;
         vm.prank(alice);
