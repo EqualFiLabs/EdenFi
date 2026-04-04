@@ -165,6 +165,51 @@ contract EqualIndexLaunchTest is LaunchFixture {
         assertEq(testSupport.getPoolView(indexPoolId).indexEncumberedTotal, 0);
     }
 
+    function test_EqualIndexLending_ExpiredRecovery_ClearsNativeIndexEncumbrance_OnLiveDiamond() public {
+        eve.mint(alice, 200e18);
+        uint256 positionId = _mintPosition(alice, 1);
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 200e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 200e18, 200e18);
+        vm.stopPrank();
+
+        (uint256 indexId,) =
+            _createIndexThroughTimelock(_singleAssetIndexParams("Recover Lending Index", "RLX", address(eve), 0, 0));
+        uint256 indexPoolId = EqualIndexAdminFacetV3(diamond).getIndexPoolId(indexId);
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(positionId, indexId, 2e18);
+
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(
+                EqualIndexLendingFacet.configureLending.selector, indexId, 10_000, 1 days, 30 days
+            )
+        );
+
+        vm.prank(alice);
+        uint256 loanId = EqualIndexLendingFacet(diamond).borrowFromPosition(positionId, indexId, 1e18, 1 days);
+
+        assertEq(EqualIndexLendingFacet(diamond).getLockedCollateralUnits(indexId), 1e18);
+        assertEq(EqualIndexLendingFacet(diamond).getLoan(loanId).collateralUnits, 1e18);
+        assertEq(testSupport.indexEncumberedOf(positionKey, indexPoolId), 1e18);
+        assertEq(testSupport.indexEncumberedForIndex(positionKey, indexPoolId, indexId), 1e18);
+        assertEq(testSupport.getPoolView(indexPoolId).indexEncumberedTotal, 1e18);
+
+        vm.warp(block.timestamp + 2 days);
+        EqualIndexLendingFacet(diamond).recoverExpiredIndexLoan(loanId);
+
+        assertEq(EqualIndexLendingFacet(diamond).getLockedCollateralUnits(indexId), 0);
+        assertEq(EqualIndexLendingFacet(diamond).getOutstandingPrincipal(indexId, address(eve)), 0);
+        assertEq(EqualIndexLendingFacet(diamond).getLoan(loanId).collateralUnits, 0);
+        assertEq(EqualIndexAdminFacetV3(diamond).getIndex(indexId).totalUnits, 1e18);
+        assertEq(testSupport.indexEncumberedOf(positionKey, indexPoolId), 0);
+        assertEq(testSupport.indexEncumberedForIndex(positionKey, indexPoolId, indexId), 0);
+        assertEq(testSupport.getPoolView(indexPoolId).indexEncumberedTotal, 0);
+    }
+
     function test_EqualIndexRewards_WalletHeldUnitsDoNotEarnButPositionHeldUnitsDo() public {
         eve.mint(alice, 40e18);
         eve.mint(bob, 20e18);

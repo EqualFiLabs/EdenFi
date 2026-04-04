@@ -564,17 +564,19 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
 
         (uint256 lineId,) = _createActiveFourLenderLine(borrowerPositionId, params);
         bytes32 borrowerPositionKey = positionNft.getPositionKey(borrowerPositionId);
+        LibEqualScaleAlphaStorage.CreditLine memory line = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
 
         assertEq(
             inspector.lockedCapital(borrowerPositionKey, SETTLEMENT_POOL_ID),
             securedLine ? COLLATERAL_AMOUNT : 0
         );
+        assertEq(line.lockedCollateralAmount, securedLine ? COLLATERAL_AMOUNT : 0);
 
         uint256 drawAmount = _boundAmount(drawSeed, 100, 500);
         vm.prank(alice);
         EqualScaleAlphaFacet(diamond).draw(lineId, drawAmount);
 
-        LibEqualScaleAlphaStorage.CreditLine memory line = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
+        line = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
         uint256 outstandingBeforeChargeOff = line.outstandingPrincipal;
 
         vm.warp(uint256(line.nextDueAt) + GRACE_PERIOD_SECS + 1);
@@ -599,6 +601,7 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
         }
 
         assertEq(inspector.lockedCapital(borrowerPositionKey, SETTLEMENT_POOL_ID), 0);
+        assertEq(EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId).lockedCollateralAmount, 0);
     }
 }
 
