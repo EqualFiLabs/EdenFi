@@ -32,6 +32,10 @@ library LibSelfSecuredCreditStorage {
         return s().totalAciAppliedToDebt[positionKey][poolId];
     }
 
+    function lineView(bytes32 positionKey, uint256 poolId) internal view returns (Types.SscLine memory sscLine) {
+        sscLine = s().lines[positionKey][poolId];
+    }
+
     function increaseClaimableAciYield(bytes32 positionKey, uint256 poolId, uint256 amount) internal {
         if (amount == 0) return;
         s().claimableAciYield[positionKey][poolId] += amount;

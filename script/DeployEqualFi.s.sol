@@ -15,6 +15,7 @@ import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockCon
 
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
+import {SelfSecuredCreditFacet} from "src/equallend/SelfSecuredCreditFacet.sol";
 import {FlashLoanFacet} from "src/equallend/FlashLoanFacet.sol";
 import {EqualLendDirectFixedOfferFacet} from "src/equallend/EqualLendDirectFixedOfferFacet.sol";
 import {EqualLendDirectFixedAgreementFacet} from "src/equallend/EqualLendDirectFixedAgreementFacet.sol";
@@ -53,7 +54,7 @@ contract DeployEqualFi is Script {
     string internal constant DEFAULT_OPTION_TOKEN_BASE_URI = "ipfs://equalfi/options";
     uint256 internal constant DIAMOND_CORE_FACET_COUNT = 3;
     uint256 internal constant DIRECT_LAUNCH_FACET_COUNT = 9;
-    uint256 internal constant SUBSTRATE_LAUNCH_FACET_COUNT = 19 + DIRECT_LAUNCH_FACET_COUNT;
+    uint256 internal constant SUBSTRATE_LAUNCH_FACET_COUNT = 20 + DIRECT_LAUNCH_FACET_COUNT;
     uint256 internal constant EDEN_REWARDS_FACET_COUNT = 1;
     uint256 internal constant LAUNCH_FACET_COUNT = SUBSTRATE_LAUNCH_FACET_COUNT + EDEN_REWARDS_FACET_COUNT;
     uint256 internal constant TOTAL_FACET_COUNT = DIAMOND_CORE_FACET_COUNT + LAUNCH_FACET_COUNT;
@@ -217,6 +218,10 @@ contract DeployEqualFi is Script {
         {
             FlashLoanFacet facet = new FlashLoanFacet();
             cuts[i++] = _cut(address(facet), _selectorsFlashLoan());
+        }
+        {
+            SelfSecuredCreditFacet facet = new SelfSecuredCreditFacet();
+            cuts[i++] = _cut(address(facet), _selectorsSelfSecuredCredit());
         }
         {
             EqualIndexAdminFacetV3 facet = new EqualIndexAdminFacetV3();
@@ -416,6 +421,13 @@ contract DeployEqualFi is Script {
         s = new bytes4[](2);
         s[0] = FlashLoanFacet.previewFlashLoanRepayment.selector;
         s[1] = FlashLoanFacet.flashLoan.selector;
+    }
+
+    function _selectorsSelfSecuredCredit() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = SelfSecuredCreditFacet.drawSelfSecuredCredit.selector;
+        s[1] = SelfSecuredCreditFacet.repaySelfSecuredCredit.selector;
+        s[2] = SelfSecuredCreditFacet.closeSelfSecuredCredit.selector;
     }
 
     function _selectorsEqualIndexAdmin() internal pure returns (bytes4[] memory s) {
