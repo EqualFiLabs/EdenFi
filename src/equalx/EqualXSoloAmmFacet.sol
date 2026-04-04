@@ -23,6 +23,7 @@ import {InsufficientPrincipal, InvalidParameterRange, PoolMembershipRequired} fr
 contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
     bytes32 internal constant SOLO_AMM_FEE_SOURCE = keccak256("EQUALX_SOLO_AMM_FEE");
     uint16 internal constant SOLO_AMM_MAKER_SHARE_BPS = 7000;
+    uint256 internal constant SOLO_AMM_REBALANCE_MAX_DELTA_DIVISOR = 10;
 
     error EqualXSoloAmm_InvalidMarket(uint256 marketId);
     error EqualXSoloAmm_InvalidToken(address token);
@@ -33,6 +34,8 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
     error EqualXSoloAmm_NotExpired(uint256 marketId);
     error EqualXSoloAmm_Expired(uint256 marketId);
     error EqualXSoloAmm_AlreadyFinalized(uint256 marketId);
+    error EqualXSoloAmm_PendingRebalanceExists(uint256 marketId);
+    error EqualXSoloAmm_NoPendingRebalance(uint256 marketId);
     error EqualXSoloAmm_StableZeroOutput();
     error EqualXSoloAmm_Slippage(uint256 minOut, uint256 actualOut);
 
@@ -56,6 +59,16 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
     );
     event EqualXSoloAmmMarketFinalized(uint256 indexed marketId, bytes32 indexed makerPositionKey, bool cancelled);
     event EqualXSoloAmmMinRebalanceTimelockSet(uint64 minRebalanceTimelock);
+    event EqualXSoloAmmRebalanceScheduled(
+        uint256 indexed marketId,
+        bytes32 indexed makerPositionKey,
+        uint256 snapshotReserveA,
+        uint256 snapshotReserveB,
+        uint256 targetReserveA,
+        uint256 targetReserveB,
+        uint64 executeAfter
+    );
+    event EqualXSoloAmmRebalanceCancelled(uint256 indexed marketId, bytes32 indexed makerPositionKey);
 
     struct SoloAmmSwapPreview {
         uint256 rawOut;
@@ -175,6 +188,61 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         }
         LibEqualXSoloAmmStorage.s().minRebalanceTimelock = newMinRebalanceTimelock;
         emit EqualXSoloAmmMinRebalanceTimelockSet(newMinRebalanceTimelock);
+    }
+
+    function scheduleEqualXSoloAmmRebalance(
+        uint256 marketId,
+        uint256 targetReserveA,
+        uint256 targetReserveB
+    ) external nonReentrant returns (uint64 executeAfter) {
+        LibEqualXSoloAmmStorage.SoloAmmStorage storage store = LibEqualXSoloAmmStorage.s();
+        LibEqualXSoloAmmStorage.SoloAmmMarket storage market = store.markets[marketId];
+        _requireMarketExists(marketId, market);
+        LibPositionHelpers.requireOwnership(market.makerPositionId);
+        _requireActiveExecution(marketId, market);
+
+        if (targetReserveA == 0) {
+            revert InvalidParameterRange("targetReserveA");
+        }
+        if (targetReserveB == 0) {
+            revert InvalidParameterRange("targetReserveB");
+        }
+
+        uint256 snapshotReserveA = market.reserveA;
+        uint256 snapshotReserveB = market.reserveB;
+        _requireRebalanceTargetWithinBound(snapshotReserveA, targetReserveA, "targetReserveA");
+        _requireRebalanceTargetWithinBound(snapshotReserveB, targetReserveB, "targetReserveB");
+
+        if (store.pendingRebalances[marketId].exists) {
+            revert EqualXSoloAmm_PendingRebalanceExists(marketId);
+        }
+
+        executeAfter = _computeRebalanceExecuteAfter(market.lastRebalanceExecutionAt, market.rebalanceTimelock);
+        store.pendingRebalances[marketId] = LibEqualXSoloAmmStorage.SoloAmmPendingRebalance({
+            snapshotReserveA: snapshotReserveA,
+            snapshotReserveB: snapshotReserveB,
+            targetReserveA: targetReserveA,
+            targetReserveB: targetReserveB,
+            executeAfter: executeAfter,
+            exists: true
+        });
+
+        emit EqualXSoloAmmRebalanceScheduled(
+            marketId, market.makerPositionKey, snapshotReserveA, snapshotReserveB, targetReserveA, targetReserveB, executeAfter
+        );
+    }
+
+    function cancelEqualXSoloAmmRebalance(uint256 marketId) external nonReentrant {
+        LibEqualXSoloAmmStorage.SoloAmmStorage storage store = LibEqualXSoloAmmStorage.s();
+        LibEqualXSoloAmmStorage.SoloAmmMarket storage market = store.markets[marketId];
+        _requireMarketExists(marketId, market);
+        LibPositionHelpers.requireOwnership(market.makerPositionId);
+        if (!store.pendingRebalances[marketId].exists) {
+            revert EqualXSoloAmm_NoPendingRebalance(marketId);
+        }
+
+        delete store.pendingRebalances[marketId];
+        emit EqualXSoloAmmRebalanceCancelled(marketId, market.makerPositionKey);
     }
 
     function previewEqualXSoloAmmSwapExactIn(
@@ -334,6 +402,7 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         _applyPrincipalDelta(poolA, market.poolIdA, makerPositionKey, reserveAForPrincipal, market.baselineReserveA);
         _applyPrincipalDelta(poolB, market.poolIdB, makerPositionKey, reserveBForPrincipal, market.baselineReserveB);
 
+        delete LibEqualXSoloAmmStorage.s().pendingRebalances[marketId];
         market.active = false;
         market.finalized = true;
         LibEqualXDiscoveryStorage.removeActiveMarket(
@@ -524,6 +593,39 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
             }
         }
         updatedCtx = ctx;
+    }
+
+    function _computeRebalanceExecuteAfter(uint64 lastRebalanceExecutionAt, uint64 rebalanceTimelock)
+        internal
+        view
+        returns (uint64 executeAfter)
+    {
+        uint256 executeAfter_ = block.timestamp + uint256(rebalanceTimelock);
+        uint256 cooldownReady = uint256(lastRebalanceExecutionAt) + uint256(rebalanceTimelock);
+        if (cooldownReady > executeAfter_) {
+            executeAfter_ = cooldownReady;
+        }
+        if (executeAfter_ > type(uint64).max) {
+            revert InvalidParameterRange("rebalanceExecuteAfter");
+        }
+        executeAfter = uint64(executeAfter_);
+    }
+
+    function _requireRebalanceTargetWithinBound(
+        uint256 snapshotReserve,
+        uint256 targetReserve,
+        string memory parameterName
+    ) internal pure {
+        uint256 maxDelta = snapshotReserve / SOLO_AMM_REBALANCE_MAX_DELTA_DIVISOR;
+        if (targetReserve > snapshotReserve) {
+            if (targetReserve - snapshotReserve > maxDelta) {
+                revert InvalidParameterRange(parameterName);
+            }
+            return;
+        }
+        if (snapshotReserve - targetReserve > maxDelta) {
+            revert InvalidParameterRange(parameterName);
+        }
     }
 
     function _requireAvailableBacking(
