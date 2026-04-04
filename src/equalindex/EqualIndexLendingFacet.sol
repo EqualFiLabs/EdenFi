@@ -4,7 +4,6 @@ pragma solidity ^0.8.20;
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {EqualIndexBaseV3} from "./EqualIndexBaseV3.sol";
 import {IndexToken} from "./IndexToken.sol";
-import {LibActiveCreditIndex} from "../libraries/LibActiveCreditIndex.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEqualIndexRewards} from "../libraries/LibEqualIndexRewards.sol";
@@ -102,7 +101,7 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         _assertAvailableCollateral(indexPool, positionKey, indexPoolId, collateralUnits);
         BorrowPreparation memory prep = _prepareBorrow(idx, indexId, collateralUnits, ltvBps);
         loanId = _createLoan(indexId, positionKey, collateralUnits, ltvBps, duration, prep.lockedAfter);
-        _encumberWithAci(indexPool, positionKey, indexPoolId, indexId, collateralUnits);
+        LibIndexEncumbrance.encumber(positionKey, indexPoolId, indexId, collateralUnits);
         _disburseBorrowedAssets(loanId, indexId, prep.assets, prep.principals);
 
         _emitLoanCreated(loanId, positionKey, indexId, collateralUnits, ltvBps);
@@ -142,7 +141,7 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         ls.lockedCollateralUnits[loan.indexId] -= loan.collateralUnits;
 
         uint256 indexPoolId = s().indexToPoolId[loan.indexId];
-        _unencumberWithAci(LibAppStorage.s().pools[indexPoolId], positionKey, indexPoolId, loan.indexId, loan.collateralUnits);
+        LibIndexEncumbrance.unencumber(positionKey, indexPoolId, loan.indexId, loan.collateralUnits);
 
         uint256 repaidIndexId = loan.indexId;
         delete ls.loans[loanId];
@@ -511,35 +510,6 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         indexPool.userMaintenanceIndex[loan.positionKey] = indexPool.maintenanceIndex;
         LibEqualIndexRewards.syncEligibleBalanceChange(loan.indexId);
 
-        _unencumberWithAci(indexPool, loan.positionKey, indexPoolId, loan.indexId, loan.collateralUnits);
-    }
-
-    function _encumberWithAci(
-        Types.PoolData storage pool,
-        bytes32 positionKey,
-        uint256 poolId,
-        uint256 indexId,
-        uint256 amount
-    )
-        private
-    {
-        LibIndexEncumbrance.encumber(positionKey, poolId, indexId, amount);
-        if (amount == 0) {
-            return;
-        }
-        LibActiveCreditIndex.applyEncumbranceIncrease(pool, poolId, positionKey, amount);
-    }
-
-    function _unencumberWithAci(
-        Types.PoolData storage pool,
-        bytes32 positionKey,
-        uint256 poolId,
-        uint256 indexId,
-        uint256 amount
-    )
-        private
-    {
-        LibIndexEncumbrance.unencumber(positionKey, poolId, indexId, amount);
-        LibActiveCreditIndex.applyEncumbranceDecrease(pool, poolId, positionKey, amount);
+        LibIndexEncumbrance.unencumber(loan.positionKey, indexPoolId, loan.indexId, loan.collateralUnits);
     }
 }
