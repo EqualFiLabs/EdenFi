@@ -65,6 +65,9 @@ contract EqualIndexLendingFacetTest is LaunchFixture {
         assertEq(EqualIndexLendingFacet(diamond).getOutstandingPrincipal(ctx.indexId, address(eve)), 1e18);
         assertEq(EqualIndexLendingFacet(diamond).getOutstandingPrincipal(ctx.indexId, address(alt)), 2e18);
         assertEq(EqualIndexLendingFacet(diamond).getLockedCollateralUnits(ctx.indexId), 1e18);
+        assertEq(testSupport.indexEncumberedOf(ctx.positionKey, ctx.indexPoolId), 1e18);
+        assertEq(testSupport.indexEncumberedForIndex(ctx.positionKey, ctx.indexPoolId, ctx.indexId), 1e18);
+        assertEq(testSupport.getPoolView(ctx.indexPoolId).indexEncumberedTotal, 1e18);
 
         vm.startPrank(alice);
         eve.approve(diamond, 1e18);
@@ -76,6 +79,9 @@ contract EqualIndexLendingFacetTest is LaunchFixture {
         assertEq(EqualIndexLendingFacet(diamond).getOutstandingPrincipal(ctx.indexId, address(alt)), 0);
         assertEq(EqualIndexLendingFacet(diamond).getLockedCollateralUnits(ctx.indexId), 0);
         assertEq(EqualIndexLendingFacet(diamond).getLoan(loanId).collateralUnits, 0);
+        assertEq(testSupport.indexEncumberedOf(ctx.positionKey, ctx.indexPoolId), 0);
+        assertEq(testSupport.indexEncumberedForIndex(ctx.positionKey, ctx.indexPoolId, ctx.indexId), 0);
+        assertEq(testSupport.getPoolView(ctx.indexPoolId).indexEncumberedTotal, 0);
     }
 
     function test_extendFromPosition_updatesMaturity_andChargesFlatFee() public {
@@ -179,6 +185,9 @@ contract EqualIndexLendingFacetTest is LaunchFixture {
 
         vm.prank(alice);
         uint256 loanId = EqualIndexLendingFacet(diamond).borrowFromPosition(ctx.positionId, ctx.indexId, 1e18, 1 days);
+        assertEq(testSupport.indexEncumberedOf(ctx.positionKey, ctx.indexPoolId), 1e18);
+        assertEq(testSupport.indexEncumberedForIndex(ctx.positionKey, ctx.indexPoolId, ctx.indexId), 1e18);
+        assertEq(testSupport.getPoolView(ctx.indexPoolId).indexEncumberedTotal, 1e18);
 
         vm.warp(block.timestamp + 2 days);
         EqualIndexLendingFacet(diamond).recoverExpiredIndexLoan(loanId);
@@ -192,6 +201,9 @@ contract EqualIndexLendingFacetTest is LaunchFixture {
         assertEq(testSupport.principalOf(ctx.indexPoolId, ctx.positionKey), principalBefore - 1e18);
         assertEq(testSupport.getPoolView(ctx.indexPoolId).trackedBalance, trackedBefore - 1e18);
         assertEq(testSupport.getPoolView(ctx.indexPoolId).totalDeposits, depositsBefore - 1e18);
+        assertEq(testSupport.indexEncumberedOf(ctx.positionKey, ctx.indexPoolId), 0);
+        assertEq(testSupport.indexEncumberedForIndex(ctx.positionKey, ctx.indexPoolId, ctx.indexId), 0);
+        assertEq(testSupport.getPoolView(ctx.indexPoolId).indexEncumberedTotal, 0);
         assertEq(ERC20(ctx.token).totalSupply(), 1e18);
     }
 

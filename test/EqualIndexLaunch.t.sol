@@ -29,6 +29,7 @@ contract EqualIndexLaunchTest is LaunchFixture {
     function setUp() public override {
         super.setUp();
         _bootstrapCorePools();
+        _installTestSupportFacet();
     }
 
     function test_WalletMode_MintBurn_RoutesFeesOnLiveDiamond() public {
@@ -129,6 +130,7 @@ contract EqualIndexLaunchTest is LaunchFixture {
 
         (uint256 indexId,) =
             _createIndexThroughTimelock(_singleAssetIndexParams("Lending Index", "LIDX", address(eve), 0, 0));
+        uint256 indexPoolId = EqualIndexAdminFacetV3(diamond).getIndexPoolId(indexId);
 
         vm.prank(alice);
         EqualIndexPositionFacet(diamond).mintFromPosition(positionId, indexId, 2e18);
@@ -146,6 +148,9 @@ contract EqualIndexLaunchTest is LaunchFixture {
         assertEq(EqualIndexLendingFacet(diamond).getLockedCollateralUnits(indexId), 1e18);
         assertEq(EqualIndexLendingFacet(diamond).getOutstandingPrincipal(indexId, address(eve)), 1e18);
         assertEq(EqualIndexLendingFacet(diamond).getLoan(loanId).collateralUnits, 1e18);
+        assertEq(testSupport.indexEncumberedOf(positionNft.getPositionKey(positionId), indexPoolId), 1e18);
+        assertEq(testSupport.indexEncumberedForIndex(positionNft.getPositionKey(positionId), indexPoolId, indexId), 1e18);
+        assertEq(testSupport.getPoolView(indexPoolId).indexEncumberedTotal, 1e18);
 
         vm.startPrank(alice);
         eve.approve(diamond, 1e18);
@@ -155,6 +160,9 @@ contract EqualIndexLaunchTest is LaunchFixture {
         assertEq(EqualIndexLendingFacet(diamond).getLockedCollateralUnits(indexId), 0);
         assertEq(EqualIndexLendingFacet(diamond).getOutstandingPrincipal(indexId, address(eve)), 0);
         assertEq(EqualIndexLendingFacet(diamond).getLoan(loanId).collateralUnits, 0);
+        assertEq(testSupport.indexEncumberedOf(positionNft.getPositionKey(positionId), indexPoolId), 0);
+        assertEq(testSupport.indexEncumberedForIndex(positionNft.getPositionKey(positionId), indexPoolId, indexId), 0);
+        assertEq(testSupport.getPoolView(indexPoolId).indexEncumberedTotal, 0);
     }
 
     function test_EqualIndexRewards_WalletHeldUnitsDoNotEarnButPositionHeldUnitsDo() public {

@@ -9,7 +9,7 @@ import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEqualIndexRewards} from "../libraries/LibEqualIndexRewards.sol";
 import {LibEqualIndexLending} from "../libraries/LibEqualIndexLending.sol";
-import {LibModuleEncumbrance} from "../libraries/LibModuleEncumbrance.sol";
+import {LibIndexEncumbrance} from "../libraries/LibIndexEncumbrance.sol";
 import {LibPoolMembership} from "../libraries/LibPoolMembership.sol";
 import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
 import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
@@ -20,7 +20,6 @@ import "../libraries/Errors.sol";
 /// @dev Borrowing is index-based: collateral index units unlock proportional underlying principal.
 contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
     uint256 internal constant INDEX_SCALE = 1e18;
-    uint256 internal constant LENDING_MODULE_ID = uint256(keccak256("equal.index.lending.module"));
 
     struct BorrowPreparation {
         uint256 lockedAfter;
@@ -103,7 +102,7 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         _assertAvailableCollateral(indexPool, positionKey, indexPoolId, collateralUnits);
         BorrowPreparation memory prep = _prepareBorrow(idx, indexId, collateralUnits, ltvBps);
         loanId = _createLoan(indexId, positionKey, collateralUnits, ltvBps, duration, prep.lockedAfter);
-        _encumberWithAci(indexPool, positionKey, indexPoolId, collateralUnits);
+        _encumberWithAci(indexPool, positionKey, indexPoolId, indexId, collateralUnits);
         _disburseBorrowedAssets(loanId, indexId, prep.assets, prep.principals);
 
         _emitLoanCreated(loanId, positionKey, indexId, collateralUnits, ltvBps);
@@ -143,7 +142,7 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         ls.lockedCollateralUnits[loan.indexId] -= loan.collateralUnits;
 
         uint256 indexPoolId = s().indexToPoolId[loan.indexId];
-        _unencumberWithAci(LibAppStorage.s().pools[indexPoolId], positionKey, indexPoolId, loan.collateralUnits);
+        _unencumberWithAci(LibAppStorage.s().pools[indexPoolId], positionKey, indexPoolId, loan.indexId, loan.collateralUnits);
 
         uint256 repaidIndexId = loan.indexId;
         delete ls.loans[loanId];
@@ -281,10 +280,6 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
             minCollateralUnits[i] = tiers[i].minCollateralUnits;
             flatFeeNative[i] = tiers[i].flatFeeNative;
         }
-    }
-
-    function lendingModuleId() external pure returns (uint256) {
-        return LENDING_MODULE_ID;
     }
 
     function _bundleAmountForAsset(Index storage idx, address asset) private view returns (bool found, uint256 amount) {
@@ -516,23 +511,35 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         indexPool.userMaintenanceIndex[loan.positionKey] = indexPool.maintenanceIndex;
         LibEqualIndexRewards.syncEligibleBalanceChange(loan.indexId);
 
-        _unencumberWithAci(indexPool, loan.positionKey, indexPoolId, loan.collateralUnits);
+        _unencumberWithAci(indexPool, loan.positionKey, indexPoolId, loan.indexId, loan.collateralUnits);
     }
 
-    function _encumberWithAci(Types.PoolData storage pool, bytes32 positionKey, uint256 poolId, uint256 amount)
+    function _encumberWithAci(
+        Types.PoolData storage pool,
+        bytes32 positionKey,
+        uint256 poolId,
+        uint256 indexId,
+        uint256 amount
+    )
         private
     {
-        LibModuleEncumbrance.encumber(positionKey, poolId, LENDING_MODULE_ID, amount);
+        LibIndexEncumbrance.encumber(positionKey, poolId, indexId, amount);
         if (amount == 0) {
             return;
         }
         LibActiveCreditIndex.applyEncumbranceIncrease(pool, poolId, positionKey, amount);
     }
 
-    function _unencumberWithAci(Types.PoolData storage pool, bytes32 positionKey, uint256 poolId, uint256 amount)
+    function _unencumberWithAci(
+        Types.PoolData storage pool,
+        bytes32 positionKey,
+        uint256 poolId,
+        uint256 indexId,
+        uint256 amount
+    )
         private
     {
-        LibModuleEncumbrance.unencumber(positionKey, poolId, LENDING_MODULE_ID, amount);
+        LibIndexEncumbrance.unencumber(positionKey, poolId, indexId, amount);
         LibActiveCreditIndex.applyEncumbranceDecrease(pool, poolId, positionKey, amount);
     }
 }
