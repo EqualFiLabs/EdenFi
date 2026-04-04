@@ -55,6 +55,15 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
         uint256 requiredLockedCapital,
         uint256 claimableAciYield
     );
+    event SelfSecuredCreditTerminallySettled(
+        uint256 indexed tokenId,
+        address indexed caller,
+        uint256 indexed poolId,
+        uint256 principalConsumed,
+        uint256 debtRepaid,
+        uint256 outstandingDebt,
+        uint256 requiredLockedCapital
+    );
     event SelfSecuredCreditAciModeUpdated(
         uint256 indexed tokenId,
         address indexed owner,
@@ -186,6 +195,22 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
         }
 
         aciAppliedToDebt = _settleAndServiceSelfSecuredCredit(tokenId, positionKey, pid).aciAppliedToDebt;
+    }
+
+    function selfSettleSelfSecuredCredit(uint256 tokenId, uint256 pid)
+        external
+        payable
+        nonReentrant
+        returns (Types.SscTerminalSettlementPreview memory settlement_)
+    {
+        LibCurrency.assertZeroMsgValue();
+
+        Types.PoolData storage pool = LibPositionHelpers.pool(pid);
+        bytes32 positionKey = LibPositionHelpers.positionKey(tokenId);
+        LibPositionHelpers.ensurePoolMembership(positionKey, pid, true);
+        _settleAndServiceSelfSecuredCredit(tokenId, positionKey, pid);
+
+        settlement_ = _selfSettleSelfSecuredCredit(tokenId, positionKey, pid, pool);
     }
 
     function setSelfSecuredCreditAciMode(uint256 tokenId, uint256 pid, Types.SscAciMode newMode)
@@ -394,6 +419,167 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
         }
 
         return trackedAfterMaintenance - paid;
+    }
+
+    function _selfSettleSelfSecuredCredit(
+        uint256 tokenId,
+        bytes32 positionKey,
+        uint256 pid,
+        Types.PoolData storage pool
+    ) internal returns (Types.SscTerminalSettlementPreview memory settlement_) {
+        Types.SscLine storage lineState = LibSelfSecuredCreditStorage.line(positionKey, pid);
+        if (!lineState.active) {
+            revert InvalidParameterRange("no debt");
+        }
+
+        settlement_.principalBefore = pool.userPrincipal[positionKey];
+        settlement_.outstandingDebtBefore = lineState.outstandingDebt;
+        settlement_.requiredLockedCapitalBefore = lineState.requiredLockedCapital;
+
+        uint16 ltvBps = pool.poolConfig.depositorLTVBps;
+        if (ltvBps == 0 || ltvBps > BPS_DENOMINATOR) {
+            revert InvalidLTVRatio();
+        }
+
+        uint256 otherEncumbrance = _otherEncumbrance(positionKey, pid, lineState);
+        if (!_isUnsafeAfterSettlement(pool, positionKey, lineState, settlement_.principalBefore, otherEncumbrance)) {
+            revert InvalidParameterRange("line safe");
+        }
+
+        uint256 availableSscBacking = settlement_.principalBefore > otherEncumbrance
+            ? settlement_.principalBefore - otherEncumbrance
+            : 0;
+
+        (bool canHealWithBackingOnly, uint256 principalConsumed) =
+            _minimumPrincipalConsumptionForSafety(settlement_.outstandingDebtBefore, availableSscBacking, ltvBps);
+
+        uint256 debtRepaid;
+        if (canHealWithBackingOnly) {
+            settlement_.principalConsumed = principalConsumed;
+            debtRepaid = principalConsumed;
+        } else {
+            settlement_.principalConsumed = availableSscBacking < settlement_.outstandingDebtBefore
+                ? availableSscBacking
+                : settlement_.outstandingDebtBefore;
+
+            uint256 debtAfterBacking = settlement_.outstandingDebtBefore - settlement_.principalConsumed;
+            uint256 remainingBacking = availableSscBacking - settlement_.principalConsumed;
+            uint256 safeResidualDebt = _maxSafeDebtForBacking(remainingBacking, ltvBps);
+            if (safeResidualDebt > debtAfterBacking) {
+                safeResidualDebt = debtAfterBacking;
+            }
+            debtRepaid = settlement_.outstandingDebtBefore - safeResidualDebt;
+        }
+
+        if (settlement_.principalConsumed != 0) {
+            _consumePrincipal(pool, positionKey, settlement_.principalConsumed);
+        }
+
+        settlement_.debtRepaid = debtRepaid;
+        LibSelfSecuredCreditAccounting.DebtAdjustment memory adjustment =
+            LibSelfSecuredCreditAccounting.decreaseDebt(positionKey, tokenId, pid, debtRepaid);
+
+        settlement_.principalAfter = pool.userPrincipal[positionKey];
+        settlement_.outstandingDebtAfter = adjustment.outstandingDebtAfter;
+        settlement_.requiredLockedCapitalAfter = adjustment.requiredLockedCapitalAfter;
+        settlement_.lineClosed = adjustment.outstandingDebtAfter == 0;
+
+        emit SelfSecuredCreditTerminallySettled(
+            tokenId,
+            msg.sender,
+            pid,
+            settlement_.principalConsumed,
+            settlement_.debtRepaid,
+            settlement_.outstandingDebtAfter,
+            settlement_.requiredLockedCapitalAfter
+        );
+
+        if (settlement_.lineClosed) {
+            emit SelfSecuredCreditClosed(tokenId, msg.sender, pid, settlement_.debtRepaid);
+        }
+    }
+
+    function _consumePrincipal(Types.PoolData storage pool, bytes32 positionKey, uint256 amount) internal {
+        if (amount == 0) {
+            return;
+        }
+
+        uint256 principalBefore = pool.userPrincipal[positionKey];
+        uint256 principalAfter = principalBefore - amount;
+        pool.userPrincipal[positionKey] = principalAfter;
+        pool.totalDeposits -= amount;
+
+        if (principalAfter == 0 && pool.userCount > 0) {
+            pool.userCount -= 1;
+        }
+    }
+
+    function _minimumPrincipalConsumptionForSafety(uint256 outstandingDebt, uint256 availableBacking, uint16 ltvBps)
+        internal
+        pure
+        returns (bool feasible, uint256 principalConsumed)
+    {
+        uint256 maxConsumable = outstandingDebt < availableBacking ? outstandingDebt : availableBacking;
+        if (_isSafeAfterPrincipalConsumption(outstandingDebt, availableBacking, ltvBps, 0)) {
+            return (true, 0);
+        }
+        if (!_isSafeAfterPrincipalConsumption(outstandingDebt, availableBacking, ltvBps, maxConsumable)) {
+            return (false, maxConsumable);
+        }
+
+        uint256 low = 0;
+        uint256 high = maxConsumable;
+        while (low < high) {
+            uint256 mid = (low + high) / 2;
+            if (_isSafeAfterPrincipalConsumption(outstandingDebt, availableBacking, ltvBps, mid)) {
+                high = mid;
+            } else {
+                low = mid + 1;
+            }
+        }
+
+        return (true, low);
+    }
+
+    function _isSafeAfterPrincipalConsumption(uint256 outstandingDebt, uint256 availableBacking, uint16 ltvBps, uint256 x)
+        internal
+        pure
+        returns (bool)
+    {
+        uint256 residualDebt = outstandingDebt - x;
+        uint256 residualBacking = availableBacking - x;
+        return residualDebt <= _maxSafeDebtForBacking(residualBacking, ltvBps);
+    }
+
+    function _maxSafeDebtForBacking(uint256 backing, uint16 ltvBps) internal pure returns (uint256) {
+        return Math.mulDiv(backing, ltvBps, BPS_DENOMINATOR);
+    }
+
+    function _otherEncumbrance(bytes32 positionKey, uint256 pid, Types.SscLine storage lineState)
+        internal
+        view
+        returns (uint256 otherEncumbrance)
+    {
+        uint256 totalEncumbered = LibEncumbrance.total(positionKey, pid);
+        otherEncumbrance =
+            totalEncumbered > lineState.requiredLockedCapital ? totalEncumbered - lineState.requiredLockedCapital : 0;
+    }
+
+    function _isUnsafeAfterSettlement(
+        Types.PoolData storage pool,
+        bytes32 positionKey,
+        Types.SscLine storage lineState,
+        uint256 principal,
+        uint256 otherEncumbrance
+    ) internal view returns (bool) {
+        if (principal == 0) {
+            return lineState.outstandingDebt != 0 || otherEncumbrance != 0;
+        }
+
+        uint256 totalSameAssetDebt = pool.userSameAssetDebt[positionKey];
+        uint256 maxDebt = Math.mulDiv(principal, pool.poolConfig.depositorLTVBps, BPS_DENOMINATOR);
+        uint256 totalEncumbered = otherEncumbrance + lineState.requiredLockedCapital;
+        return totalSameAssetDebt > maxDebt || totalEncumbered > principal;
     }
 
     function _settleAndServiceSelfSecuredCredit(uint256 tokenId, bytes32 positionKey, uint256 pid)

@@ -38,6 +38,7 @@ contract SelfSecuredCreditFacetTest is LaunchFixture {
         assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.getSelfSecuredCreditLineView.selector) != address(0));
         assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.setSelfSecuredCreditAciMode.selector) != address(0));
         assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.serviceSelfSecuredCredit.selector) != address(0));
+        assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.selfSettleSelfSecuredCredit.selector) != address(0));
     }
 
     function test_LiveFlow_SelfSecuredCredit_DepositDrawRepayCloseWithdrawAndCleanup() external {
@@ -408,6 +409,89 @@ contract SelfSecuredCreditFacetTest is LaunchFixture {
         assertEq(testSupport.sameAssetDebtOf(1, positionKey), 0);
         assertEq(testSupport.lockedCapitalOf(positionKey, 1), 0);
         assertEq(PoolManagementFacet(diamond).getPoolInfoView(1).trackedBalance, 100 ether);
+    }
+
+    function test_LiveFlow_TerminalSettlement_PermissionlesslyHealsToSafeResidualLine() external {
+        uint256 positionId = _mintPosition(alice, 1);
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+
+        eve.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        eve.approve(diamond, 100 ether);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 100 ether, 100 ether);
+        SelfSecuredCreditFacet(diamond).drawSelfSecuredCredit(positionId, 1, 80 ether, 80 ether);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 365 days);
+
+        Types.SscMaintenancePreview memory unsafePreview =
+            SelfSecuredCreditFacet(diamond).previewSelfSecuredCreditMaintenance(positionId, 1);
+        assertEq(unsafePreview.settledPrincipal, 99 ether);
+        assertTrue(unsafePreview.unsafeAfterMaintenance);
+
+        vm.prank(bob);
+        Types.SscTerminalSettlementPreview memory settlement =
+            SelfSecuredCreditFacet(diamond).selfSettleSelfSecuredCredit(positionId, 1);
+
+        assertEq(settlement.principalBefore, 99 ether);
+        assertEq(settlement.outstandingDebtBefore, 80 ether);
+        assertEq(settlement.requiredLockedCapitalBefore, 100 ether);
+        assertEq(settlement.principalConsumed, 4 ether);
+        assertEq(settlement.debtRepaid, 4 ether);
+        assertEq(settlement.principalAfter, 95 ether);
+        assertEq(settlement.outstandingDebtAfter, 76 ether);
+        assertEq(settlement.requiredLockedCapitalAfter, 95 ether);
+        assertTrue(!settlement.lineClosed);
+
+        Types.SscMaintenancePreview memory healedPreview =
+            SelfSecuredCreditFacet(diamond).previewSelfSecuredCreditMaintenance(positionId, 1);
+        assertEq(healedPreview.settledPrincipal, 95 ether);
+        assertTrue(!healedPreview.unsafeAfterMaintenance);
+        assertEq(testSupport.principalOf(1, positionKey), 95 ether);
+        assertEq(testSupport.sameAssetDebtOf(1, positionKey), 76 ether);
+        assertEq(testSupport.lockedCapitalOf(positionKey, 1), 95 ether);
+        assertEq(PoolManagementFacet(diamond).getPoolInfoView(1).trackedBalance, 19 ether);
+    }
+
+    function test_LiveFlow_TerminalSettlement_ClosesLineWhenNoSafeResidualRemains() external {
+        uint256 positionId = _mintPosition(alice, 1);
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+
+        eve.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        eve.approve(diamond, 100 ether);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 100 ether, 100 ether);
+        SelfSecuredCreditFacet(diamond).drawSelfSecuredCredit(positionId, 1, 80 ether, 80 ether);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + (25 * 365 days));
+
+        Types.SscMaintenancePreview memory unsafePreview =
+            SelfSecuredCreditFacet(diamond).previewSelfSecuredCreditMaintenance(positionId, 1);
+        assertTrue(unsafePreview.unsafeAfterMaintenance);
+        assertTrue(unsafePreview.settledPrincipal < 80 ether);
+
+        vm.prank(bob);
+        Types.SscTerminalSettlementPreview memory settlement =
+            SelfSecuredCreditFacet(diamond).selfSettleSelfSecuredCredit(positionId, 1);
+
+        assertEq(settlement.outstandingDebtBefore, 80 ether);
+        assertEq(settlement.principalConsumed, settlement.principalBefore);
+        assertEq(settlement.debtRepaid, 80 ether);
+        assertEq(settlement.principalAfter, 0);
+        assertEq(settlement.outstandingDebtAfter, 0);
+        assertEq(settlement.requiredLockedCapitalAfter, 0);
+        assertTrue(settlement.lineClosed);
+
+        Types.SscLineView memory lineView = SelfSecuredCreditFacet(diamond).getSelfSecuredCreditLineView(positionId, 1);
+        assertEq(lineView.principal, 0);
+        assertEq(lineView.outstandingDebt, 0);
+        assertEq(lineView.requiredLockedCapital, 0);
+        assertTrue(!lineView.active);
+        assertEq(testSupport.principalOf(1, positionKey), 0);
+        assertEq(testSupport.sameAssetDebtOf(1, positionKey), 0);
+        assertEq(testSupport.lockedCapitalOf(positionKey, 1), 0);
+        assertEq(PoolManagementFacet(diamond).getPoolInfoView(1).trackedBalance, 0);
     }
 
     function test_LiveFlow_SelfSecuredCredit_TransferPreservesActiveLineForNewOwner() external {
