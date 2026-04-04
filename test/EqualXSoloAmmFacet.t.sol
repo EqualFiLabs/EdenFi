@@ -90,6 +90,10 @@ contract EqualXSoloAmmHarness is PoolManagementFacet, PositionManagementFacet, E
     function activeCreditPrincipalTotalOf(uint256 pid) external view returns (uint256) {
         return LibAppStorage.s().pools[pid].activeCreditPrincipalTotal;
     }
+
+    function minRebalanceTimelock() external view returns (uint64) {
+        return LibEqualXSoloAmmStorage.minRebalanceTimelock(LibEqualXSoloAmmStorage.s());
+    }
 }
 
 contract EqualXSoloAmmFacetTest is Test {
@@ -102,6 +106,7 @@ contract EqualXSoloAmmFacetTest is Test {
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
     address internal treasury = makeAddr("treasury");
+    uint64 internal constant DEFAULT_REBALANCE_TIMELOCK = 15 minutes;
 
     uint256 internal alicePositionId;
     bytes32 internal alicePositionKey;
@@ -163,6 +168,7 @@ contract EqualXSoloAmmFacetTest is Test {
             100e18,
             uint64(block.timestamp),
             uint64(block.timestamp + 3 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
@@ -178,6 +184,7 @@ contract EqualXSoloAmmFacetTest is Test {
             100e18,
             uint64(block.timestamp),
             uint64(block.timestamp + 3 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
@@ -187,11 +194,16 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(market.makerPositionId, alicePositionId);
         assertEq(market.reserveA, 100e18);
         assertEq(market.reserveB, 100e18);
+        assertEq(market.baselineReserveA, 100e18);
+        assertEq(market.baselineReserveB, 100e18);
+        assertEq(market.rebalanceTimelock, DEFAULT_REBALANCE_TIMELOCK);
+        assertEq(market.lastRebalanceExecutionAt, 0);
         assertTrue(market.active);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 100e18);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 100e18);
         assertEq(harness.activeCreditPrincipalTotalOf(1), 100e18);
         assertEq(harness.activeCreditPrincipalTotalOf(2), 100e18);
+        assertEq(harness.minRebalanceTimelock(), 1 minutes);
     }
 
     function test_CreateSoloAmm_SupportsStableInvariantMode() public {
@@ -205,6 +217,7 @@ contract EqualXSoloAmmFacetTest is Test {
             100_000e6,
             uint64(block.timestamp),
             uint64(block.timestamp + 3 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             100,
             LibEqualXTypes.FeeAsset.TokenOut,
             LibEqualXTypes.InvariantMode.Stable
@@ -230,10 +243,43 @@ contract EqualXSoloAmmFacetTest is Test {
             500e18,
             uint64(block.timestamp),
             uint64(block.timestamp + 3 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
         );
+    }
+
+    function test_CreateSoloAmm_RevertsWhenRebalanceTimelockBelowProtocolMinimum() public {
+        harness.setEqualXSoloAmmMinRebalanceTimelock(5 minutes);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSignature("InvalidParameterRange(string)", "rebalanceTimelock"));
+        harness.createEqualXSoloAmmMarket(
+            alicePositionId,
+            1,
+            2,
+            100e18,
+            100e18,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 3 days),
+            4 minutes,
+            300,
+            LibEqualXTypes.FeeAsset.TokenIn,
+            LibEqualXTypes.InvariantMode.Volatile
+        );
+    }
+
+    function test_SetMinRebalanceTimelock_RequiresGovernanceAndRejectsZero() public {
+        vm.prank(alice);
+        vm.expectRevert("LibAccess: not owner or timelock");
+        harness.setEqualXSoloAmmMinRebalanceTimelock(5 minutes);
+
+        vm.expectRevert(abi.encodeWithSignature("InvalidParameterRange(string)", "minRebalanceTimelock"));
+        harness.setEqualXSoloAmmMinRebalanceTimelock(0);
+
+        harness.setEqualXSoloAmmMinRebalanceTimelock(7 minutes);
+        assertEq(harness.minRebalanceTimelock(), 7 minutes);
     }
 
     function test_CreateSoloAmm_BackingBlockedByManagedPoolDepositCap() public {
@@ -291,6 +337,7 @@ contract EqualXSoloAmmFacetTest is Test {
             100e18,
             uint64(block.timestamp),
             uint64(block.timestamp + 3 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
@@ -312,6 +359,7 @@ contract EqualXSoloAmmFacetTest is Test {
             100e18,
             uint64(block.timestamp),
             uint64(block.timestamp + 3 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
@@ -333,6 +381,7 @@ contract EqualXSoloAmmFacetTest is Test {
             100e18,
             uint64(block.timestamp),
             uint64(block.timestamp + 5 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
@@ -381,6 +430,7 @@ contract EqualXSoloAmmFacetTest is Test {
             100e18,
             uint64(block.timestamp),
             uint64(block.timestamp + 5 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
@@ -431,6 +481,7 @@ contract EqualXSoloAmmFacetTest is Test {
             100e18,
             uint64(block.timestamp + 1 days),
             uint64(block.timestamp + 2 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
@@ -461,6 +512,7 @@ contract EqualXSoloAmmFacetTest is Test {
             100e18,
             uint64(block.timestamp),
             uint64(block.timestamp + 1 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
@@ -489,6 +541,7 @@ contract EqualXSoloAmmFacetTest is Test {
             50e18,
             uint64(block.timestamp),
             uint64(block.timestamp + 3 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
@@ -515,6 +568,7 @@ contract EqualXSoloAmmFacetTest is Test {
             100e18,
             uint64(block.timestamp),
             uint64(block.timestamp + 5 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
@@ -558,6 +612,7 @@ contract EqualXSoloAmmFacetTest is Test {
             100e18,
             uint64(block.timestamp),
             uint64(block.timestamp + 5 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile

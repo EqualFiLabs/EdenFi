@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {LibActiveCreditIndex} from "../libraries/LibActiveCreditIndex.sol";
+import {LibAccess} from "../libraries/LibAccess.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -54,6 +55,7 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         address recipient
     );
     event EqualXSoloAmmMarketFinalized(uint256 indexed marketId, bytes32 indexed makerPositionKey, bool cancelled);
+    event EqualXSoloAmmMinRebalanceTimelockSet(uint64 minRebalanceTimelock);
 
     struct SoloAmmSwapPreview {
         uint256 rawOut;
@@ -112,6 +114,7 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         uint256 reserveB;
         uint64 startTime;
         uint64 endTime;
+        uint64 rebalanceTimelock;
         uint16 feeBps;
         LibEqualXTypes.FeeAsset feeAsset;
         LibEqualXTypes.InvariantMode invariantMode;
@@ -125,10 +128,12 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         uint256 reserveB,
         uint64 startTime,
         uint64 endTime,
+        uint64 rebalanceTimelock,
         uint16 feeBps,
         LibEqualXTypes.FeeAsset feeAsset,
         LibEqualXTypes.InvariantMode invariantMode
     ) external nonReentrant returns (uint256 marketId) {
+        LibEqualXSoloAmmStorage.SoloAmmStorage storage store = LibEqualXSoloAmmStorage.s();
         if (reserveA == 0 || reserveB == 0) {
             revert InvalidParameterRange("reserve=0");
         }
@@ -141,6 +146,9 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         if (endTime <= startTime || endTime <= block.timestamp) {
             revert EqualXSoloAmm_InvalidTimeWindow(startTime, endTime);
         }
+        if (rebalanceTimelock < LibEqualXSoloAmmStorage.minRebalanceTimelock(store)) {
+            revert InvalidParameterRange("rebalanceTimelock");
+        }
 
         SoloAmmCreateRequest memory request = SoloAmmCreateRequest({
             makerPositionId: makerPositionId,
@@ -150,6 +158,7 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
             reserveB: reserveB,
             startTime: startTime,
             endTime: endTime,
+            rebalanceTimelock: rebalanceTimelock,
             feeBps: feeBps,
             feeAsset: feeAsset,
             invariantMode: invariantMode
@@ -157,6 +166,15 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         SoloAmmCreateContext memory ctx =
             _prepareCreateContext(request.makerPositionId, request.poolIdA, request.poolIdB, request.reserveA, request.reserveB, request.invariantMode);
         marketId = _initializeSoloAmmMarket(ctx, request);
+    }
+
+    function setEqualXSoloAmmMinRebalanceTimelock(uint64 newMinRebalanceTimelock) external {
+        LibAccess.enforceOwnerOrTimelock();
+        if (newMinRebalanceTimelock == 0) {
+            revert InvalidParameterRange("minRebalanceTimelock");
+        }
+        LibEqualXSoloAmmStorage.s().minRebalanceTimelock = newMinRebalanceTimelock;
+        emit EqualXSoloAmmMinRebalanceTimelockSet(newMinRebalanceTimelock);
     }
 
     function previewEqualXSoloAmmSwapExactIn(
@@ -279,8 +297,8 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         LibActiveCreditIndex.settle(market.poolIdB, makerPositionKey);
         _unlockReserveBacking(makerPositionKey, market.poolIdA, market.reserveA);
         _unlockReserveBacking(makerPositionKey, market.poolIdB, market.reserveB);
-        LibActiveCreditIndex.applyEncumbranceDecrease(poolA, market.poolIdA, makerPositionKey, market.initialReserveA);
-        LibActiveCreditIndex.applyEncumbranceDecrease(poolB, market.poolIdB, makerPositionKey, market.initialReserveB);
+        LibActiveCreditIndex.applyEncumbranceDecrease(poolA, market.poolIdA, makerPositionKey, market.baselineReserveA);
+        LibActiveCreditIndex.applyEncumbranceDecrease(poolB, market.poolIdB, makerPositionKey, market.baselineReserveB);
 
         uint256 reserveAForPrincipal = market.reserveA;
         uint256 reserveBForPrincipal = market.reserveB;
@@ -313,8 +331,8 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
             reserveBForPrincipal -= market.activeCreditFeeBAccrued;
         }
 
-        _applyPrincipalDelta(poolA, market.poolIdA, makerPositionKey, reserveAForPrincipal, market.initialReserveA);
-        _applyPrincipalDelta(poolB, market.poolIdB, makerPositionKey, reserveBForPrincipal, market.initialReserveB);
+        _applyPrincipalDelta(poolA, market.poolIdA, makerPositionKey, reserveAForPrincipal, market.baselineReserveA);
+        _applyPrincipalDelta(poolB, market.poolIdB, makerPositionKey, reserveBForPrincipal, market.baselineReserveB);
 
         market.active = false;
         market.finalized = true;
@@ -417,10 +435,11 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         market.tokenB = ctx.tokenB;
         market.reserveA = request.reserveA;
         market.reserveB = request.reserveB;
-        market.initialReserveA = request.reserveA;
-        market.initialReserveB = request.reserveB;
+        market.baselineReserveA = request.reserveA;
+        market.baselineReserveB = request.reserveB;
         market.startTime = request.startTime;
         market.endTime = request.endTime;
+        market.rebalanceTimelock = request.rebalanceTimelock;
         market.feeBps = request.feeBps;
         market.feeAsset = request.feeAsset;
         market.invariantMode = request.invariantMode;

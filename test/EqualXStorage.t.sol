@@ -3,12 +3,16 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {EqualXViewFacet} from "../src/equalx/EqualXViewFacet.sol";
+import {LibAppStorage} from "../src/libraries/LibAppStorage.sol";
+import {LibDiamond} from "../src/libraries/LibDiamond.sol";
+import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {LibEqualXTypes} from "../src/libraries/LibEqualXTypes.sol";
 import {LibEqualXDiscoveryStorage} from "../src/libraries/LibEqualXDiscoveryStorage.sol";
 import {LibEqualXSoloAmmStorage} from "../src/libraries/LibEqualXSoloAmmStorage.sol";
 import {LibEqualXCommunityAmmStorage} from "../src/libraries/LibEqualXCommunityAmmStorage.sol";
 import {LibEqualXCurveStorage} from "../src/libraries/LibEqualXCurveStorage.sol";
 import {LibEqualXCurveEngine} from "../src/libraries/LibEqualXCurveEngine.sol";
+import {LibPositionNFT} from "../src/libraries/LibPositionNFT.sol";
 
 contract EqualXStorageHarness is EqualXViewFacet {
     function createSolo(bytes32 positionKey, uint256 positionId, address tokenA, address tokenB)
@@ -26,10 +30,12 @@ contract EqualXStorageHarness is EqualXViewFacet {
             tokenB: tokenB,
             reserveA: 100e18,
             reserveB: 200e18,
-            initialReserveA: 100e18,
-            initialReserveB: 200e18,
+            baselineReserveA: 100e18,
+            baselineReserveB: 200e18,
             startTime: uint64(block.timestamp),
             endTime: uint64(block.timestamp + 1 days),
+            lastRebalanceExecutionAt: 0,
+            rebalanceTimelock: 15 minutes,
             feeBps: 30,
             feeAsset: LibEqualXTypes.FeeAsset.TokenIn,
             invariantMode: LibEqualXTypes.InvariantMode.Volatile,
@@ -49,6 +55,41 @@ contract EqualXStorageHarness is EqualXViewFacet {
         LibEqualXDiscoveryStorage.registerMarket(
             LibEqualXDiscoveryStorage.s(), positionKey, tokenA, tokenB, LibEqualXTypes.MarketType.SOLO_AMM, marketId
         );
+    }
+
+    function setSoloPendingRebalance(
+        uint256 marketId,
+        uint256 snapshotReserveA,
+        uint256 snapshotReserveB,
+        uint256 targetReserveA,
+        uint256 targetReserveB,
+        uint64 executeAfter,
+        bool exists
+    ) external {
+        LibEqualXSoloAmmStorage.s().pendingRebalances[marketId] = LibEqualXSoloAmmStorage.SoloAmmPendingRebalance({
+            snapshotReserveA: snapshotReserveA,
+            snapshotReserveB: snapshotReserveB,
+            targetReserveA: targetReserveA,
+            targetReserveB: targetReserveB,
+            executeAfter: executeAfter,
+            exists: exists
+        });
+    }
+
+    function getSoloPendingRebalance(uint256 marketId)
+        external
+        view
+        returns (LibEqualXSoloAmmStorage.SoloAmmPendingRebalance memory pending)
+    {
+        pending = LibEqualXSoloAmmStorage.s().pendingRebalances[marketId];
+    }
+
+    function getSoloMinRebalanceTimelock() external view returns (uint64) {
+        return LibEqualXSoloAmmStorage.minRebalanceTimelock(LibEqualXSoloAmmStorage.s());
+    }
+
+    function soloStorageSlot() external pure returns (bytes32) {
+        return LibEqualXSoloAmmStorage.STORAGE_POSITION;
     }
 
     function createCommunity(bytes32 positionKey, uint256 positionId, address tokenA, address tokenB)
@@ -258,6 +299,9 @@ contract EqualXStorageTest is Test {
         LibEqualXSoloAmmStorage.SoloAmmMarket memory solo = harness.getEqualXSoloAmmMarket(soloId);
         assertEq(solo.makerPositionId, 10);
         assertEq(solo.reserveA, 100e18);
+        assertEq(solo.baselineReserveA, 100e18);
+        assertEq(solo.baselineReserveB, 200e18);
+        assertEq(solo.rebalanceTimelock, 15 minutes);
         assertTrue(solo.active);
 
         LibEqualXCommunityAmmStorage.CommunityAmmMarket memory community =
@@ -361,5 +405,33 @@ contract EqualXStorageTest is Test {
         assertEq(curveQuote.baseToken, TOKEN_A);
         assertEq(curveQuote.quoteToken, TOKEN_C);
         assertGt(curveQuote.amountOut, 0);
+    }
+
+    function test_SoloAmmStorageTracksPendingRebalanceStateAndDefaultFloor() public {
+        uint256 soloId = harness.createSolo(POSITION_KEY_ONE, 10, TOKEN_A, TOKEN_B);
+
+        assertEq(harness.getSoloMinRebalanceTimelock(), 1 minutes);
+
+        harness.setSoloPendingRebalance(soloId, 100e18, 200e18, 105e18, 190e18, uint64(block.timestamp + 15 minutes), true);
+        LibEqualXSoloAmmStorage.SoloAmmPendingRebalance memory pending = harness.getSoloPendingRebalance(soloId);
+
+        assertEq(pending.snapshotReserveA, 100e18);
+        assertEq(pending.snapshotReserveB, 200e18);
+        assertEq(pending.targetReserveA, 105e18);
+        assertEq(pending.targetReserveB, 190e18);
+        assertEq(pending.executeAfter, uint64(block.timestamp + 15 minutes));
+        assertTrue(pending.exists);
+    }
+
+    function test_SoloAmmStorageSlotDoesNotCollideWithCoreStorages() public {
+        bytes32 slot_ = harness.soloStorageSlot();
+
+        assertTrue(slot_ != LibAppStorage.APP_STORAGE_POSITION, "collides with app storage");
+        assertTrue(slot_ != LibDiamond.DIAMOND_STORAGE_POSITION, "collides with diamond storage");
+        assertTrue(slot_ != LibEncumbrance.STORAGE_POSITION, "collides with encumbrance");
+        assertTrue(slot_ != LibPositionNFT.POSITION_NFT_STORAGE_POSITION, "collides with position nft");
+        assertTrue(slot_ != LibEqualXDiscoveryStorage.STORAGE_POSITION, "collides with equalx discovery");
+        assertTrue(slot_ != LibEqualXCommunityAmmStorage.STORAGE_POSITION, "collides with community amm");
+        assertTrue(slot_ != LibEqualXCurveStorage.STORAGE_POSITION, "collides with curve storage");
     }
 }

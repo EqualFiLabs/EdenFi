@@ -138,6 +138,7 @@ contract EqualXSoloInvariantHandler is Test {
     uint256 public fundedPrincipalB;
 
     uint256 internal constant INITIAL_PRINCIPAL = 750e18;
+    uint64 internal constant DEFAULT_REBALANCE_TIMELOCK = 15 minutes;
 
     constructor(
         EqualXSoloInvariantHarness harness_,
@@ -181,6 +182,7 @@ contract EqualXSoloInvariantHandler is Test {
             100e18,
             uint64(block.timestamp),
             uint64(block.timestamp + 3 days),
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
@@ -213,6 +215,7 @@ contract EqualXSoloInvariantHandler is Test {
             reserve,
             uint64(block.timestamp),
             endTime,
+            DEFAULT_REBALANCE_TIMELOCK,
             300,
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
