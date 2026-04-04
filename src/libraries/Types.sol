@@ -3,6 +3,11 @@ pragma solidity ^0.8.20;
 
 /// @notice Shared types for EqualLend Diamond rebuild
 library Types {
+    enum SscAciMode {
+        Yield,
+        SelfPay
+    }
+
     struct ActionFeeConfig {
         uint128 amount;
         bool enabled;
@@ -130,6 +135,82 @@ library Types {
         uint256 solvencyRatio; // (principal * 10000) / totalDebt
         bool isDelinquent;
         bool eligibleForPenalty;
+    }
+
+    struct SscLine {
+        uint256 outstandingDebt;
+        uint256 requiredLockedCapital;
+        SscAciMode aciMode;
+        bool active;
+    }
+
+    struct SscLineView {
+        uint256 tokenId;
+        uint256 poolId;
+        address underlying;
+        uint256 principal;
+        uint256 outstandingDebt;
+        uint256 requiredLockedCapital;
+        uint256 freeEquity;
+        uint256 claimableFeeYield;
+        uint256 claimableAciYield;
+        uint256 totalAciAppliedToDebt;
+        SscAciMode aciMode;
+        bool active;
+    }
+
+    struct SscDrawPreview {
+        uint256 requestedAmount;
+        uint256 settledPrincipal;
+        uint256 outstandingDebtBefore;
+        uint256 outstandingDebtAfter;
+        uint256 requiredLockedCapitalBefore;
+        uint256 requiredLockedCapitalAfter;
+        uint256 additionalLockRequired;
+        uint256 maxAdditionalDraw;
+        uint256 availableTrackedLiquidity;
+        uint256 freeEquityAfter;
+        SscAciMode aciMode;
+        bool lineActiveAfter;
+    }
+
+    struct SscRepayPreview {
+        uint256 requestedRepayAmount;
+        uint256 appliedRepayAmount;
+        uint256 outstandingDebtBefore;
+        uint256 outstandingDebtAfter;
+        uint256 requiredLockedCapitalBefore;
+        uint256 requiredLockedCapitalAfter;
+        uint256 lockReleased;
+        uint256 claimableAciYield;
+        SscAciMode aciMode;
+        bool lineCloses;
+    }
+
+    struct SscServicePreview {
+        uint256 settledPrincipal;
+        uint256 outstandingDebtBefore;
+        uint256 outstandingDebtAfter;
+        uint256 requiredLockedCapitalBefore;
+        uint256 requiredLockedCapitalAfter;
+        uint256 claimableFeeYield;
+        uint256 claimableAciYield;
+        uint256 aciAppliedToDebt;
+        uint256 freeEquityAfter;
+        SscAciMode aciMode;
+        bool unsafeAfterService;
+    }
+
+    struct SscTerminalSettlementPreview {
+        uint256 principalBefore;
+        uint256 outstandingDebtBefore;
+        uint256 requiredLockedCapitalBefore;
+        uint256 principalConsumed;
+        uint256 debtRepaid;
+        uint256 principalAfter;
+        uint256 outstandingDebtAfter;
+        uint256 requiredLockedCapitalAfter;
+        bool lineClosed;
     }
 
     struct PoolData {
