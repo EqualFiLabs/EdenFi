@@ -196,9 +196,7 @@ contract EqualXSoloInvariantHandler is Test {
         harness.depositToPosition(makerPositionId, 1, amount, amount);
         harness.depositToPosition(makerPositionId, 2, amount, amount);
         vm.stopPrank();
-
-        fundedPrincipalA += amount;
-        fundedPrincipalB += amount;
+        _syncFundedPrincipals();
     }
 
     function createMarket(uint256 reserveSeed, uint256 durationSeed) external {
@@ -221,6 +219,7 @@ contract EqualXSoloInvariantHandler is Test {
             LibEqualXTypes.InvariantMode.Volatile
         ) returns (uint256 newMarketId) {
             marketId = newMarketId;
+            _syncFundedPrincipals();
         } catch {}
     }
 

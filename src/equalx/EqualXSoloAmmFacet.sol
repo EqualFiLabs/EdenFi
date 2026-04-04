@@ -36,6 +36,7 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
     error EqualXSoloAmm_AlreadyFinalized(uint256 marketId);
     error EqualXSoloAmm_PendingRebalanceExists(uint256 marketId);
     error EqualXSoloAmm_NoPendingRebalance(uint256 marketId);
+    error EqualXSoloAmm_RebalanceNotReady(uint256 marketId, uint64 executeAfter);
     error EqualXSoloAmm_StableZeroOutput();
     error EqualXSoloAmm_Slippage(uint256 minOut, uint256 actualOut);
 
@@ -69,6 +70,15 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         uint64 executeAfter
     );
     event EqualXSoloAmmRebalanceCancelled(uint256 indexed marketId, bytes32 indexed makerPositionKey);
+    event EqualXSoloAmmRebalanceExecuted(
+        uint256 indexed marketId,
+        bytes32 indexed makerPositionKey,
+        address indexed executor,
+        uint256 previousReserveA,
+        uint256 previousReserveB,
+        uint256 targetReserveA,
+        uint256 targetReserveB
+    );
 
     struct SoloAmmSwapPreview {
         uint256 rawOut;
@@ -243,6 +253,51 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
 
         delete store.pendingRebalances[marketId];
         emit EqualXSoloAmmRebalanceCancelled(marketId, market.makerPositionKey);
+    }
+
+    function executeEqualXSoloAmmRebalance(uint256 marketId) external nonReentrant {
+        LibEqualXSoloAmmStorage.SoloAmmStorage storage store = LibEqualXSoloAmmStorage.s();
+        LibEqualXSoloAmmStorage.SoloAmmMarket storage market = store.markets[marketId];
+        _requireMarketExists(marketId, market);
+        _requireActiveExecution(marketId, market);
+
+        LibEqualXSoloAmmStorage.SoloAmmPendingRebalance memory pending = store.pendingRebalances[marketId];
+        if (!pending.exists) {
+            revert EqualXSoloAmm_NoPendingRebalance(marketId);
+        }
+        if (block.timestamp < pending.executeAfter) {
+            revert EqualXSoloAmm_RebalanceNotReady(marketId, pending.executeAfter);
+        }
+
+        bytes32 makerPositionKey = market.makerPositionKey;
+        Types.PoolData storage poolA = LibPositionHelpers.pool(market.poolIdA);
+        Types.PoolData storage poolB = LibPositionHelpers.pool(market.poolIdB);
+        uint256 previousReserveA = market.reserveA;
+        uint256 previousReserveB = market.reserveB;
+
+        _applyExecutedRebalanceDelta(
+            poolA, market.poolIdA, makerPositionKey, previousReserveA, market.baselineReserveA, pending.targetReserveA
+        );
+        _applyExecutedRebalanceDelta(
+            poolB, market.poolIdB, makerPositionKey, previousReserveB, market.baselineReserveB, pending.targetReserveB
+        );
+
+        market.reserveA = pending.targetReserveA;
+        market.reserveB = pending.targetReserveB;
+        market.baselineReserveA = pending.targetReserveA;
+        market.baselineReserveB = pending.targetReserveB;
+        market.lastRebalanceExecutionAt = uint64(block.timestamp);
+        delete store.pendingRebalances[marketId];
+
+        emit EqualXSoloAmmRebalanceExecuted(
+            marketId,
+            makerPositionKey,
+            msg.sender,
+            previousReserveA,
+            previousReserveB,
+            pending.targetReserveA,
+            pending.targetReserveB
+        );
     }
 
     function previewEqualXSoloAmmSwapExactIn(
@@ -702,6 +757,68 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
             }
             enc.encumberedCapital = currentEncumberedCapital - delta;
         }
+    }
+
+    function _applyExecutedRebalanceDelta(
+        Types.PoolData storage pool,
+        uint256 poolId,
+        bytes32 makerPositionKey,
+        uint256 previousReserve,
+        uint256 previousBaseline,
+        uint256 targetReserve
+    ) internal {
+        LibPositionHelpers.settlePosition(poolId, makerPositionKey);
+        _applyRebalanceReserveEncumbranceDelta(pool, poolId, makerPositionKey, previousReserve, targetReserve);
+        _applyRebalanceBaselineActiveCreditDelta(pool, poolId, makerPositionKey, previousBaseline, targetReserve);
+    }
+
+    function _applyRebalanceReserveEncumbranceDelta(
+        Types.PoolData storage pool,
+        uint256 poolId,
+        bytes32 makerPositionKey,
+        uint256 previousReserve,
+        uint256 targetReserve
+    ) internal {
+        if (previousReserve == targetReserve) {
+            return;
+        }
+
+        LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(makerPositionKey, poolId);
+        if (targetReserve > previousReserve) {
+            uint256 deltaIncrease = targetReserve - previousReserve;
+            uint256 available = LibPositionHelpers.availablePrincipal(pool, makerPositionKey, poolId);
+            if (deltaIncrease > available) {
+                revert InsufficientPrincipal(deltaIncrease, available);
+            }
+            enc.encumberedCapital += deltaIncrease;
+            return;
+        }
+
+        uint256 deltaDecrease = previousReserve - targetReserve;
+        uint256 currentEncumberedCapital = enc.encumberedCapital;
+        if (currentEncumberedCapital < deltaDecrease) {
+            revert InsufficientPrincipal(deltaDecrease, currentEncumberedCapital);
+        }
+        enc.encumberedCapital = currentEncumberedCapital - deltaDecrease;
+    }
+
+    function _applyRebalanceBaselineActiveCreditDelta(
+        Types.PoolData storage pool,
+        uint256 poolId,
+        bytes32 makerPositionKey,
+        uint256 previousBaseline,
+        uint256 targetReserve
+    ) internal {
+        if (previousBaseline == targetReserve) {
+            return;
+        }
+
+        if (targetReserve > previousBaseline) {
+            LibActiveCreditIndex.applyEncumbranceIncrease(pool, poolId, makerPositionKey, targetReserve - previousBaseline);
+            return;
+        }
+
+        LibActiveCreditIndex.applyEncumbranceDecrease(pool, poolId, makerPositionKey, previousBaseline - targetReserve);
     }
 
     function _applyPrincipalDelta(
