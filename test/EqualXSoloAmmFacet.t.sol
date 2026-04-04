@@ -825,6 +825,41 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 0);
     }
 
+    function test_RebalanceAndSwap_DoNotReconcilePrincipalBeforeClose() public {
+        uint256 marketId = _createSoloMarket(uint64(block.timestamp), uint64(block.timestamp + 5 days), DEFAULT_REBALANCE_TIMELOCK);
+
+        vm.prank(alice);
+        uint64 executeAfter = harness.scheduleEqualXSoloAmmRebalance(marketId, 110e18, 90e18);
+
+        vm.warp(executeAfter);
+        vm.prank(bob);
+        harness.executeEqualXSoloAmmRebalance(marketId);
+
+        tokenA.mint(bob, 100e18);
+        vm.prank(bob);
+        tokenA.approve(address(harness), type(uint256).max);
+
+        EqualXSoloAmmFacet.SoloAmmSwapPreview memory preview =
+            harness.previewEqualXSoloAmmSwapExactIn(marketId, address(tokenA), 10e18);
+
+        vm.prank(bob);
+        harness.swapEqualXSoloAmmExactIn(marketId, address(tokenA), 10e18, 10e18, preview.amountOut, bob);
+
+        LibEqualXSoloAmmStorage.SoloAmmMarket memory market = harness.getEqualXSoloAmmMarket(marketId);
+        assertEq(market.baselineReserveA, 110e18);
+        assertEq(market.baselineReserveB, 90e18);
+        assertEq(harness.principalOf(1, alicePositionKey), 500e18);
+        assertEq(harness.principalOf(2, alicePositionKey), 500e18);
+        assertEq(harness.totalDepositsOf(1), 500e18);
+        assertEq(harness.totalDepositsOf(2), 500e18);
+        assertEq(harness.trackedBalanceOf(1), 500e18);
+        assertEq(harness.trackedBalanceOf(2), 500e18);
+        assertEq(harness.activeCreditPrincipalTotalOf(1), 110e18);
+        assertEq(harness.activeCreditPrincipalTotalOf(2), 90e18);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), market.reserveA);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), market.reserveB);
+    }
+
     function test_Finalize_ReconcilesPrincipalOnlyOnClose() public {
         uint256 marketId;
         vm.prank(alice);
@@ -868,6 +903,58 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(harness.principalOf(2, alicePositionKey), 500e18 - (100e18 - reserveBForPrincipal));
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 0);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 0);
+    }
+
+    function test_Finalize_AfterRebalance_UsesLatestBaselineAndPreservesYieldRealization() public {
+        uint256 marketId = _createSoloMarket(uint64(block.timestamp), uint64(block.timestamp + 5 days), DEFAULT_REBALANCE_TIMELOCK);
+
+        vm.prank(alice);
+        uint64 executeAfter = harness.scheduleEqualXSoloAmmRebalance(marketId, 110e18, 90e18);
+
+        vm.warp(executeAfter);
+        vm.prank(bob);
+        harness.executeEqualXSoloAmmRebalance(marketId);
+
+        tokenA.mint(bob, 100e18);
+        vm.prank(bob);
+        tokenA.approve(address(harness), type(uint256).max);
+
+        EqualXSoloAmmFacet.SoloAmmSwapPreview memory preview =
+            harness.previewEqualXSoloAmmSwapExactIn(marketId, address(tokenA), 10e18);
+
+        vm.prank(bob);
+        harness.swapEqualXSoloAmmExactIn(marketId, address(tokenA), 10e18, 10e18, preview.amountOut, bob);
+
+        LibEqualXSoloAmmStorage.SoloAmmMarket memory preFinalize = harness.getEqualXSoloAmmMarket(marketId);
+        assertEq(preFinalize.baselineReserveA, 110e18);
+        assertEq(preFinalize.baselineReserveB, 90e18);
+        assertEq(harness.activeCreditPrincipalTotalOf(1), 110e18);
+        assertEq(harness.activeCreditPrincipalTotalOf(2), 90e18);
+
+        vm.warp(preFinalize.endTime);
+        vm.prank(bob);
+        harness.finalizeEqualXSoloAmmMarket(marketId);
+
+        LibEqualXSoloAmmStorage.SoloAmmMarket memory finalized = harness.getEqualXSoloAmmMarket(marketId);
+        uint256 reserveAForPrincipal = finalized.reserveA - finalized.feeIndexFeeAAccrued - finalized.activeCreditFeeAAccrued;
+        uint256 reserveBForPrincipal = finalized.reserveB - finalized.feeIndexFeeBAccrued - finalized.activeCreditFeeBAccrued;
+
+        assertEq(harness.principalOf(1, alicePositionKey), 500e18 + (reserveAForPrincipal - 110e18));
+        assertEq(harness.principalOf(2, alicePositionKey), 500e18 - (90e18 - reserveBForPrincipal));
+        assertEq(harness.activeCreditPrincipalTotalOf(1), 0);
+        assertEq(harness.activeCreditPrincipalTotalOf(2), 0);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 0);
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 0);
+
+        uint256 claimable = harness.previewPositionYield(alicePositionId, 1);
+        assertGt(claimable, 0);
+
+        uint256 reserveBeforeClaim = harness.yieldReserveOf(1);
+        vm.prank(alice);
+        uint256 claimed = harness.claimPositionYield(alicePositionId, 1, alice, 0);
+
+        assertEq(claimed, claimable);
+        assertEq(harness.yieldReserveOf(1), reserveBeforeClaim - claimed);
     }
 
     function test_Finalize_AfterPartialUtilizationZeroesActiveCreditAndLeavesClaimableYield() public {
