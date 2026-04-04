@@ -46,6 +46,13 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
     event SelfSecuredCreditClosed(
         uint256 indexed tokenId, address indexed owner, uint256 indexed poolId, uint256 totalDebtRepaid
     );
+    event SelfSecuredCreditAciModeUpdated(
+        uint256 indexed tokenId,
+        address indexed owner,
+        uint256 indexed poolId,
+        Types.SscAciMode previousMode,
+        Types.SscAciMode newMode
+    );
 
     function previewSelfSecuredCreditMaintenance(uint256 tokenId, uint256 pid)
         external
@@ -149,6 +156,33 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
         returns (uint256 repaid)
     {
         repaid = _repaySelfSecuredCredit(tokenId, pid, type(uint256).max, maxPayment);
+    }
+
+    function setSelfSecuredCreditAciMode(uint256 tokenId, uint256 pid, Types.SscAciMode newMode)
+        external
+        payable
+        nonReentrant
+    {
+        LibCurrency.assertZeroMsgValue();
+        LibPositionHelpers.requireOwnership(tokenId);
+
+        LibPositionHelpers.pool(pid);
+        bytes32 positionKey = LibPositionHelpers.positionKey(tokenId);
+        LibPositionHelpers.ensurePoolMembership(positionKey, pid, true);
+        LibPositionHelpers.settlePosition(pid, positionKey);
+
+        Types.SscLine storage lineState = LibSelfSecuredCreditStorage.line(positionKey, pid);
+        if (!lineState.active) {
+            revert InvalidParameterRange("no debt");
+        }
+
+        Types.SscAciMode previousMode = lineState.aciMode;
+        if (previousMode == newMode) {
+            return;
+        }
+
+        lineState.aciMode = newMode;
+        emit SelfSecuredCreditAciModeUpdated(tokenId, msg.sender, pid, previousMode, newMode);
     }
 
     function _repaySelfSecuredCredit(uint256 tokenId, uint256 pid, uint256 requestedAmount, uint256 maxPayment)

@@ -18,6 +18,7 @@ import {LaunchFixture} from "test/utils/LaunchFixture.t.sol";
 
 contract SelfSecuredCreditFacetTest is LaunchFixture {
     uint256 internal constant ROUTED_SSC_ACI_YIELD = 6_999_999_999_999_999_960;
+    uint256 internal constant ROUTED_SSC_ACI_YIELD_AFTER_RETURN = 13_999_999_999_999_999_980;
 
     function setUp() public override {
         super.setUp();
@@ -34,6 +35,7 @@ contract SelfSecuredCreditFacetTest is LaunchFixture {
         assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.closeSelfSecuredCredit.selector) != address(0));
         assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.previewSelfSecuredCreditMaintenance.selector) != address(0));
         assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.getSelfSecuredCreditLineView.selector) != address(0));
+        assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.setSelfSecuredCreditAciMode.selector) != address(0));
     }
 
     function test_LiveFlow_SelfSecuredCredit_DepositDrawRepayCloseWithdrawAndCleanup() external {
@@ -267,6 +269,55 @@ contract SelfSecuredCreditFacetTest is LaunchFixture {
         assertEq(lineView.claimableFeeYield, 0);
         assertEq(lineView.claimableAciYield, ROUTED_SSC_ACI_YIELD);
         assertEq(PositionManagementFacet(diamond).previewPositionYield(positionId, 1), 0);
+    }
+
+    function test_LiveFlow_SscAciModeSwitch_IsOwnerControlledAndProspective() external {
+        testSupport.setFoundationReceiver(address(0));
+        testSupport.setTreasuryShareBps(1_000);
+        testSupport.setActiveCreditShareBps(7_000);
+
+        uint256 positionId = _mintPosition(alice, 1);
+
+        eve.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        eve.approve(diamond, 100 ether);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 100 ether, 100 ether);
+        SelfSecuredCreditFacet(diamond).drawSelfSecuredCredit(positionId, 1, 60 ether, 60 ether);
+        vm.stopPrank();
+
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(NotNFTOwner.selector, bob, positionId));
+        SelfSecuredCreditFacet(diamond).setSelfSecuredCreditAciMode(positionId, 1, Types.SscAciMode.SelfPay);
+
+        vm.warp(block.timestamp + 25 hours);
+        eve.mint(diamond, 10 ether);
+        testSupport.routeManagedShareExternal(1, 10 ether, keccak256("ssc.mode.before"), false, 10 ether);
+
+        Types.SscLineView memory beforeSwitch = SelfSecuredCreditFacet(diamond).getSelfSecuredCreditLineView(positionId, 1);
+        assertEq(uint8(beforeSwitch.aciMode), uint8(Types.SscAciMode.Yield));
+        assertEq(beforeSwitch.claimableAciYield, ROUTED_SSC_ACI_YIELD);
+
+        vm.prank(alice);
+        SelfSecuredCreditFacet(diamond).setSelfSecuredCreditAciMode(positionId, 1, Types.SscAciMode.SelfPay);
+
+        Types.SscLineView memory selfPayView = SelfSecuredCreditFacet(diamond).getSelfSecuredCreditLineView(positionId, 1);
+        assertEq(uint8(selfPayView.aciMode), uint8(Types.SscAciMode.SelfPay));
+        assertEq(selfPayView.claimableAciYield, ROUTED_SSC_ACI_YIELD);
+
+        vm.prank(alice);
+        SelfSecuredCreditFacet(diamond).setSelfSecuredCreditAciMode(positionId, 1, Types.SscAciMode.Yield);
+
+        Types.SscLineView memory yieldView = SelfSecuredCreditFacet(diamond).getSelfSecuredCreditLineView(positionId, 1);
+        assertEq(uint8(yieldView.aciMode), uint8(Types.SscAciMode.Yield));
+        assertEq(yieldView.claimableAciYield, ROUTED_SSC_ACI_YIELD);
+
+        eve.mint(diamond, 20 ether);
+        testSupport.routeManagedShareExternal(1, 10 ether, keccak256("ssc.mode.after"), false, 20 ether);
+
+        Types.SscLineView memory afterReturn = SelfSecuredCreditFacet(diamond).getSelfSecuredCreditLineView(positionId, 1);
+        assertEq(uint8(afterReturn.aciMode), uint8(Types.SscAciMode.Yield));
+        assertEq(afterReturn.claimableFeeYield, 1.6 ether);
+        assertEq(afterReturn.claimableAciYield, ROUTED_SSC_ACI_YIELD_AFTER_RETURN);
     }
 
     function test_LiveFlow_SelfSecuredCredit_TransferPreservesActiveLineForNewOwner() external {
