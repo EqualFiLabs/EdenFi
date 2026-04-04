@@ -268,6 +268,7 @@ library Types {
         mapping(bytes32 => uint256) userFeeIndex;
         mapping(bytes32 => uint256) userMaintenanceIndex;
         mapping(bytes32 => uint256) userAccruedYield;
+        mapping(bytes32 => uint256) userClaimableFeeYield;
         mapping(bytes32 => uint256) userSameAssetDebt;
         mapping(bytes32 => uint256) externalCollateral;
         // ─── Debt tracking (positionId) ───────────────────

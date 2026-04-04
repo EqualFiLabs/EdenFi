@@ -116,9 +116,10 @@ contract OptionsViewFacet {
             + enc.indexEncumbered + enc.moduleEncumbered;
         uint256 availablePrincipal = settledPrincipal > totalEncumbrance ? settledPrincipal - totalEncumbrance : 0;
         uint256 accruedYield = LibAppStorage.s().pools[collateralPoolId].userAccruedYield[makerPositionKey];
+        uint256 feeAccrued = LibAppStorage.s().pools[collateralPoolId].userClaimableFeeYield[makerPositionKey];
         uint256 pendingActiveCreditYield = LibActiveCreditIndex.pendingActiveCredit(collateralPoolId, makerPositionKey);
         uint256 feeYieldWithAccrued = LibFeeIndex.pendingYield(collateralPoolId, makerPositionKey);
-        uint256 pendingFeeYield = feeYieldWithAccrued > accruedYield ? feeYieldWithAccrued - accruedYield : 0;
+        uint256 pendingFeeYield = feeYieldWithAccrued > feeAccrued ? feeYieldWithAccrued - feeAccrued : 0;
         collateralView.seriesId = seriesId;
         collateralView.makerPositionKey = makerPositionKey;
         collateralView.makerPositionId = series.makerPositionId;

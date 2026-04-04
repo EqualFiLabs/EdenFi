@@ -120,6 +120,7 @@ library LibFeeIndex {
                 added = Math.mulDiv(feeBase, globalIndex - prevIndex, INDEX_SCALE);
                 if (added > 0) {
                     p.userAccruedYield[user] += added;
+                    p.userClaimableFeeYield[user] += added;
                 }
             }
         }
@@ -130,7 +131,7 @@ library LibFeeIndex {
 
     function pendingYield(uint256 pid, bytes32 user) internal view returns (uint256 amount) {
         Types.PoolData storage p = LibAppStorage.s().pools[pid];
-        amount = p.userAccruedYield[user];
+        amount = p.userClaimableFeeYield[user];
 
         uint256 principal = previewSettledPrincipal(pid, user);
         if (principal == 0) return amount;

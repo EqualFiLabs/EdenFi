@@ -11,6 +11,7 @@ import {
     SolvencyViolation
 } from "src/libraries/Errors.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
+import {LibActiveCreditIndex} from "src/libraries/LibActiveCreditIndex.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibFeeIndex} from "src/libraries/LibFeeIndex.sol";
@@ -54,6 +55,37 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
         Types.PoolData storage pool = LibPositionHelpers.pool(pid);
         bytes32 positionKey = LibPositionHelpers.positionKey(tokenId);
         preview = _previewMaintenanceState(tokenId, positionKey, pid, pool);
+    }
+
+    function getSelfSecuredCreditLineView(uint256 tokenId, uint256 pid)
+        external
+        view
+        returns (Types.SscLineView memory view_)
+    {
+        Types.PoolData storage pool = LibPositionHelpers.pool(pid);
+        bytes32 positionKey = LibPositionHelpers.positionKey(tokenId);
+        Types.SscLine storage lineState = LibSelfSecuredCreditStorage.line(positionKey, pid);
+
+        view_.tokenId = tokenId;
+        view_.poolId = pid;
+        view_.underlying = pool.underlying;
+        view_.principal = LibFeeIndex.previewSettledPrincipal(pid, positionKey);
+        view_.outstandingDebt = lineState.outstandingDebt;
+        view_.requiredLockedCapital = lineState.requiredLockedCapital;
+        view_.claimableFeeYield = LibFeeIndex.pendingYield(pid, positionKey);
+        view_.claimableAciYield = LibActiveCreditIndex.pendingSscClaimableYield(pid, positionKey);
+        view_.totalAciAppliedToDebt = LibSelfSecuredCreditStorage.totalAciAppliedToDebtOf(positionKey, pid);
+        view_.aciMode = lineState.aciMode;
+        view_.active = lineState.active;
+
+        uint256 totalEncumbered =
+            _totalEncumberedWithUpdatedLock(positionKey, pid, lineState, view_.requiredLockedCapital);
+        uint256 withdrawalBlocker = pool.userSameAssetDebt[positionKey] > totalEncumbered
+            ? pool.userSameAssetDebt[positionKey]
+            : totalEncumbered;
+        if (view_.principal > withdrawalBlocker) {
+            view_.freeEquity = view_.principal - withdrawalBlocker;
+        }
     }
 
     function drawSelfSecuredCredit(uint256 tokenId, uint256 pid, uint256 amount, uint256 minReceived)
