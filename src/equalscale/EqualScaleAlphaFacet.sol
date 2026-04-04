@@ -10,7 +10,6 @@ import {LibActiveCreditIndex} from "src/libraries/LibActiveCreditIndex.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
-import {LibModuleEncumbrance} from "src/libraries/LibModuleEncumbrance.sol";
 import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
 import {LibPositionHelpers} from "src/libraries/LibPositionHelpers.sol";
 import {InsufficientPoolLiquidity} from "src/libraries/Errors.sol";
@@ -139,6 +138,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         line.soloExclusiveUntil = 0;
         line.delinquentSince = 0;
         line.missedPayments = 0;
+        line.lockedCollateralAmount = 0;
         line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Closed;
 
         emit ProposalCancelled(lineId, line.borrowerPositionId, borrowerPositionKey);
@@ -218,11 +218,8 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         line.currentCommittedAmount -= canceledAmount;
 
         LibEqualScaleAlphaShared.settleSettlementPosition(line.settlementPoolId, lenderPositionKey);
-        LibModuleEncumbrance.unencumber(
-            lenderPositionKey,
-            line.settlementPoolId,
-            LibEqualScaleAlphaShared.settlementCommitmentModuleId(lineId),
-            canceledAmount
+        LibEqualScaleAlphaShared.decreaseSettlementCommitmentReservation(
+            LibAppStorage.s().pools[line.settlementPoolId], line.settlementPoolId, lenderPositionKey, canceledAmount
         );
 
         emit CommitmentCancelled(
@@ -250,7 +247,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         }
 
         if (line.collateralMode == LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted) {
-            _encumberBorrowerCollateral(lineId, line);
+            _encumberBorrowerCollateral(line);
         }
 
         line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Active;
@@ -435,11 +432,8 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
 
         line.currentCommittedAmount += amount;
 
-        LibModuleEncumbrance.encumber(
-            lenderPositionKey,
-            line.settlementPoolId,
-            LibEqualScaleAlphaShared.settlementCommitmentModuleId(lineId),
-            amount
+        LibEqualScaleAlphaShared.increaseSettlementCommitmentReservation(
+            settlementPool, line.settlementPoolId, lenderPositionKey, amount
         );
 
         emit CommitmentAdded(lineId, lenderPositionId, lenderPositionKey, amount, line.currentCommittedAmount);
@@ -618,7 +612,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         }
     }
 
-    function _encumberBorrowerCollateral(uint256 lineId, LibEqualScaleAlphaStorage.CreditLine storage line) internal {
+    function _encumberBorrowerCollateral(LibEqualScaleAlphaStorage.CreditLine storage line) internal {
         bytes32 borrowerPositionKey = line.borrowerPositionKey;
         uint256 collateralPoolId = line.borrowerCollateralPoolId;
         LibEqualScaleAlphaShared.settlePosition(collateralPoolId, borrowerPositionKey);
@@ -633,12 +627,10 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
             revert InvalidProposalTerms("insufficient borrower collateral");
         }
 
-        LibModuleEncumbrance.encumber(
-            borrowerPositionKey,
-            collateralPoolId,
-            LibEqualScaleAlphaShared.borrowerCollateralModuleId(lineId),
-            line.borrowerCollateralAmount
+        LibEqualScaleAlphaShared.increaseBorrowerCollateralReservation(
+            collateralPool, collateralPoolId, borrowerPositionKey, line.borrowerCollateralAmount
         );
+        line.lockedCollateralAmount = line.borrowerCollateralAmount;
     }
 
     function _resetDrawPeriodIfRolled(LibEqualScaleAlphaStorage.CreditLine storage line) internal {
@@ -739,14 +731,6 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
             value /= 10;
         }
         return string(buffer);
-    }
-
-    function _settlementCommitmentModuleId(uint256 lineId) internal pure returns (uint256) {
-        return LibEqualScaleAlphaShared.settlementCommitmentModuleId(lineId);
-    }
-
-    function _borrowerCollateralModuleId(uint256 lineId) internal pure returns (uint256) {
-        return LibEqualScaleAlphaShared.borrowerCollateralModuleId(lineId);
     }
 
     function _positionNft() internal view returns (PositionNFT positionNftContract) {

@@ -7,7 +7,6 @@ import {LibEqualScaleAlphaShared} from "src/equalscale/LibEqualScaleAlphaShared.
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
-import {LibModuleEncumbrance} from "src/libraries/LibModuleEncumbrance.sol";
 import {Types} from "src/libraries/Types.sol";
 
 library LibEqualScaleAlphaLifecycle {
@@ -136,11 +135,8 @@ library LibEqualScaleAlphaLifecycle {
         line.currentCommittedAmount -= exitedAmount;
 
         LibEqualScaleAlphaShared.settleSettlementPosition(line.settlementPoolId, lenderPositionKey);
-        LibModuleEncumbrance.unencumber(
-            lenderPositionKey,
-            line.settlementPoolId,
-            LibEqualScaleAlphaShared.settlementCommitmentModuleId(lineId),
-            exitedAmount
+        LibEqualScaleAlphaShared.decreaseSettlementCommitmentReservation(
+            LibAppStorage.s().pools[line.settlementPoolId], line.settlementPoolId, lenderPositionKey, exitedAmount
         );
 
         emit IEqualScaleAlphaEvents.CommitmentExited(
@@ -228,7 +224,7 @@ library LibEqualScaleAlphaLifecycle {
         LibEqualScaleAlphaShared.accrueInterest(line);
 
         uint256 totalExposedPrincipal = LibEqualScaleAlphaShared.totalExposedPrincipal(store, lineId);
-        uint256 recoveryApplied = LibEqualScaleAlphaShared.recoverBorrowerCollateral(lineId, line, totalExposedPrincipal);
+        uint256 recoveryApplied = LibEqualScaleAlphaShared.recoverBorrowerCollateral(line, totalExposedPrincipal);
         if (recoveryApplied != 0) {
             LibEqualScaleAlphaShared.allocateRecovery(store, lineId, recoveryApplied);
         }

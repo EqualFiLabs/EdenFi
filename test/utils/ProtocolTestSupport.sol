@@ -100,6 +100,14 @@ contract ProtocolTestSupportFacet is EqualIndexBaseV3 {
         return LibEncumbrance.getIndexEncumberedForIndex(positionKey, pid, indexId);
     }
 
+    function encumberedCapitalOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
+        return LibEncumbrance.position(positionKey, pid).encumberedCapital;
+    }
+
+    function lockedCapitalOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
+        return LibEncumbrance.position(positionKey, pid).lockedCapital;
+    }
+
     function canClearMembership(uint256 pid, bytes32 positionKey)
         external
         view

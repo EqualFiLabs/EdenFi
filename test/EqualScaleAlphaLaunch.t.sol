@@ -31,17 +31,20 @@ contract EqualScaleAlphaLaunchTest is LaunchFixture {
     function setUp() public override {
         super.setUp();
         _bootstrapCorePools();
+        _installTestSupportFacet();
     }
 
     function test_LiveLaunch_EqualScaleAlpha_SoloLifecycleSupportsTimelockFreezeAndUserExit() external {
         uint256 borrowerPositionId = _createRegisteredBorrower(alice, borrowerTreasury, 0);
         uint256 lenderPositionId = _fundSettlementPosition(bob, TARGET_LIMIT);
+        bytes32 lenderPositionKey = positionNft.getPositionKey(lenderPositionId);
 
         vm.prank(alice);
         uint256 lineId = EqualScaleAlphaFacet(diamond).createLineProposal(borrowerPositionId, _defaultProposal());
 
         vm.prank(bob);
         EqualScaleAlphaFacet(diamond).commitSolo(lineId, lenderPositionId);
+        assertEq(testSupport.encumberedCapitalOf(lenderPositionKey, SETTLEMENT_POOL_ID), TARGET_LIMIT);
 
         vm.prank(carol);
         EqualScaleAlphaFacet(diamond).activateLine(lineId);
@@ -79,6 +82,7 @@ contract EqualScaleAlphaLaunchTest is LaunchFixture {
         line = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
         assertEq(uint256(line.status), uint256(LibEqualScaleAlphaStorage.CreditLineStatus.Closed));
         assertEq(line.outstandingPrincipal, 0);
+        assertEq(testSupport.encumberedCapitalOf(lenderPositionKey, SETTLEMENT_POOL_ID), 0);
 
         vm.prank(bob);
         PositionManagementFacet(diamond).withdrawFromPosition(
@@ -96,7 +100,8 @@ contract EqualScaleAlphaLaunchTest is LaunchFixture {
         params.minimumPaymentPerPeriod = 1;
         params.maxDrawPerPeriod = TARGET_LIMIT;
 
-        (uint256 lineId,,) = _createActivePooledLine(borrowerPositionId, params, 600e18, 400e18);
+        (uint256 lineId, uint256 lenderPositionOne, uint256 lenderPositionTwo) =
+            _createActivePooledLine(borrowerPositionId, params, 600e18, 400e18);
 
         vm.prank(alice);
         EqualScaleAlphaFacet(diamond).draw(lineId, 500e18);
@@ -117,6 +122,8 @@ contract EqualScaleAlphaLaunchTest is LaunchFixture {
         assertEq(commitments.length, 2);
         assertEq(commitments[0].lossWrittenDown, 300e18);
         assertEq(commitments[1].lossWrittenDown, 200e18);
+        assertEq(testSupport.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionOne), SETTLEMENT_POOL_ID), 0);
+        assertEq(testSupport.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionTwo), SETTLEMENT_POOL_ID), 0);
     }
 
     function _createRegisteredBorrower(address owner, address treasuryWallet, uint256 principalDeposit)

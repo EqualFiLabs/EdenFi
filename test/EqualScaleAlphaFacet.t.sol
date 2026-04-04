@@ -126,26 +126,12 @@ contract EqualScaleAlphaFacetHarness is
         LibAppStorage.s().timelock = timelock;
     }
 
-    function settlementCommitmentModuleId(uint256 lineId) external pure returns (uint256) {
-        return _settlementCommitmentModuleId(lineId);
+    function encumberedCapitalOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
+        return LibEncumbrance.position(positionKey, pid).encumberedCapital;
     }
 
-    function borrowerCollateralModuleId(uint256 lineId) external pure returns (uint256) {
-        return _borrowerCollateralModuleId(lineId);
-    }
-
-    function moduleEncumbranceForLine(uint256 lineId, uint256 lenderPositionId) external view returns (uint256) {
-        PositionNFT positionNft = _positionNft();
-        bytes32 positionKey = positionNft.getPositionKey(lenderPositionId);
-        uint256 pid = positionNft.getPoolId(lenderPositionId);
-        return LibEncumbrance.getModuleEncumberedForModule(positionKey, pid, _settlementCommitmentModuleId(lineId));
-    }
-
-    function moduleEncumbranceForBorrowerCollateral(uint256 lineId) external view returns (uint256) {
-        LibEqualScaleAlphaStorage.CreditLine storage creditLine = LibEqualScaleAlphaStorage.s().lines[lineId];
-        return LibEncumbrance.getModuleEncumberedForModule(
-            creditLine.borrowerPositionKey, creditLine.borrowerCollateralPoolId, _borrowerCollateralModuleId(lineId)
-        );
+    function lockedCapitalOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
+        return LibEncumbrance.position(positionKey, pid).lockedCapital;
     }
 
     // Retained for state-machine edge coverage where the protocol does not expose a natural setup transition.
@@ -806,7 +792,9 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(commitment.settlementPoolId == SETTLEMENT_POOL_ID, "commitment settlement pool mismatch");
         require(commitment.committedAmount == TARGET_LIMIT, "commitment amount mismatch");
         require(commitment.status == LibEqualScaleAlphaStorage.CommitmentStatus.Active, "commitment not active");
-        require(facet.moduleEncumbranceForLine(lineId, lenderPositionId) == TARGET_LIMIT, "encumbrance mismatch");
+        require(
+            facet.encumberedCapitalOf(lenderPositionKey, SETTLEMENT_POOL_ID) == TARGET_LIMIT, "encumbrance mismatch"
+        );
     }
 
     function test_commitSolo_revertsWhenAvailableSettlementPrincipalIsTooLow() external {
@@ -908,7 +896,9 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         LibEqualScaleAlphaStorage.Commitment memory commitment = facet.commitment(lineId, lenderPositionId);
         require(commitment.committedAmount == 0, "commitment amount not cleared");
         require(commitment.status == LibEqualScaleAlphaStorage.CommitmentStatus.Canceled, "commitment not canceled");
-        require(facet.moduleEncumbranceForLine(lineId, lenderPositionId) == 0, "encumbrance not released");
+        require(
+            facet.encumberedCapitalOf(lenderPositionKey, SETTLEMENT_POOL_ID) == 0, "encumbrance not released"
+        );
         require(facet.line(lineId).currentCommittedAmount == 0, "line committed amount not reduced");
     }
 
@@ -936,7 +926,10 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
             commitment.status == LibEqualScaleAlphaStorage.CommitmentStatus.Canceled,
             "transferred commitment not cancelable"
         );
-        require(facet.moduleEncumbranceForLine(lineId, lenderPositionId) == 0, "transferred encumbrance not released");
+        require(
+            facet.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionId), SETTLEMENT_POOL_ID) == 0,
+            "transferred encumbrance not released"
+        );
     }
 
     function test_activateLine_fullCommitActivatesUnsecuredLineAndInitializesLiveState() external {
@@ -974,8 +967,11 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(line.termStartedAt == activatedAt, "term start mismatch");
         require(line.termEndAt == expectedTermEndAt, "term end mismatch");
         require(line.refinanceEndAt == expectedRefinanceEndAt, "refinance end mismatch");
-        require(facet.moduleEncumbranceForLine(lineId, lenderPositionId) == TARGET_LIMIT, "lender encumbrance released");
-        require(facet.moduleEncumbranceForBorrowerCollateral(lineId) == 0, "unexpected borrower collateral");
+        require(
+            facet.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionId), SETTLEMENT_POOL_ID) == TARGET_LIMIT,
+            "lender encumbrance released"
+        );
+        require(facet.lockedCapitalOf(line.borrowerPositionKey, line.borrowerCollateralPoolId) == 0, "unexpected borrower collateral");
     }
 
     function test_activateLine_borrowerAcceptsResizedBorrowerCollateralizedActivation() external {
@@ -1023,11 +1019,11 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(line.termEndAt == expectedTermEndAt, "resized term end mismatch");
         require(line.refinanceEndAt == expectedRefinanceEndAt, "resized refinance end mismatch");
         require(
-            facet.moduleEncumbranceForLine(lineId, lenderPositionId) == acceptedAmount,
+            facet.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionId), SETTLEMENT_POOL_ID) == acceptedAmount,
             "resized lender encumbrance released"
         );
         require(
-            facet.moduleEncumbranceForBorrowerCollateral(lineId) == COLLATERAL_AMOUNT,
+            facet.lockedCapitalOf(line.borrowerPositionKey, line.borrowerCollateralPoolId) == COLLATERAL_AMOUNT,
             "borrower collateral not encumbered"
         );
     }
@@ -1107,7 +1103,10 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(first.lenderPositionKey == lenderOneKey, "first lender key changed");
         require(second.lenderPositionKey == lenderTwoKey, "second lender key changed");
         require(facet.sameAssetDebt(SETTLEMENT_POOL_ID, borrowerPositionKey) == 250e18, "same-asset debt mismatch");
-        require(facet.poolActiveCreditPrincipalTotal(SETTLEMENT_POOL_ID) == 250e18, "active credit principal mismatch");
+        require(
+            facet.poolActiveCreditPrincipalTotal(SETTLEMENT_POOL_ID) == TARGET_LIMIT + 250e18,
+            "active credit principal mismatch"
+        );
         require(debtPrincipal == 250e18, "debt active credit principal mismatch");
         require(debtStartTime == uint40(block.timestamp), "debt start time mismatch");
         require(debtIndexSnapshot == 0, "debt index snapshot mismatch");
@@ -1393,7 +1392,10 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
             facet.sameAssetDebt(SETTLEMENT_POOL_ID, positionNft.getPositionKey(line.borrowerPositionId)) == 240e18,
             "same-asset debt mismatch"
         );
-        require(facet.poolActiveCreditPrincipalTotal(SETTLEMENT_POOL_ID) == 240e18, "active credit total mismatch");
+        require(
+            facet.poolActiveCreditPrincipalTotal(SETTLEMENT_POOL_ID) == TARGET_LIMIT + 240e18,
+            "active credit total mismatch"
+        );
         require(debtPrincipal == 240e18, "debt principal not reduced");
         require(debtIndexSnapshot == 0, "debt index snapshot mismatch");
         require(
@@ -1605,8 +1607,14 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
             second.status == LibEqualScaleAlphaStorage.CommitmentStatus.WrittenDown,
             "second status should be written down"
         );
-        require(facet.moduleEncumbranceForLine(lineId, lenderPositionOne) == 0, "first encumbrance should release");
-        require(facet.moduleEncumbranceForLine(lineId, lenderPositionTwo) == 0, "second encumbrance should release");
+        require(
+            facet.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionOne), SETTLEMENT_POOL_ID) == 0,
+            "first encumbrance should release"
+        );
+        require(
+            facet.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionTwo), SETTLEMENT_POOL_ID) == 0,
+            "second encumbrance should release"
+        );
         require(facet.poolTrackedBalance(SETTLEMENT_POOL_ID) == TARGET_LIMIT - 500e18, "unexpected backfill");
     }
 
@@ -1665,9 +1673,18 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(second.lossWrittenDown == 100e18, "second loss mismatch");
         require(first.principalExposed == 0, "first exposure should clear");
         require(second.principalExposed == 0, "second exposure should clear");
-        require(facet.moduleEncumbranceForBorrowerCollateral(lineId) == 0, "collateral encumbrance should release");
-        require(facet.moduleEncumbranceForLine(lineId, lenderPositionOne) == 0, "first encumbrance should release");
-        require(facet.moduleEncumbranceForLine(lineId, lenderPositionTwo) == 0, "second encumbrance should release");
+        require(
+            facet.lockedCapitalOf(borrowerPositionKey, COLLATERAL_POOL_ID) == 0,
+            "collateral encumbrance should release"
+        );
+        require(
+            facet.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionOne), SETTLEMENT_POOL_ID) == 0,
+            "first encumbrance should release"
+        );
+        require(
+            facet.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionTwo), SETTLEMENT_POOL_ID) == 0,
+            "second encumbrance should release"
+        );
         require(
             facet.poolTrackedBalance(SETTLEMENT_POOL_ID) == TARGET_LIMIT - 500e18 + COLLATERAL_AMOUNT,
             "settlement recovery mismatch"
@@ -1852,9 +1869,18 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(exited.status == LibEqualScaleAlphaStorage.CommitmentStatus.Exited, "exited commitment status mismatch");
         require(added.status == LibEqualScaleAlphaStorage.CommitmentStatus.Active, "new commitment status mismatch");
         require(exited.committedAmount == 0, "exited commitment should release coverage");
-        require(facet.moduleEncumbranceForLine(lineId, lenderPositionOne) == 700e18, "rolled encumbrance mismatch");
-        require(facet.moduleEncumbranceForLine(lineId, lenderPositionTwo) == 0, "exited encumbrance mismatch");
-        require(facet.moduleEncumbranceForLine(lineId, lenderPositionThree) == 300e18, "new encumbrance mismatch");
+        require(
+            facet.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionOne), SETTLEMENT_POOL_ID) == 700e18,
+            "rolled encumbrance mismatch"
+        );
+        require(
+            facet.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionTwo), SETTLEMENT_POOL_ID) == 0,
+            "exited encumbrance mismatch"
+        );
+        require(
+            facet.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionThree), SETTLEMENT_POOL_ID) == 300e18,
+            "new encumbrance mismatch"
+        );
     }
 
     function test_resolveRefinancing_renewsAtResizedCoveredLimit() external {
