@@ -10,6 +10,7 @@ library LibSelfSecuredCreditStorage {
     struct SelfSecuredCreditStorage {
         mapping(bytes32 => mapping(uint256 => Types.SscLine)) lines;
         mapping(bytes32 => mapping(uint256 => uint256)) claimableAciYield;
+        mapping(bytes32 => mapping(uint256 => uint256)) protectedClaimableAciYield;
         mapping(bytes32 => mapping(uint256 => uint256)) totalAciAppliedToDebt;
     }
 
@@ -32,6 +33,10 @@ library LibSelfSecuredCreditStorage {
         return s().totalAciAppliedToDebt[positionKey][poolId];
     }
 
+    function protectedClaimableAciYieldOf(bytes32 positionKey, uint256 poolId) internal view returns (uint256) {
+        return s().protectedClaimableAciYield[positionKey][poolId];
+    }
+
     function lineView(bytes32 positionKey, uint256 poolId) internal view returns (Types.SscLine memory sscLine) {
         sscLine = s().lines[positionKey][poolId];
     }
@@ -49,5 +54,9 @@ library LibSelfSecuredCreditStorage {
     function increaseTotalAciAppliedToDebt(bytes32 positionKey, uint256 poolId, uint256 amount) internal {
         if (amount == 0) return;
         s().totalAciAppliedToDebt[positionKey][poolId] += amount;
+    }
+
+    function setProtectedClaimableAciYield(bytes32 positionKey, uint256 poolId, uint256 amount) internal {
+        s().protectedClaimableAciYield[positionKey][poolId] = amount;
     }
 }

@@ -19,6 +19,7 @@ import {LaunchFixture} from "test/utils/LaunchFixture.t.sol";
 contract SelfSecuredCreditFacetTest is LaunchFixture {
     uint256 internal constant ROUTED_SSC_ACI_YIELD = 6_999_999_999_999_999_960;
     uint256 internal constant ROUTED_SSC_ACI_YIELD_AFTER_RETURN = 13_999_999_999_999_999_980;
+    uint256 internal constant ROUTED_SSC_ACI_OVERFLOW_AFTER_CLOSE = 2 ether;
 
     function setUp() public override {
         super.setUp();
@@ -36,6 +37,7 @@ contract SelfSecuredCreditFacetTest is LaunchFixture {
         assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.previewSelfSecuredCreditMaintenance.selector) != address(0));
         assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.getSelfSecuredCreditLineView.selector) != address(0));
         assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.setSelfSecuredCreditAciMode.selector) != address(0));
+        assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.serviceSelfSecuredCredit.selector) != address(0));
     }
 
     function test_LiveFlow_SelfSecuredCredit_DepositDrawRepayCloseWithdrawAndCleanup() external {
@@ -318,6 +320,94 @@ contract SelfSecuredCreditFacetTest is LaunchFixture {
         assertEq(uint8(afterReturn.aciMode), uint8(Types.SscAciMode.Yield));
         assertEq(afterReturn.claimableFeeYield, 1.6 ether);
         assertEq(afterReturn.claimableAciYield, ROUTED_SSC_ACI_YIELD_AFTER_RETURN);
+    }
+
+    function test_LiveFlow_SelfPayService_ReducesDebtAndRestoresFeeBase() external {
+        testSupport.setFoundationReceiver(address(0));
+        testSupport.setTreasuryShareBps(1_000);
+        testSupport.setActiveCreditShareBps(7_000);
+
+        uint256 positionId = _mintPosition(alice, 1);
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+
+        eve.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        eve.approve(diamond, 100 ether);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 100 ether, 100 ether);
+        SelfSecuredCreditFacet(diamond).drawSelfSecuredCredit(positionId, 1, 60 ether, 60 ether);
+        SelfSecuredCreditFacet(diamond).setSelfSecuredCreditAciMode(positionId, 1, Types.SscAciMode.SelfPay);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 25 hours);
+        eve.mint(diamond, 10 ether);
+        testSupport.routeManagedShareExternal(1, 10 ether, keccak256("ssc.selfpay.first"), false, 10 ether);
+
+        Types.SscLineView memory beforeService = SelfSecuredCreditFacet(diamond).getSelfSecuredCreditLineView(positionId, 1);
+        assertEq(beforeService.outstandingDebt, 60 ether);
+        assertEq(beforeService.freeEquity, 25 ether);
+        assertEq(beforeService.claimableAciYield, 0);
+        assertEq(beforeService.claimableFeeYield, 0.8 ether);
+
+        vm.prank(alice);
+        uint256 appliedToDebt = SelfSecuredCreditFacet(diamond).serviceSelfSecuredCredit(positionId, 1);
+        assertEq(appliedToDebt, ROUTED_SSC_ACI_YIELD);
+
+        Types.SscLineView memory afterService = SelfSecuredCreditFacet(diamond).getSelfSecuredCreditLineView(positionId, 1);
+        assertEq(afterService.totalAciAppliedToDebt, ROUTED_SSC_ACI_YIELD);
+        assertEq(afterService.claimableAciYield, 0);
+        assertEq(afterService.claimableFeeYield, 0.8 ether);
+        assertTrue(afterService.outstandingDebt < beforeService.outstandingDebt);
+        assertTrue(afterService.requiredLockedCapital < beforeService.requiredLockedCapital);
+        assertGt(afterService.freeEquity, beforeService.freeEquity);
+        assertEq(testSupport.sameAssetDebtOf(1, positionKey), afterService.outstandingDebt);
+        assertEq(testSupport.lockedCapitalOf(positionKey, 1), afterService.requiredLockedCapital);
+        assertEq(PoolManagementFacet(diamond).getPoolInfoView(1).trackedBalance, 40 ether + ROUTED_SSC_ACI_YIELD);
+
+        uint256 feeYieldBeforeSecondRoute = afterService.claimableFeeYield;
+
+        eve.mint(diamond, 20 ether);
+        testSupport.routeManagedShareExternal(1, 10 ether, keccak256("ssc.selfpay.second"), false, 20 ether);
+
+        Types.SscLineView memory afterSecondRoute =
+            SelfSecuredCreditFacet(diamond).getSelfSecuredCreditLineView(positionId, 1);
+        uint256 incrementalFi = afterSecondRoute.claimableFeeYield - feeYieldBeforeSecondRoute;
+        assertGt(incrementalFi, 0.8 ether);
+    }
+
+    function test_LiveFlow_SelfPayService_OverflowClosesDebtAndLeavesClaimableAci() external {
+        testSupport.setFoundationReceiver(address(0));
+        testSupport.setTreasuryShareBps(1_000);
+        testSupport.setActiveCreditShareBps(7_000);
+
+        uint256 positionId = _mintPosition(alice, 1);
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+
+        eve.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        eve.approve(diamond, 100 ether);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 100 ether, 100 ether);
+        SelfSecuredCreditFacet(diamond).drawSelfSecuredCredit(positionId, 1, 5 ether, 5 ether);
+        SelfSecuredCreditFacet(diamond).setSelfSecuredCreditAciMode(positionId, 1, Types.SscAciMode.SelfPay);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 25 hours);
+        eve.mint(diamond, 10 ether);
+        testSupport.routeManagedShareExternal(1, 10 ether, keccak256("ssc.selfpay.overflow"), false, 10 ether);
+
+        vm.prank(alice);
+        uint256 appliedToDebt = SelfSecuredCreditFacet(diamond).serviceSelfSecuredCredit(positionId, 1);
+        assertEq(appliedToDebt, 5 ether);
+
+        Types.SscLineView memory afterOverflow = SelfSecuredCreditFacet(diamond).getSelfSecuredCreditLineView(positionId, 1);
+        assertEq(afterOverflow.outstandingDebt, 0);
+        assertEq(afterOverflow.requiredLockedCapital, 0);
+        assertEq(afterOverflow.totalAciAppliedToDebt, 5 ether);
+        assertEq(afterOverflow.claimableAciYield, ROUTED_SSC_ACI_OVERFLOW_AFTER_CLOSE);
+        assertEq(afterOverflow.freeEquity, 100 ether);
+        assertTrue(!afterOverflow.active);
+        assertEq(testSupport.sameAssetDebtOf(1, positionKey), 0);
+        assertEq(testSupport.lockedCapitalOf(positionKey, 1), 0);
+        assertEq(PoolManagementFacet(diamond).getPoolInfoView(1).trackedBalance, 100 ether);
     }
 
     function test_LiveFlow_SelfSecuredCredit_TransferPreservesActiveLineForNewOwner() external {

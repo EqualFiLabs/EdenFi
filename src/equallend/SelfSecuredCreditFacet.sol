@@ -46,6 +46,15 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
     event SelfSecuredCreditClosed(
         uint256 indexed tokenId, address indexed owner, uint256 indexed poolId, uint256 totalDebtRepaid
     );
+    event SelfSecuredCreditServiced(
+        uint256 indexed tokenId,
+        address indexed owner,
+        uint256 indexed poolId,
+        uint256 aciAppliedToDebt,
+        uint256 outstandingDebt,
+        uint256 requiredLockedCapital,
+        uint256 claimableAciYield
+    );
     event SelfSecuredCreditAciModeUpdated(
         uint256 indexed tokenId,
         address indexed owner,
@@ -110,7 +119,7 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
         Types.PoolData storage pool = LibPositionHelpers.pool(pid);
         bytes32 positionKey = LibPositionHelpers.positionKey(tokenId);
         LibPositionHelpers.ensurePoolMembership(positionKey, pid, true);
-        LibPositionHelpers.settlePosition(pid, positionKey);
+        _settleAndServiceSelfSecuredCredit(tokenId, positionKey, pid);
 
         Types.SscLine storage lineState = LibSelfSecuredCreditStorage.line(positionKey, pid);
         _enforceDrawThreshold(pool, lineState, amount);
@@ -158,6 +167,27 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
         repaid = _repaySelfSecuredCredit(tokenId, pid, type(uint256).max, maxPayment);
     }
 
+    function serviceSelfSecuredCredit(uint256 tokenId, uint256 pid)
+        external
+        payable
+        nonReentrant
+        returns (uint256 aciAppliedToDebt)
+    {
+        LibCurrency.assertZeroMsgValue();
+        LibPositionHelpers.requireOwnership(tokenId);
+
+        LibPositionHelpers.pool(pid);
+        bytes32 positionKey = LibPositionHelpers.positionKey(tokenId);
+        LibPositionHelpers.ensurePoolMembership(positionKey, pid, true);
+
+        Types.SscLine storage lineState = LibSelfSecuredCreditStorage.line(positionKey, pid);
+        if (!lineState.active) {
+            revert InvalidParameterRange("no debt");
+        }
+
+        aciAppliedToDebt = _settleAndServiceSelfSecuredCredit(tokenId, positionKey, pid).aciAppliedToDebt;
+    }
+
     function setSelfSecuredCreditAciMode(uint256 tokenId, uint256 pid, Types.SscAciMode newMode)
         external
         payable
@@ -169,7 +199,7 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
         LibPositionHelpers.pool(pid);
         bytes32 positionKey = LibPositionHelpers.positionKey(tokenId);
         LibPositionHelpers.ensurePoolMembership(positionKey, pid, true);
-        LibPositionHelpers.settlePosition(pid, positionKey);
+        _settleAndServiceSelfSecuredCredit(tokenId, positionKey, pid);
 
         Types.SscLine storage lineState = LibSelfSecuredCreditStorage.line(positionKey, pid);
         if (!lineState.active) {
@@ -179,6 +209,14 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
         Types.SscAciMode previousMode = lineState.aciMode;
         if (previousMode == newMode) {
             return;
+        }
+
+        if (newMode == Types.SscAciMode.SelfPay) {
+            LibSelfSecuredCreditStorage.setProtectedClaimableAciYield(
+                positionKey, pid, LibSelfSecuredCreditStorage.claimableAciYieldOf(positionKey, pid)
+            );
+        } else {
+            LibSelfSecuredCreditStorage.setProtectedClaimableAciYield(positionKey, pid, 0);
         }
 
         lineState.aciMode = newMode;
@@ -197,7 +235,7 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
         Types.PoolData storage pool = LibPositionHelpers.pool(pid);
         bytes32 positionKey = LibPositionHelpers.positionKey(tokenId);
         LibPositionHelpers.ensurePoolMembership(positionKey, pid, true);
-        LibPositionHelpers.settlePosition(pid, positionKey);
+        _settleAndServiceSelfSecuredCredit(tokenId, positionKey, pid);
 
         Types.SscLine storage lineState = LibSelfSecuredCreditStorage.line(positionKey, pid);
         uint256 outstandingDebt = lineState.outstandingDebt;
@@ -356,5 +394,29 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
         }
 
         return trackedAfterMaintenance - paid;
+    }
+
+    function _settleAndServiceSelfSecuredCredit(uint256 tokenId, bytes32 positionKey, uint256 pid)
+        internal
+        returns (LibSelfSecuredCreditAccounting.AciDebtService memory service_)
+    {
+        LibPositionHelpers.settlePosition(pid, positionKey);
+        service_ = LibSelfSecuredCreditAccounting.serviceSelfPayAci(positionKey, tokenId, pid);
+
+        if (service_.aciAppliedToDebt != 0) {
+            emit SelfSecuredCreditServiced(
+                tokenId,
+                msg.sender,
+                pid,
+                service_.aciAppliedToDebt,
+                service_.debtAdjustment.outstandingDebtAfter,
+                service_.debtAdjustment.requiredLockedCapitalAfter,
+                service_.claimableAciYieldAfter
+            );
+
+            if (service_.debtAdjustment.outstandingDebtAfter == 0) {
+                emit SelfSecuredCreditClosed(tokenId, msg.sender, pid, service_.aciAppliedToDebt);
+            }
+        }
     }
 }

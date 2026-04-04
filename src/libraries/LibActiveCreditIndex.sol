@@ -254,6 +254,13 @@ library LibActiveCreditIndex {
     /// @notice View helper returning claimable SSC-routed ACI yield.
     function pendingSscClaimableYield(uint256 pid, bytes32 user) internal view returns (uint256 amount) {
         Types.PoolData storage p = LibAppStorage.s().pools[pid];
+        Types.SscLine memory lineState = LibSelfSecuredCreditStorage.lineView(user, pid);
+        if (lineState.aciMode == Types.SscAciMode.SelfPay) {
+            uint256 protectedClaimable = LibSelfSecuredCreditStorage.protectedClaimableAciYieldOf(user, pid);
+            uint256 storedClaimable = LibSelfSecuredCreditStorage.claimableAciYieldOf(user, pid);
+            return protectedClaimable > storedClaimable ? storedClaimable : protectedClaimable;
+        }
+
         amount = LibSelfSecuredCreditStorage.claimableAciYieldOf(user, pid);
         amount += _pendingSscDebtYield(p, pid, user);
     }

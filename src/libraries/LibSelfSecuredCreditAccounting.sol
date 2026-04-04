@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {EncumbranceUnderflow, InvalidLTVRatio} from "src/libraries/Errors.sol";
+import {EncumbranceUnderflow, InsufficientPoolLiquidity, InvalidLTVRatio} from "src/libraries/Errors.sol";
 import {LibActiveCreditIndex} from "src/libraries/LibActiveCreditIndex.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
@@ -21,6 +21,15 @@ library LibSelfSecuredCreditAccounting {
         uint256 requiredLockedCapitalAfter;
         uint256 lockedCapitalDelta;
         bool lineActiveAfter;
+    }
+
+    struct AciDebtService {
+        uint256 claimableAciYieldBefore;
+        uint256 claimableAciYieldAfter;
+        uint256 protectedClaimableAciYieldBefore;
+        uint256 protectedClaimableAciYieldAfter;
+        uint256 aciAppliedToDebt;
+        DebtAdjustment debtAdjustment;
     }
 
     function increaseDebt(bytes32 positionKey, uint256 positionId, uint256 poolId, uint256 amount)
@@ -82,6 +91,58 @@ library LibSelfSecuredCreditAccounting {
         result.outstandingDebtAfter = lineState.outstandingDebt;
         result.requiredLockedCapitalAfter = lineState.requiredLockedCapital;
         result.lineActiveAfter = lineState.active;
+    }
+
+    function serviceSelfPayAci(bytes32 positionKey, uint256 positionId, uint256 poolId)
+        internal
+        returns (AciDebtService memory result)
+    {
+        Types.PoolData storage pool = LibAppStorage.s().pools[poolId];
+        Types.SscLine storage lineState = LibSelfSecuredCreditStorage.line(positionKey, poolId);
+
+        result.claimableAciYieldBefore = LibSelfSecuredCreditStorage.claimableAciYieldOf(positionKey, poolId);
+        result.protectedClaimableAciYieldBefore =
+            LibSelfSecuredCreditStorage.protectedClaimableAciYieldOf(positionKey, poolId);
+
+        if (lineState.aciMode != Types.SscAciMode.SelfPay || lineState.outstandingDebt == 0) {
+            result.claimableAciYieldAfter = result.claimableAciYieldBefore;
+            result.protectedClaimableAciYieldAfter = result.protectedClaimableAciYieldBefore;
+            return result;
+        }
+
+        if (result.protectedClaimableAciYieldBefore > result.claimableAciYieldBefore) {
+            result.protectedClaimableAciYieldBefore = result.claimableAciYieldBefore;
+        }
+
+        uint256 serviceableAciYield =
+            result.claimableAciYieldBefore > result.protectedClaimableAciYieldBefore
+                ? result.claimableAciYieldBefore - result.protectedClaimableAciYieldBefore
+                : 0;
+        if (serviceableAciYield == 0) {
+            result.claimableAciYieldAfter = result.claimableAciYieldBefore;
+            result.protectedClaimableAciYieldAfter = result.protectedClaimableAciYieldBefore;
+            return result;
+        }
+
+        result.aciAppliedToDebt =
+            serviceableAciYield > lineState.outstandingDebt ? lineState.outstandingDebt : serviceableAciYield;
+        if (pool.yieldReserve < result.aciAppliedToDebt) {
+            revert InsufficientPoolLiquidity(result.aciAppliedToDebt, pool.yieldReserve);
+        }
+
+        LibSelfSecuredCreditStorage.decreaseClaimableAciYield(positionKey, poolId, result.aciAppliedToDebt);
+        LibSelfSecuredCreditStorage.increaseTotalAciAppliedToDebt(positionKey, poolId, result.aciAppliedToDebt);
+
+        pool.yieldReserve -= result.aciAppliedToDebt;
+        pool.trackedBalance += result.aciAppliedToDebt;
+
+        result.debtAdjustment = decreaseDebt(positionKey, positionId, poolId, result.aciAppliedToDebt);
+        result.claimableAciYieldAfter = result.claimableAciYieldBefore - result.aciAppliedToDebt;
+        result.protectedClaimableAciYieldAfter = result.claimableAciYieldAfter;
+
+        LibSelfSecuredCreditStorage.setProtectedClaimableAciYield(
+            positionKey, poolId, result.protectedClaimableAciYieldAfter
+        );
     }
 
     function requiredLockedCapitalForDebt(uint256 debt, uint16 ltvBps) internal pure returns (uint256 requiredLock) {

@@ -61,6 +61,14 @@ contract SelfSecuredCreditStorageHarness {
         LibSelfSecuredCreditStorage.decreaseClaimableAciYield(positionKey, poolId, amount);
     }
 
+    function setProtectedClaimableAciYield(bytes32 positionKey, uint256 poolId, uint256 amount) external {
+        LibSelfSecuredCreditStorage.setProtectedClaimableAciYield(positionKey, poolId, amount);
+    }
+
+    function protectedClaimableAciYield(bytes32 positionKey, uint256 poolId) external view returns (uint256) {
+        return LibSelfSecuredCreditStorage.protectedClaimableAciYieldOf(positionKey, poolId);
+    }
+
     function setTotalAciAppliedToDebt(bytes32 positionKey, uint256 poolId, uint256 amount) external {
         LibSelfSecuredCreditStorage.s().totalAciAppliedToDebt[positionKey][poolId] = amount;
     }
@@ -131,6 +139,7 @@ contract LibSelfSecuredCreditStorageTest is Test {
 
         harness.setSscLine(positionKey, poolId, 95 ether, 100 ether, Types.SscAciMode.SelfPay, true);
         harness.setClaimableAciYield(positionKey, poolId, 4 ether);
+        harness.setProtectedClaimableAciYield(positionKey, poolId, 1 ether);
         harness.setTotalAciAppliedToDebt(positionKey, poolId, 2 ether);
 
         Types.SscLine memory lineState = harness.getSscLine(positionKey, poolId);
@@ -139,6 +148,7 @@ contract LibSelfSecuredCreditStorageTest is Test {
         assertEq(uint8(lineState.aciMode), uint8(Types.SscAciMode.SelfPay), "aci mode");
         assertTrue(lineState.active, "active");
         assertEq(harness.claimableAciYield(positionKey, poolId), 4 ether, "claimable aci");
+        assertEq(harness.protectedClaimableAciYield(positionKey, poolId), 1 ether, "protected claimable aci");
         assertEq(harness.totalAciAppliedToDebt(positionKey, poolId), 2 ether, "aci applied");
 
         harness.addClaimableAciYield(positionKey, poolId, 1 ether);
@@ -156,6 +166,7 @@ contract LibSelfSecuredCreditStorageTest is Test {
 
         harness.setSscLine(positionKey, poolId, 42 ether, 45 ether, Types.SscAciMode.Yield, true);
         harness.setClaimableAciYield(positionKey, poolId, 3 ether);
+        harness.setProtectedClaimableAciYield(positionKey, poolId, 0.75 ether);
         harness.setTotalAciAppliedToDebt(positionKey, poolId, 1 ether);
 
         assertEq(harness.rewardAccrued(9, rewardPositionKey), 0, "ssc write mutated rewards");
@@ -172,6 +183,7 @@ contract LibSelfSecuredCreditStorageTest is Test {
         assertEq(uint8(lineState.aciMode), uint8(Types.SscAciMode.Yield), "ssc mode mutated");
         assertTrue(lineState.active, "ssc active mutated");
         assertEq(harness.claimableAciYield(positionKey, poolId), 3 ether, "ssc claimable aci mutated");
+        assertEq(harness.protectedClaimableAciYield(positionKey, poolId), 0.75 ether, "ssc protected aci mutated");
         assertEq(harness.totalAciAppliedToDebt(positionKey, poolId), 1 ether, "ssc aci applied mutated");
         assertEq(harness.rewardAccrued(9, rewardPositionKey), 77, "rewards write missing");
         assertEq(harness.positionAgentId(55), 88, "position agent write missing");
