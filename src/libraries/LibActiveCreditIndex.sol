@@ -265,6 +265,36 @@ library LibActiveCreditIndex {
         amount += _pendingSscDebtYield(p, pid, user);
     }
 
+    /// @notice View helper returning pending SSC debt-side ACI before self-pay routing is applied.
+    function pendingSscDebtYield(uint256 pid, bytes32 user) internal view returns (uint256 amount) {
+        Types.PoolData storage p = LibAppStorage.s().pools[pid];
+        amount = _pendingSscDebtYield(p, pid, user);
+    }
+
+    /// @notice View helper returning stored claimable SSC ACI after hypothetical settlement.
+    function previewStoredSscClaimableYield(uint256 pid, bytes32 user) internal view returns (uint256 amount) {
+        amount = LibSelfSecuredCreditStorage.claimableAciYieldOf(user, pid);
+        amount += pendingSscDebtYield(pid, user);
+    }
+
+    /// @notice View helper returning the amount of SSC ACI that would self-pay debt on the next service.
+    function previewSelfPayAciApplied(uint256 pid, bytes32 user) internal view returns (uint256 amount) {
+        Types.SscLine memory lineState = LibSelfSecuredCreditStorage.lineView(user, pid);
+        if (lineState.aciMode != Types.SscAciMode.SelfPay || lineState.outstandingDebt == 0) {
+            return 0;
+        }
+
+        uint256 claimableBefore = previewStoredSscClaimableYield(pid, user);
+        uint256 protectedClaimable = LibSelfSecuredCreditStorage.protectedClaimableAciYieldOf(user, pid);
+        if (protectedClaimable > claimableBefore) {
+            protectedClaimable = claimableBefore;
+        }
+
+        uint256 serviceableAciYield =
+            claimableBefore > protectedClaimable ? claimableBefore - protectedClaimable : 0;
+        return serviceableAciYield > lineState.outstandingDebt ? lineState.outstandingDebt : serviceableAciYield;
+    }
+
     /// @notice View helper returning only active credit pending yield (excludes already accrued ledger).
     function pendingActiveCredit(uint256 pid, bytes32 user) internal view returns (uint256) {
         LibAppStorage.AppStorage storage store = LibAppStorage.s();

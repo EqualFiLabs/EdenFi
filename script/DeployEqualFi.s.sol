@@ -16,6 +16,7 @@ import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockCon
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {SelfSecuredCreditFacet} from "src/equallend/SelfSecuredCreditFacet.sol";
+import {SelfSecuredCreditViewFacet} from "src/equallend/SelfSecuredCreditViewFacet.sol";
 import {FlashLoanFacet} from "src/equallend/FlashLoanFacet.sol";
 import {EqualLendDirectFixedOfferFacet} from "src/equallend/EqualLendDirectFixedOfferFacet.sol";
 import {EqualLendDirectFixedAgreementFacet} from "src/equallend/EqualLendDirectFixedAgreementFacet.sol";
@@ -54,7 +55,7 @@ contract DeployEqualFi is Script {
     string internal constant DEFAULT_OPTION_TOKEN_BASE_URI = "ipfs://equalfi/options";
     uint256 internal constant DIAMOND_CORE_FACET_COUNT = 3;
     uint256 internal constant DIRECT_LAUNCH_FACET_COUNT = 9;
-    uint256 internal constant SUBSTRATE_LAUNCH_FACET_COUNT = 20 + DIRECT_LAUNCH_FACET_COUNT;
+    uint256 internal constant SUBSTRATE_LAUNCH_FACET_COUNT = 21 + DIRECT_LAUNCH_FACET_COUNT;
     uint256 internal constant EDEN_REWARDS_FACET_COUNT = 1;
     uint256 internal constant LAUNCH_FACET_COUNT = SUBSTRATE_LAUNCH_FACET_COUNT + EDEN_REWARDS_FACET_COUNT;
     uint256 internal constant TOTAL_FACET_COUNT = DIAMOND_CORE_FACET_COUNT + LAUNCH_FACET_COUNT;
@@ -222,6 +223,10 @@ contract DeployEqualFi is Script {
         {
             SelfSecuredCreditFacet facet = new SelfSecuredCreditFacet();
             cuts[i++] = _cut(address(facet), _selectorsSelfSecuredCredit());
+        }
+        {
+            SelfSecuredCreditViewFacet facet = new SelfSecuredCreditViewFacet();
+            cuts[i++] = _cut(address(facet), _selectorsSelfSecuredCreditView());
         }
         {
             EqualIndexAdminFacetV3 facet = new EqualIndexAdminFacetV3();
@@ -433,6 +438,20 @@ contract DeployEqualFi is Script {
         s[5] = SelfSecuredCreditFacet.setSelfSecuredCreditAciMode.selector;
         s[6] = SelfSecuredCreditFacet.serviceSelfSecuredCredit.selector;
         s[7] = SelfSecuredCreditFacet.selfSettleSelfSecuredCredit.selector;
+    }
+
+    function _selectorsSelfSecuredCreditView() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](10);
+        s[0] = SelfSecuredCreditViewFacet.getSscLine.selector;
+        s[1] = SelfSecuredCreditViewFacet.previewSscDraw.selector;
+        s[2] = SelfSecuredCreditViewFacet.previewSscRepay.selector;
+        s[3] = SelfSecuredCreditViewFacet.previewSscService.selector;
+        s[4] = SelfSecuredCreditViewFacet.previewSscTerminalSettlement.selector;
+        s[5] = SelfSecuredCreditViewFacet.claimableSscFeeYield.selector;
+        s[6] = SelfSecuredCreditViewFacet.claimableSscAciYield.selector;
+        s[7] = SelfSecuredCreditViewFacet.sscAciMode.selector;
+        s[8] = SelfSecuredCreditViewFacet.pendingSscSelfPayEffect.selector;
+        s[9] = SelfSecuredCreditViewFacet.maxAdditionalSscDraw.selector;
     }
 
     function _selectorsEqualIndexAdmin() internal pure returns (bytes4[] memory s) {

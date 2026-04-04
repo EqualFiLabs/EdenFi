@@ -152,8 +152,10 @@ library Types {
         uint256 outstandingDebt;
         uint256 requiredLockedCapital;
         uint256 freeEquity;
+        uint256 maxAdditionalDraw;
         uint256 claimableFeeYield;
         uint256 claimableAciYield;
+        uint256 pendingSelfPayAciToDebt;
         uint256 totalAciAppliedToDebt;
         SscAciMode aciMode;
         bool active;
@@ -173,6 +175,7 @@ library Types {
 
     struct SscDrawPreview {
         uint256 requestedAmount;
+        uint256 appliedDrawAmount;
         uint256 settledPrincipal;
         uint256 outstandingDebtBefore;
         uint256 outstandingDebtAfter;
@@ -183,6 +186,7 @@ library Types {
         uint256 availableTrackedLiquidity;
         uint256 freeEquityAfter;
         SscAciMode aciMode;
+        bool requestExceedsMaxDraw;
         bool lineActiveAfter;
     }
 
@@ -222,6 +226,7 @@ library Types {
         uint256 principalAfter;
         uint256 outstandingDebtAfter;
         uint256 requiredLockedCapitalAfter;
+        bool settlementRequired;
         bool lineClosed;
     }
 
