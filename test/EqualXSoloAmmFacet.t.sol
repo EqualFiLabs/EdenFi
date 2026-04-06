@@ -1033,6 +1033,69 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 0);
     }
 
+    function test_Preservation_SoloLiveYieldCanBeClaimedBeforeFinalize() public {
+        uint256 marketId = _createSoloMarket(uint64(block.timestamp), uint64(block.timestamp + 5 days), DEFAULT_REBALANCE_TIMELOCK);
+
+        vm.warp(block.timestamp + 1 days);
+        tokenA.mint(bob, 100e18);
+        vm.prank(bob);
+        tokenA.approve(address(harness), type(uint256).max);
+
+        EqualXSoloAmmFacet.SoloAmmSwapPreview memory preview =
+            harness.previewEqualXSoloAmmSwapExactIn(marketId, address(tokenA), 10e18);
+
+        vm.prank(bob);
+        harness.swapEqualXSoloAmmExactIn(marketId, address(tokenA), 10e18, 10e18, preview.amountOut, bob);
+
+        uint256 claimable = harness.previewPositionYield(alicePositionId, 1);
+        assertGt(claimable, 0, "claimable yield should exist while market is live");
+
+        uint256 reserveBeforeClaim = harness.yieldReserveOf(1);
+        vm.prank(alice);
+        uint256 claimed = harness.claimPositionYield(alicePositionId, 1, alice, 0);
+
+        LibEqualXSoloAmmStorage.SoloAmmMarket memory market = harness.getEqualXSoloAmmMarket(marketId);
+        assertEq(claimed, claimable, "live claim should pay previewed amount");
+        assertEq(harness.yieldReserveOf(1), reserveBeforeClaim - claimed, "yield reserve should decrease by claim");
+        assertTrue(market.active, "market should stay active after live yield claim");
+        assertFalse(market.finalized, "live yield claim should not finalize market");
+    }
+
+    function test_Preservation_SoloFinalizeWithZeroFeesReconcilesCloseState() public {
+        uint256 marketId = _createSoloMarket(uint64(block.timestamp), uint64(block.timestamp + 1 days), DEFAULT_REBALANCE_TIMELOCK);
+
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(bob);
+        harness.finalizeEqualXSoloAmmMarket(marketId);
+
+        LibEqualXSoloAmmStorage.SoloAmmMarket memory market = harness.getEqualXSoloAmmMarket(marketId);
+        assertFalse(market.active, "market should be inactive after finalize");
+        assertTrue(market.finalized, "market should be finalized");
+        assertEq(harness.principalOf(1, alicePositionKey), 500e18, "pool A principal unchanged");
+        assertEq(harness.principalOf(2, alicePositionKey), 500e18, "pool B principal unchanged");
+        assertEq(harness.trackedBalanceOf(1), 500e18, "pool A tracked balance unchanged");
+        assertEq(harness.trackedBalanceOf(2), 500e18, "pool B tracked balance unchanged");
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 0, "pool A encumbrance cleared");
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 0, "pool B encumbrance cleared");
+        assertEq(harness.activeCreditPrincipalTotalOf(1), 0, "pool A ACI cleared");
+        assertEq(harness.activeCreditPrincipalTotalOf(2), 0, "pool B ACI cleared");
+    }
+
+    function test_Preservation_SoloCancelBeforeStartTimeSucceeds() public {
+        uint256 marketId = _createSoloMarket(
+            uint64(block.timestamp + 1 days), uint64(block.timestamp + 3 days), DEFAULT_REBALANCE_TIMELOCK
+        );
+
+        vm.prank(alice);
+        harness.cancelEqualXSoloAmmMarket(marketId);
+
+        LibEqualXSoloAmmStorage.SoloAmmMarket memory market = harness.getEqualXSoloAmmMarket(marketId);
+        assertFalse(market.active, "cancelled market should be inactive");
+        assertTrue(market.finalized, "cancelled market should be finalized");
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 0, "pool A encumbrance cleared on cancel");
+        assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 0, "pool B encumbrance cleared on cancel");
+    }
+
     function test_BugCondition_SoloCancel_ShouldRevertAtOrAfterStartTime() public {
         uint256 marketId = _createSoloMarket(
             uint64(block.timestamp + 1 days), uint64(block.timestamp + 3 days), DEFAULT_REBALANCE_TIMELOCK

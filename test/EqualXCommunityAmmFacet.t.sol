@@ -251,6 +251,26 @@ contract EqualXCommunityAmmFacetTest is Test {
         assertEq(market.tokenBDecimals, 6);
     }
 
+    function test_Preservation_CommunityInitialJoinUsesSqrtBootstrap() public {
+        vm.prank(alice);
+        uint256 marketId = harness.createEqualXCommunityAmmMarket(
+            alicePositionId,
+            1,
+            2,
+            144e18,
+            81e18,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 3 days),
+            300,
+            LibEqualXTypes.FeeAsset.TokenIn,
+            LibEqualXTypes.InvariantMode.Volatile
+        );
+
+        LibEqualXCommunityAmmStorage.CommunityAmmMarket memory market = harness.getEqualXCommunityAmmMarket(marketId);
+        uint256 expectedShare = Math.sqrt(Math.mulDiv(144e18, 81e18, 1));
+        assertEq(market.totalShares, expectedShare, "bootstrap share formula should use sqrt(amountA * amountB)");
+    }
+
     function test_JoinAndClaim_UseIndexedFees() public {
         uint256 marketId = _createJoinedCommunityMarket();
 
