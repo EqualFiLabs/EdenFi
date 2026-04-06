@@ -234,8 +234,8 @@ contract EqualXSoloAmmFacetTest is Test {
         assertTrue(market.active);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 100e18);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 100e18);
-        assertEq(harness.activeCreditPrincipalTotalOf(1), 100e18);
-        assertEq(harness.activeCreditPrincipalTotalOf(2), 100e18);
+        assertEq(harness.activeCreditPrincipalTotalOf(1), market.reserveA);
+        assertEq(harness.activeCreditPrincipalTotalOf(2), market.reserveB);
         assertEq(harness.minRebalanceTimelock(), 1 minutes);
     }
 
@@ -481,8 +481,8 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(market.lastRebalanceExecutionAt, executeAfter);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 110e18);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 90e18);
-        assertEq(harness.activeCreditPrincipalTotalOf(1), 110e18);
-        assertEq(harness.activeCreditPrincipalTotalOf(2), 90e18);
+        assertEq(harness.activeCreditPrincipalTotalOf(1), market.reserveA);
+        assertEq(harness.activeCreditPrincipalTotalOf(2), market.reserveB);
         assertFalse(pending.exists);
     }
 
@@ -522,8 +522,8 @@ contract EqualXSoloAmmFacetTest is Test {
         LibEqualXSoloAmmStorage.SoloAmmMarket memory drifted = harness.getEqualXSoloAmmMarket(marketId);
         assertGt(drifted.reserveA, 100e18);
         assertLt(drifted.reserveB, 100e18);
-        assertEq(harness.activeCreditPrincipalTotalOf(1), 100e18);
-        assertEq(harness.activeCreditPrincipalTotalOf(2), 100e18);
+        assertEq(harness.activeCreditPrincipalTotalOf(1), drifted.reserveA);
+        assertEq(harness.activeCreditPrincipalTotalOf(2), drifted.reserveB);
 
         vm.warp(executeAfter);
         vm.prank(makeAddr("executor"));
@@ -750,8 +750,8 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(harness.trackedBalanceOf(2), 500e18);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), market.reserveA);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), market.reserveB);
-        assertEq(harness.activeCreditPrincipalTotalOf(1), 100e18);
-        assertEq(harness.activeCreditPrincipalTotalOf(2), 100e18);
+        assertEq(harness.activeCreditPrincipalTotalOf(1), market.reserveA);
+        assertEq(harness.activeCreditPrincipalTotalOf(2), market.reserveB);
     }
 
     function test_BugCondition_SoloSwap_TrackedBalanceShouldIncreaseLiveWithProtocolFees() public {
@@ -1157,8 +1157,8 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(harness.totalDepositsOf(2), 500e18);
         assertEq(harness.trackedBalanceOf(1), 500e18 + preview.activeCreditFee + preview.feeIndexFee);
         assertEq(harness.trackedBalanceOf(2), 500e18);
-        assertEq(harness.activeCreditPrincipalTotalOf(1), 110e18);
-        assertEq(harness.activeCreditPrincipalTotalOf(2), 90e18);
+        assertEq(harness.activeCreditPrincipalTotalOf(1), market.reserveA);
+        assertEq(harness.activeCreditPrincipalTotalOf(2), market.reserveB);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), market.reserveA);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), market.reserveB);
     }
@@ -1231,8 +1231,8 @@ contract EqualXSoloAmmFacetTest is Test {
         LibEqualXSoloAmmStorage.SoloAmmMarket memory preFinalize = harness.getEqualXSoloAmmMarket(marketId);
         assertEq(preFinalize.baselineReserveA, 110e18);
         assertEq(preFinalize.baselineReserveB, 90e18);
-        assertEq(harness.activeCreditPrincipalTotalOf(1), 110e18);
-        assertEq(harness.activeCreditPrincipalTotalOf(2), 90e18);
+        assertEq(harness.activeCreditPrincipalTotalOf(1), preFinalize.reserveA);
+        assertEq(harness.activeCreditPrincipalTotalOf(2), preFinalize.reserveB);
 
         vm.warp(preFinalize.endTime);
         vm.prank(bob);

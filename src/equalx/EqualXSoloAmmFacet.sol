@@ -275,12 +275,8 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         uint256 previousReserveA = market.reserveA;
         uint256 previousReserveB = market.reserveB;
 
-        _applyExecutedRebalanceDelta(
-            poolA, market.poolIdA, makerPositionKey, previousReserveA, market.baselineReserveA, pending.targetReserveA
-        );
-        _applyExecutedRebalanceDelta(
-            poolB, market.poolIdB, makerPositionKey, previousReserveB, market.baselineReserveB, pending.targetReserveB
-        );
+        _applyExecutedRebalanceDelta(poolA, market.poolIdA, makerPositionKey, previousReserveA, pending.targetReserveA);
+        _applyExecutedRebalanceDelta(poolB, market.poolIdB, makerPositionKey, previousReserveB, pending.targetReserveB);
 
         market.reserveA = pending.targetReserveA;
         market.reserveB = pending.targetReserveB;
@@ -366,9 +362,6 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
             SoloAmmSwapRequest({tokenIn: tokenIn, amountIn: amountIn, maxIn: maxIn, minOut: minOut});
         (ctx, outcome) = _fundAndQuoteSwap(market, request, ctx);
 
-        _commitSwapReserves(market, ctx);
-        _accrueMakerFee(market, ctx.feeToken, outcome.split.makerFee);
-
         if (outcome.split.protocolFee > 0) {
             uint256 extraBacking = _feeSideReserve(market, ctx.feePoolId);
             TransientSwapCache.cacheFeePool(ctx.feePoolId);
@@ -389,6 +382,9 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
                 }
             }
         }
+
+        _commitSwapReserves(market, ctx);
+        _accrueMakerFee(market, ctx.feeToken, outcome.split.makerFee);
 
         _payoutSwapRecipient(ctx.inIsA ? market.tokenB : market.tokenA, recipient, outcome.amountOut, minOut);
         amountOut = outcome.amountOut;
@@ -429,8 +425,8 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         LibActiveCreditIndex.settle(market.poolIdB, makerPositionKey);
         _unlockReserveBacking(makerPositionKey, market.poolIdA, market.reserveA);
         _unlockReserveBacking(makerPositionKey, market.poolIdB, market.reserveB);
-        LibActiveCreditIndex.applyEncumbranceDecrease(poolA, market.poolIdA, makerPositionKey, market.baselineReserveA);
-        LibActiveCreditIndex.applyEncumbranceDecrease(poolB, market.poolIdB, makerPositionKey, market.baselineReserveB);
+        LibActiveCreditIndex.applyEncumbranceDecrease(poolA, market.poolIdA, makerPositionKey, market.reserveA);
+        LibActiveCreditIndex.applyEncumbranceDecrease(poolB, market.poolIdB, makerPositionKey, market.reserveB);
 
         uint256 reserveAForPrincipal = market.reserveA;
         uint256 reserveBForPrincipal = market.reserveB;
@@ -740,9 +736,12 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         if (previousReserve == newReserve) {
             return;
         }
+        Types.PoolData storage pool = LibPositionHelpers.pool(poolId);
         LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(makerPositionKey, poolId);
         if (newReserve > previousReserve) {
-            enc.encumberedCapital += newReserve - previousReserve;
+            uint256 delta = newReserve - previousReserve;
+            enc.encumberedCapital += delta;
+            LibActiveCreditIndex.applyEncumbranceIncrease(pool, poolId, makerPositionKey, delta);
         } else {
             uint256 delta = previousReserve - newReserve;
             uint256 currentEncumberedCapital = enc.encumberedCapital;
@@ -750,6 +749,7 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
                 revert InsufficientPrincipal(delta, currentEncumberedCapital);
             }
             enc.encumberedCapital = currentEncumberedCapital - delta;
+            LibActiveCreditIndex.applyEncumbranceDecrease(pool, poolId, makerPositionKey, delta);
         }
     }
 
@@ -758,12 +758,11 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         uint256 poolId,
         bytes32 makerPositionKey,
         uint256 previousReserve,
-        uint256 previousBaseline,
         uint256 targetReserve
     ) internal {
         LibPositionHelpers.settlePosition(poolId, makerPositionKey);
         _applyRebalanceReserveEncumbranceDelta(pool, poolId, makerPositionKey, previousReserve, targetReserve);
-        _applyRebalanceBaselineActiveCreditDelta(pool, poolId, makerPositionKey, previousBaseline, targetReserve);
+        _applyRebalanceActiveCreditDelta(pool, poolId, makerPositionKey, previousReserve, targetReserve);
     }
 
     function _applyRebalanceReserveEncumbranceDelta(
@@ -796,23 +795,23 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         enc.encumberedCapital = currentEncumberedCapital - deltaDecrease;
     }
 
-    function _applyRebalanceBaselineActiveCreditDelta(
+    function _applyRebalanceActiveCreditDelta(
         Types.PoolData storage pool,
         uint256 poolId,
         bytes32 makerPositionKey,
-        uint256 previousBaseline,
+        uint256 previousReserve,
         uint256 targetReserve
     ) internal {
-        if (previousBaseline == targetReserve) {
+        if (previousReserve == targetReserve) {
             return;
         }
 
-        if (targetReserve > previousBaseline) {
-            LibActiveCreditIndex.applyEncumbranceIncrease(pool, poolId, makerPositionKey, targetReserve - previousBaseline);
+        if (targetReserve > previousReserve) {
+            LibActiveCreditIndex.applyEncumbranceIncrease(pool, poolId, makerPositionKey, targetReserve - previousReserve);
             return;
         }
 
-        LibActiveCreditIndex.applyEncumbranceDecrease(pool, poolId, makerPositionKey, previousBaseline - targetReserve);
+        LibActiveCreditIndex.applyEncumbranceDecrease(pool, poolId, makerPositionKey, previousReserve - targetReserve);
     }
 
     function _applyPrincipalDelta(
