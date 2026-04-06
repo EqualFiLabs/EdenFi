@@ -754,6 +754,111 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(harness.activeCreditPrincipalTotalOf(2), 100e18);
     }
 
+    function test_BugCondition_SoloSwap_TrackedBalanceShouldIncreaseLiveWithProtocolFees() public {
+        uint256 marketId = _createSoloMarket(uint64(block.timestamp), uint64(block.timestamp + 5 days), DEFAULT_REBALANCE_TIMELOCK);
+
+        vm.warp(block.timestamp + 1 days);
+        tokenA.mint(bob, 100e18);
+        vm.prank(bob);
+        tokenA.approve(address(harness), type(uint256).max);
+
+        EqualXSoloAmmFacet.SoloAmmSwapPreview memory preview =
+            harness.previewEqualXSoloAmmSwapExactIn(marketId, address(tokenA), 10e18);
+        uint256 trackedBefore = harness.trackedBalanceOf(preview.feePoolId);
+        uint256 expectedIncrease = preview.activeCreditFee + preview.feeIndexFee;
+        assertGt(expectedIncrease, 0, "expected non-zero protocol fees");
+
+        vm.prank(bob);
+        harness.swapEqualXSoloAmmExactIn(marketId, address(tokenA), 10e18, 10e18, preview.amountOut, bob);
+
+        assertEq(
+            harness.trackedBalanceOf(preview.feePoolId),
+            trackedBefore + expectedIncrease,
+            "trackedBalance should increase live by routed non-treasury protocol fees"
+        );
+    }
+
+    function test_BugCondition_SoloSwap_AciShouldTrackEncumbranceDelta() public {
+        uint256 marketId = _createSoloMarket(uint64(block.timestamp), uint64(block.timestamp + 5 days), DEFAULT_REBALANCE_TIMELOCK);
+
+        vm.warp(block.timestamp + 1 days);
+        tokenA.mint(bob, 100e18);
+        vm.prank(bob);
+        tokenA.approve(address(harness), type(uint256).max);
+
+        uint256 encBeforeA = harness.encumberedCapitalOf(alicePositionKey, 1);
+        uint256 encBeforeB = harness.encumberedCapitalOf(alicePositionKey, 2);
+        uint256 aciBeforeA = harness.activeCreditPrincipalTotalOf(1);
+        uint256 aciBeforeB = harness.activeCreditPrincipalTotalOf(2);
+
+        EqualXSoloAmmFacet.SoloAmmSwapPreview memory preview =
+            harness.previewEqualXSoloAmmSwapExactIn(marketId, address(tokenA), 10e18);
+
+        vm.prank(bob);
+        harness.swapEqualXSoloAmmExactIn(marketId, address(tokenA), 10e18, 10e18, preview.amountOut, bob);
+
+        int256 encDeltaA = _signedDelta(harness.encumberedCapitalOf(alicePositionKey, 1), encBeforeA);
+        int256 encDeltaB = _signedDelta(harness.encumberedCapitalOf(alicePositionKey, 2), encBeforeB);
+        int256 aciDeltaA = _signedDelta(harness.activeCreditPrincipalTotalOf(1), aciBeforeA);
+        int256 aciDeltaB = _signedDelta(harness.activeCreditPrincipalTotalOf(2), aciBeforeB);
+
+        assertEq(aciDeltaA, encDeltaA, "pool A ACI delta should match encumbrance delta");
+        assertEq(aciDeltaB, encDeltaB, "pool B ACI delta should match encumbrance delta");
+    }
+
+    function test_BugCondition_SoloClose_ShouldClampPrincipalReserveWhenFeesExceedReserve() public {
+        vm.prank(alice);
+        uint256 marketId = harness.createEqualXSoloAmmMarket(
+            alicePositionId,
+            1,
+            2,
+            100e18,
+            100e18,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 5 days),
+            DEFAULT_REBALANCE_TIMELOCK,
+            9_900,
+            LibEqualXTypes.FeeAsset.TokenOut,
+            LibEqualXTypes.InvariantMode.Volatile
+        );
+
+        vm.warp(block.timestamp + 1 days);
+        tokenA.mint(bob, 5_000e18);
+        vm.prank(bob);
+        tokenA.approve(address(harness), type(uint256).max);
+
+        for (uint256 i; i < 50; ++i) {
+            LibEqualXSoloAmmStorage.SoloAmmMarket memory marketBefore = harness.getEqualXSoloAmmMarket(marketId);
+            uint256 protocolB = marketBefore.feeIndexFeeBAccrued + marketBefore.activeCreditFeeBAccrued;
+            if (protocolB > marketBefore.reserveB) {
+                break;
+            }
+
+            EqualXSoloAmmFacet.SoloAmmSwapPreview memory preview =
+                harness.previewEqualXSoloAmmSwapExactIn(marketId, address(tokenA), 100e18);
+            if (preview.amountOut == 0) {
+                break;
+            }
+
+            vm.prank(bob);
+            harness.swapEqualXSoloAmmExactIn(marketId, address(tokenA), 100e18, 100e18, preview.amountOut, bob);
+        }
+
+        LibEqualXSoloAmmStorage.SoloAmmMarket memory preFinalize = harness.getEqualXSoloAmmMarket(marketId);
+        uint256 totalProtocolB = preFinalize.feeIndexFeeBAccrued + preFinalize.activeCreditFeeBAccrued;
+        assertGt(totalProtocolB, preFinalize.reserveB, "setup should produce fees greater than remaining reserve");
+
+        vm.warp(preFinalize.endTime);
+        vm.prank(bob);
+        harness.finalizeEqualXSoloAmmMarket(marketId);
+
+        assertEq(
+            harness.principalOf(2, alicePositionKey),
+            400e18,
+            "depleted fee side should clamp reserve-for-principal to zero on close"
+        );
+    }
+
     function test_ViewHelpers_MatchSoloPreviewAndDiscovery() public {
         uint256 marketId;
         vm.prank(alice);
@@ -926,6 +1031,17 @@ contract EqualXSoloAmmFacetTest is Test {
         assertFalse(cancelled.active);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 0);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 0);
+    }
+
+    function test_BugCondition_SoloCancel_ShouldRevertAtOrAfterStartTime() public {
+        uint256 marketId = _createSoloMarket(
+            uint64(block.timestamp + 1 days), uint64(block.timestamp + 3 days), DEFAULT_REBALANCE_TIMELOCK
+        );
+
+        vm.warp(block.timestamp + 1 days);
+        vm.expectRevert();
+        vm.prank(alice);
+        harness.cancelEqualXSoloAmmMarket(marketId);
     }
 
     function test_Finalize_ClearsPendingRebalanceState() public {
@@ -1207,6 +1323,13 @@ contract EqualXSoloAmmFacetTest is Test {
             LibEqualXTypes.FeeAsset.TokenIn,
             LibEqualXTypes.InvariantMode.Volatile
         );
+    }
+
+    function _signedDelta(uint256 afterValue, uint256 beforeValue) internal pure returns (int256) {
+        if (afterValue >= beforeValue) {
+            return int256(afterValue - beforeValue);
+        }
+        return -int256(beforeValue - afterValue);
     }
 
     function _poolConfig() internal pure returns (Types.PoolConfig memory cfg) {

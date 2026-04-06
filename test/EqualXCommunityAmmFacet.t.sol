@@ -457,6 +457,43 @@ contract EqualXCommunityAmmFacetTest is Test {
         assertEq(harness.yieldReserveOf(1), preview.activeCreditFee + preview.feeIndexFee);
     }
 
+    function test_BugCondition_CommunityJoin_ShouldMintProportionalSharesAfterReserveGrowth() public {
+        vm.prank(alice);
+        uint256 marketId = harness.createEqualXCommunityAmmMarket(
+            alicePositionId,
+            1,
+            2,
+            100e18,
+            100e18,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 5 days),
+            300,
+            LibEqualXTypes.FeeAsset.TokenIn,
+            LibEqualXTypes.InvariantMode.Volatile
+        );
+
+        vm.warp(block.timestamp + 1 days);
+        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory preview =
+            harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), 15e18);
+        vm.prank(bob);
+        harness.swapEqualXCommunityAmmExactIn(marketId, address(tokenA), 15e18, 15e18, preview.amountOut, bob);
+
+        LibEqualXCommunityAmmStorage.CommunityAmmMarket memory marketBeforeJoin =
+            harness.getEqualXCommunityAmmMarket(marketId);
+        uint256 amountA = 50e18;
+        uint256 amountB = Math.mulDiv(amountA, marketBeforeJoin.reserveB, marketBeforeJoin.reserveA);
+        uint256 expectedShareA = Math.mulDiv(amountA, marketBeforeJoin.totalShares, marketBeforeJoin.reserveA);
+        uint256 expectedShareB = Math.mulDiv(amountB, marketBeforeJoin.totalShares, marketBeforeJoin.reserveB);
+        uint256 expectedShare = expectedShareA < expectedShareB ? expectedShareA : expectedShareB;
+
+        vm.prank(charlie);
+        harness.joinEqualXCommunityAmmMarket(marketId, charliePositionId, amountA, amountB);
+
+        LibEqualXCommunityAmmStorage.CommunityMakerPosition memory maker =
+            harness.getCommunityMaker(marketId, charliePositionKey);
+        assertEq(maker.share, expectedShare, "post-growth join should mint proportional shares");
+    }
+
     function test_FinalizeIsPermissionlessAndCancelRequiresCreator() public {
         vm.prank(alice);
         uint256 marketId = harness.createEqualXCommunityAmmMarket(

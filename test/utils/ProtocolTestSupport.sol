@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
+import {LibActiveCreditIndex} from "src/libraries/LibActiveCreditIndex.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibFeeRouter} from "src/libraries/LibFeeRouter.sol";
 import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
@@ -115,6 +116,37 @@ contract ProtocolTestSupportFacet is EqualIndexBaseV3 {
 
     function sscLineOf(uint256 pid, bytes32 positionKey) external view returns (Types.SscLine memory line_) {
         line_ = LibSelfSecuredCreditStorage.lineView(positionKey, pid);
+    }
+
+    function debtActiveCreditStateOf(uint256 pid, bytes32 positionKey)
+        external
+        view
+        returns (uint256 principal, uint40 startTime, uint256 indexSnapshot)
+    {
+        Types.ActiveCreditState storage state = LibAppStorage.s().pools[pid].userActiveCreditStateDebt[positionKey];
+        return (state.principal, state.startTime, state.indexSnapshot);
+    }
+
+    function encumbranceActiveCreditStateOf(uint256 pid, bytes32 positionKey)
+        external
+        view
+        returns (uint256 principal, uint40 startTime, uint256 indexSnapshot)
+    {
+        Types.ActiveCreditState storage state =
+            LibAppStorage.s().pools[pid].userActiveCreditStateEncumbrance[positionKey];
+        return (state.principal, state.startTime, state.indexSnapshot);
+    }
+
+    function pendingActiveCreditYieldOf(uint256 pid, bytes32 positionKey) external view returns (uint256) {
+        return LibActiveCreditIndex.pendingActiveCredit(pid, positionKey);
+    }
+
+    function pendingSscDebtYieldOf(uint256 pid, bytes32 positionKey) external view returns (uint256) {
+        return LibActiveCreditIndex.pendingSscDebtYield(pid, positionKey);
+    }
+
+    function poolActiveCreditPrincipalTotalOf(uint256 pid) external view returns (uint256) {
+        return LibAppStorage.s().pools[pid].activeCreditPrincipalTotal;
     }
 
     function canClearMembership(uint256 pid, bytes32 positionKey)
