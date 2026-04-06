@@ -379,6 +379,15 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
             (outcome.toTreasury, outcome.toActive, outcome.toFeeIndex) =
                 LibFeeRouter.routeSamePool(ctx.feePoolId, outcome.split.protocolFee, SOLO_AMM_FEE_SOURCE, false, extraBacking);
             _accrueProtocolFees(market, ctx.feeToken, outcome.toTreasury, outcome.toActive, outcome.toFeeIndex);
+
+            uint256 backingIncrease = outcome.toActive + outcome.toFeeIndex;
+            if (backingIncrease > 0) {
+                Types.PoolData storage feePool = LibPositionHelpers.pool(ctx.feePoolId);
+                feePool.trackedBalance += backingIncrease;
+                if (LibCurrency.isNative(feePool.underlying)) {
+                    LibAppStorage.s().nativeTrackedTotal += backingIncrease;
+                }
+            }
         }
 
         _payoutSwapRecipient(ctx.inIsA ? market.tokenB : market.tokenA, recipient, outcome.amountOut, minOut);
@@ -425,21 +434,6 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
 
         uint256 reserveAForPrincipal = market.reserveA;
         uint256 reserveBForPrincipal = market.reserveB;
-
-        uint256 protocolYieldA = market.feeIndexFeeAAccrued + market.activeCreditFeeAAccrued;
-        if (protocolYieldA > 0) {
-            poolA.trackedBalance += protocolYieldA;
-            if (LibCurrency.isNative(poolA.underlying)) {
-                LibAppStorage.s().nativeTrackedTotal += protocolYieldA;
-            }
-        }
-        uint256 protocolYieldB = market.feeIndexFeeBAccrued + market.activeCreditFeeBAccrued;
-        if (protocolYieldB > 0) {
-            poolB.trackedBalance += protocolYieldB;
-            if (LibCurrency.isNative(poolB.underlying)) {
-                LibAppStorage.s().nativeTrackedTotal += protocolYieldB;
-            }
-        }
 
         if (market.feeIndexFeeAAccrued > 0 && reserveAForPrincipal >= market.feeIndexFeeAAccrued) {
             reserveAForPrincipal -= market.feeIndexFeeAAccrued;

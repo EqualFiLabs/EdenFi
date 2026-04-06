@@ -746,7 +746,7 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(harness.yieldReserveOf(1), preview.activeCreditFee + preview.feeIndexFee);
         assertEq(harness.principalOf(1, alicePositionKey), 500e18);
         assertEq(harness.principalOf(2, alicePositionKey), 500e18);
-        assertEq(harness.trackedBalanceOf(1), 500e18);
+        assertEq(harness.trackedBalanceOf(1), 500e18 + preview.activeCreditFee + preview.feeIndexFee);
         assertEq(harness.trackedBalanceOf(2), 500e18);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), market.reserveA);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), market.reserveB);
@@ -1155,7 +1155,7 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(harness.principalOf(2, alicePositionKey), 500e18);
         assertEq(harness.totalDepositsOf(1), 500e18);
         assertEq(harness.totalDepositsOf(2), 500e18);
-        assertEq(harness.trackedBalanceOf(1), 500e18);
+        assertEq(harness.trackedBalanceOf(1), 500e18 + preview.activeCreditFee + preview.feeIndexFee);
         assertEq(harness.trackedBalanceOf(2), 500e18);
         assertEq(harness.activeCreditPrincipalTotalOf(1), 110e18);
         assertEq(harness.activeCreditPrincipalTotalOf(2), 90e18);
