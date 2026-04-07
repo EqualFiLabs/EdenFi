@@ -458,9 +458,6 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
             s().vaultBalances[indexId][asset] -= principal;
 
             if (principal > 0) {
-                if (LibCurrency.isNative(asset)) {
-                    app.nativeTrackedTotal -= principal;
-                }
                 LibCurrency.transfer(asset, msg.sender, principal);
             }
             emit LibEqualIndexLending.LoanAssetDelta(loanId, asset, principal, 0, true);

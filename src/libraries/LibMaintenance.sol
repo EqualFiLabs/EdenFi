@@ -228,9 +228,6 @@ library LibMaintenance {
         if (p.trackedBalance >= paid) {
             p.trackedBalance -= paid; // Decrease tracked balance
         }
-        if (LibCurrency.isNative(p.underlying)) {
-            LibAppStorage.s().nativeTrackedTotal -= paid;
-        }
         LibCurrency.transferWithMin(p.underlying, receiver, paid, paid);
         return paid;
     }

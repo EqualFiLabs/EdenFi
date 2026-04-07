@@ -199,9 +199,6 @@ library LibFeeRouter {
                 revert InsufficientPrincipal(amount, tracked);
             }
             pool.trackedBalance = tracked - amount;
-            if (LibCurrency.isNative(pool.underlying)) {
-                LibAppStorage.s().nativeTrackedTotal -= amount;
-            }
         }
         // Treasury transfers should tolerate fee-on-transfer tokens; accounting already
         // debits the full routed amount from tracked balance.
@@ -221,9 +218,6 @@ library LibFeeRouter {
                 revert InsufficientPrincipal(amount, tracked);
             }
             pool.trackedBalance = tracked - amount;
-            if (LibCurrency.isNative(pool.underlying)) {
-                LibAppStorage.s().nativeTrackedTotal -= amount;
-            }
         }
         // Treasury transfers should tolerate fee-on-transfer tokens; accounting already
         // debits the full routed amount from tracked balance.

@@ -539,9 +539,6 @@ contract EqualXCommunityAmmFacet is ReentrancyGuardModifiers {
         }
 
         LibCurrency.transferWithMin(ctx.tokenOut, recipient, outputToRecipient, minOut);
-        if (LibCurrency.isNative(ctx.tokenOut) && outputToRecipient > 0) {
-            LibAppStorage.s().nativeTrackedTotal -= outputToRecipient;
-        }
 
         emit EqualXCommunityAmmSwap(marketId, msg.sender, tokenIn, ctx.actualIn, outputToRecipient, feeAmount, recipient);
     }

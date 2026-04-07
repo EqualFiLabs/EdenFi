@@ -270,9 +270,6 @@ contract EqualIndexActionsFacetV3 is EqualIndexBaseV3, ReentrancyGuardModifiers 
             _distributeIndexFee(indexId, leg.asset, leg.fee, feeIndexShareBps);
 
             if (leg.payout > 0) {
-                if (LibCurrency.isNative(leg.asset)) {
-                    LibAppStorage.s().nativeTrackedTotal -= leg.payout;
-                }
                 LibCurrency.transfer(leg.asset, to, leg.payout);
             }
 
@@ -391,7 +388,6 @@ contract EqualIndexActionsFacetV3 is EqualIndexBaseV3, ReentrancyGuardModifiers 
                 uint256 contractBal = LibCurrency.balanceOfSelf(pool.underlying);
                 if (contractBal < toTreasury) revert InsufficientPrincipal(toTreasury, contractBal);
                 pool.trackedBalance = tracked - toTreasury;
-                LibAppStorage.s().nativeTrackedTotal -= toTreasury;
                 LibCurrency.transfer(pool.underlying, treasury, toTreasury);
             }
         }

@@ -379,9 +379,6 @@ contract EqualLendDirectRollingLifecycleFacet is ReentrancyGuardModifiers {
         }
 
         collateralPool.trackedBalance -= amount;
-        if (LibCurrency.isNative(collateralPool.underlying)) {
-            LibAppStorage.s().nativeTrackedTotal -= amount;
-        }
         LibCurrency.transfer(collateralPool.underlying, treasury, amount);
     }
 

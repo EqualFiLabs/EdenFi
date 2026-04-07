@@ -889,9 +889,6 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
 
     function _payoutSwapRecipient(address tokenOut, address recipient, uint256 amountOut, uint256 minOut) internal {
         LibCurrency.transferWithMin(tokenOut, recipient, amountOut, minOut);
-        if (LibCurrency.isNative(tokenOut)) {
-            LibAppStorage.s().nativeTrackedTotal -= amountOut;
-        }
     }
 
     function _emitSoloAmmSwap(

@@ -255,9 +255,6 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
 
         uint256 surplus = received - repaid;
         if (surplus != 0) {
-            if (LibCurrency.isNative(pool.underlying)) {
-                LibAppStorage.s().nativeTrackedTotal -= surplus;
-            }
             LibCurrency.transfer(pool.underlying, msg.sender, surplus);
         }
 

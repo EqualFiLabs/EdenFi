@@ -307,9 +307,6 @@ contract OptionsFacet is ReentrancyGuardModifiers {
         received = LibCurrency.pullAtLeast(asset, payer, paymentAmount, maxPayment);
         if (received > paymentAmount) {
             uint256 excess = received - paymentAmount;
-            if (LibCurrency.isNative(asset)) {
-                LibAppStorage.s().nativeTrackedTotal -= excess;
-            }
             LibCurrency.transfer(asset, payer, excess);
             received = paymentAmount;
         }

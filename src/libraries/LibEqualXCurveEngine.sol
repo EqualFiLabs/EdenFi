@@ -269,13 +269,7 @@ library LibEqualXCurveEngine {
         _finalizeFill(request.curveId, market, preview.remainingAfter);
 
         if (excess > 0) {
-            if (LibCurrency.isNative(preview.quoteToken)) {
-                LibAppStorage.s().nativeTrackedTotal -= excess;
-            }
             LibCurrency.transfer(preview.quoteToken, msg.sender, excess);
-        }
-        if (LibCurrency.isNative(preview.baseToken)) {
-            LibAppStorage.s().nativeTrackedTotal -= preview.amountOut;
         }
         LibCurrency.transferWithMin(preview.baseToken, request.recipient, preview.amountOut, request.minOut);
 
