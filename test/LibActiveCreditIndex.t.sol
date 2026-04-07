@@ -66,6 +66,104 @@ contract LibActiveCreditIndexTest is Test {
         assertEq(harness.userAccruedYield(POOL_ID, USER), expectedYield, "pending yield should settle on decrease");
     }
 
+    function test_NormalBucketPlacement_RemovesFromPendingBucketForInWindowOffsets() external {
+        harness.initPool(POOL_ID, 0);
+        harness.setEncumbranceState(POOL_ID, USER, PRINCIPAL, uint40(block.timestamp), 0);
+        harness.trackEncumbranceState(POOL_ID, USER);
+
+        uint8 lastBucket = _lastBucketIndex();
+        assertEq(harness.pendingBucket(POOL_ID, lastBucket), PRINCIPAL, "principal scheduled into in-window bucket");
+
+        harness.decreaseTrackedEncumbrancePrincipal(POOL_ID, USER, 40 ether);
+
+        assertEq(harness.pendingBucket(POOL_ID, lastBucket), 60 ether, "pending bucket decremented by removed amount");
+        (,, uint256 maturedTotal,,) = harness.poolState(POOL_ID);
+        assertEq(maturedTotal, 0, "matured total unchanged before maturity");
+    }
+
+    function test_MatureStateRemoval_DecrementsMaturedTotal() external {
+        harness.initPool(POOL_ID, 0);
+        harness.setEncumbranceState(POOL_ID, USER, PRINCIPAL, uint40(block.timestamp - 25 hours), 0);
+        harness.trackEncumbranceState(POOL_ID, USER);
+
+        (,, uint256 maturedBefore,,) = harness.poolState(POOL_ID);
+        assertEq(maturedBefore, PRINCIPAL, "matured principal tracked");
+
+        harness.decreaseTrackedEncumbrancePrincipal(POOL_ID, USER, 40 ether);
+
+        (uint256 principalAfter,,) = harness.encumbranceState(POOL_ID, USER);
+        (,, uint256 maturedAfter,,) = harness.poolState(POOL_ID);
+        assertEq(principalAfter, 60 ether, "principal reduced");
+        assertEq(maturedAfter, 60 ether, "matured total reduced in lockstep");
+    }
+
+    function test_RollMatured_MovesPendingPrincipalIntoMaturedTotal() external {
+        harness.initPool(POOL_ID, 0);
+        harness.setEncumbranceState(POOL_ID, USER, PRINCIPAL, uint40(block.timestamp), 0);
+        harness.trackEncumbranceState(POOL_ID, USER);
+
+        vm.warp(block.timestamp + 25 hours);
+        harness.roll(POOL_ID);
+
+        uint8 lastBucket = _lastBucketIndex();
+        (,, uint256 maturedTotal,,) = harness.poolState(POOL_ID);
+        assertEq(harness.pendingBucket(POOL_ID, lastBucket), 0, "pending bucket drained on roll");
+        assertEq(maturedTotal, PRINCIPAL, "matured total accumulates pending principal");
+    }
+
+    function test_EncumbranceIncrease_ZeroAmountReturnsEarlyWithoutStateChange() external {
+        harness.initPool(POOL_ID, 0);
+        harness.applyEncumbranceIncrease(POOL_ID, USER, 75 ether);
+
+        (, uint256 principalTotalBefore, uint256 maturedBefore,,) = harness.poolState(POOL_ID);
+        (uint256 principalBefore, uint40 startTimeBefore, uint256 snapshotBefore) = harness.encumbranceState(POOL_ID, USER);
+        uint256 accruedBefore = harness.userAccruedYield(POOL_ID, USER);
+
+        harness.applyEncumbranceIncrease(POOL_ID, USER, 0);
+
+        (uint256 indexAfter, uint256 principalTotalAfter, uint256 maturedAfter,,) = harness.poolState(POOL_ID);
+        (uint256 principalAfter, uint40 startTimeAfter, uint256 snapshotAfter) = harness.encumbranceState(POOL_ID, USER);
+
+        assertEq(indexAfter, 0, "index unchanged");
+        assertEq(principalTotalAfter, principalTotalBefore, "principal total unchanged");
+        assertEq(maturedAfter, maturedBefore, "matured total unchanged");
+        assertEq(principalAfter, principalBefore, "principal unchanged");
+        assertEq(startTimeAfter, startTimeBefore, "start time unchanged");
+        assertEq(snapshotAfter, snapshotBefore, "snapshot unchanged");
+        assertEq(harness.userAccruedYield(POOL_ID, USER), accruedBefore, "no yield side effects");
+    }
+
+    function test_EncumbranceDecrease_FullZeroClearsState() external {
+        harness.initPool(POOL_ID, 0);
+        harness.applyEncumbranceIncrease(POOL_ID, USER, PRINCIPAL);
+
+        harness.applyEncumbranceDecrease(POOL_ID, USER, PRINCIPAL);
+
+        (uint256 principalAfter, uint40 startTimeAfter, uint256 snapshotAfter) = harness.encumbranceState(POOL_ID, USER);
+        (, uint256 principalTotalAfter, uint256 maturedAfter,,) = harness.poolState(POOL_ID);
+        assertEq(principalAfter, 0, "principal cleared");
+        assertEq(startTimeAfter, 0, "start time reset");
+        assertEq(snapshotAfter, 0, "snapshot reset");
+        assertEq(principalTotalAfter, 0, "active credit principal total cleared");
+        assertEq(maturedAfter, 0, "no matured base remains");
+    }
+
+    function test_EncumbranceChange_NoPendingYieldLeavesAccruedYieldUntouched() external {
+        harness.initPool(POOL_ID, 2 * INDEX_SCALE);
+        harness.applyEncumbranceIncrease(POOL_ID, USER, PRINCIPAL);
+
+        uint256 accruedBefore = harness.userAccruedYield(POOL_ID, USER);
+        harness.applyEncumbranceIncrease(POOL_ID, USER, 25 ether);
+
+        (uint256 principalAfter,, uint256 snapshotAfter) = harness.encumbranceState(POOL_ID, USER);
+        (uint256 indexAfter, uint256 principalTotalAfter,,,) = harness.poolState(POOL_ID);
+        assertEq(accruedBefore, 0, "no accrued yield before change");
+        assertEq(harness.userAccruedYield(POOL_ID, USER), 0, "no yield settled when snapshot matches index");
+        assertEq(principalAfter, 125 ether, "principal increases normally");
+        assertEq(principalTotalAfter, 125 ether, "pool principal total increases normally");
+        assertEq(snapshotAfter, indexAfter, "snapshot tracks current index");
+    }
+
     function _primeOverflowOffsetState(uint256 principal) internal returns (uint40 futureStart) {
         harness.initPool(POOL_ID, 0);
         futureStart = uint40(block.timestamp + 25 hours);

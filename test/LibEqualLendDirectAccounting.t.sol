@@ -343,6 +343,42 @@ contract LibEqualLendDirectAccountingTest is Test {
         assertEq(debtStatePrincipal, 0, "debt state principal");
     }
 
+    function test_singleAgreementSettlement_returnsAllTrackersToZero() external {
+        _seedSameAssetExposure(80 ether, 120 ether);
+
+        bool sameAsset = harness.settleFixedPrincipal(
+            LENDER_KEY,
+            BORROWER_KEY,
+            BORROWER_POSITION_ID,
+            LENDER_POOL_ID,
+            COLLATERAL_POOL_ID,
+            ASSET_A,
+            ASSET_A,
+            80 ether,
+            120 ether,
+            true
+        );
+
+        assertTrue(sameAsset, "same asset settle flag");
+        assertEq(harness.borrowedPrincipalOf(BORROWER_KEY, LENDER_POOL_ID), 0, "borrowed principal cleared");
+        assertEq(harness.sameAssetDebtOf(BORROWER_KEY, ASSET_A), 0, "same-asset debt by asset cleared");
+
+        (
+            ,
+            ,
+            ,
+            ,
+            uint256 activeCreditPrincipalTotal,
+            uint256 userSameAssetDebt,
+            uint256 tokenSameAssetDebt,
+            uint256 debtStatePrincipal
+        ) = harness.poolState(COLLATERAL_POOL_ID, BORROWER_KEY, BORROWER_POSITION_ID);
+        assertEq(activeCreditPrincipalTotal, 0, "active credit principal cleared");
+        assertEq(userSameAssetDebt, 0, "user same-asset debt cleared");
+        assertEq(tokenSameAssetDebt, 0, "position same-asset debt cleared");
+        assertEq(debtStatePrincipal, 0, "debt state principal cleared");
+    }
+
     function test_encumbranceBucketWrappers_useUnifiedPrimitiveAndProtectUnderflow() external {
         harness.increaseOfferEscrow(LENDER_KEY, LENDER_POOL_ID, 10 ether);
         harness.increaseLiveExposure(LENDER_KEY, LENDER_POOL_ID, 20 ether);
