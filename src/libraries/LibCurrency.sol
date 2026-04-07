@@ -135,6 +135,7 @@ library LibCurrency {
             return;
         }
         if (isNative(token)) {
+            LibAppStorage.s().nativeTrackedTotal -= amount;
             (bool success,) = to.call{value: amount}("");
             if (!success) {
                 revert NativeTransferFailed(to, amount);
@@ -154,6 +155,7 @@ library LibCurrency {
             return 0;
         }
         if (isNative(token)) {
+            LibAppStorage.s().nativeTrackedTotal -= amount;
             uint256 balanceBefore = to.balance;
             (bool success,) = to.call{value: amount}("");
             if (!success) {

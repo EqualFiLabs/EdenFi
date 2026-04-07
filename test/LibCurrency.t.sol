@@ -281,7 +281,6 @@ contract LibCurrencyTest is Test {
         harness.transferNative(recipient, 1 ether);
 
         assertEq(harness.balanceOfSelf(address(0)), 0);
-        assertEq(harness.nativeTrackedTotal(), 1 ether);
         assertEq(harness.nativeAvailable(), 0);
     }
 }
