@@ -522,45 +522,23 @@ library LibActiveCreditIndex {
         if (amount == 0) return;
         _rollMatured(p);
         if (_isMature(state)) {
-            if (p.activeCreditMaturedTotal >= amount) {
-                p.activeCreditMaturedTotal -= amount;
-            } else {
-                p.activeCreditMaturedTotal = 0;
-            }
+            p.activeCreditMaturedTotal -= amount;
             return;
         }
         uint64 maturityHour = _maturityHour(state.startTime);
         uint64 startHour = p.activeCreditPendingStartHour - 1;
         if (maturityHour <= startHour) {
-            if (p.activeCreditMaturedTotal >= amount) {
-                p.activeCreditMaturedTotal -= amount;
-            } else {
-                p.activeCreditMaturedTotal = 0;
-            }
+            p.activeCreditMaturedTotal -= amount;
             return;
         }
         uint64 offset = maturityHour - startHour - 1;
         if (offset >= BUCKET_COUNT) {
-            if (p.activeCreditMaturedTotal >= amount) {
-                p.activeCreditMaturedTotal -= amount;
-            } else {
-                p.activeCreditMaturedTotal = 0;
-            }
+            uint8 last = uint8((p.activeCreditPendingCursor + (BUCKET_COUNT - 1)) % BUCKET_COUNT);
+            p.activeCreditPendingBuckets[last] -= amount;
             return;
         }
         uint8 index = uint8((p.activeCreditPendingCursor + uint8(offset)) % BUCKET_COUNT);
-        uint256 bucket = p.activeCreditPendingBuckets[index];
-        if (bucket >= amount) {
-            p.activeCreditPendingBuckets[index] = bucket - amount;
-            return;
-        }
-        p.activeCreditPendingBuckets[index] = 0;
-        uint256 remainder = amount - bucket;
-        if (p.activeCreditMaturedTotal >= remainder) {
-            p.activeCreditMaturedTotal -= remainder;
-        } else {
-            p.activeCreditMaturedTotal = 0;
-        }
+        p.activeCreditPendingBuckets[index] -= amount;
     }
 
     function _currentHour() private view returns (uint64) {
