@@ -27,7 +27,7 @@ library LibCurrency {
 
     function assertMsgValue(address token, uint256 amount) internal view {
         if (isNative(token)) {
-            if (msg.value != 0 && msg.value != amount) {
+            if (msg.value != amount) {
                 revert UnexpectedMsgValue(msg.value);
             }
             return;
