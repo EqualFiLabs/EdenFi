@@ -200,7 +200,7 @@ abstract contract LaunchFixture is DeployEqualFi {
 
     function _installTestSupportFacet() internal {
         ProtocolTestSupportFacet facet = new ProtocolTestSupportFacet();
-        bytes4[] memory selectors = new bytes4[](24);
+        bytes4[] memory selectors = new bytes4[](27);
         selectors[0] = ProtocolTestSupportFacet.setManagedPoolCreationFee.selector;
         selectors[1] = ProtocolTestSupportFacet.setManagedPoolSystemShareBps.selector;
         selectors[2] = ProtocolTestSupportFacet.setTreasuryShareBps.selector;
@@ -225,6 +225,9 @@ abstract contract LaunchFixture is DeployEqualFi {
         selectors[21] = ProtocolTestSupportFacet.pendingActiveCreditYieldOf.selector;
         selectors[22] = ProtocolTestSupportFacet.pendingSscDebtYieldOf.selector;
         selectors[23] = ProtocolTestSupportFacet.poolActiveCreditPrincipalTotalOf.selector;
+        selectors[24] = ProtocolTestSupportFacet.nativeTrackedTotal.selector;
+        selectors[25] = ProtocolTestSupportFacet.setPoolYieldReserve.selector;
+        selectors[26] = ProtocolTestSupportFacet.setUserAccruedYield.selector;
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({

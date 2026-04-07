@@ -283,4 +283,93 @@ contract LibCurrencyTest is Test {
         assertEq(harness.balanceOfSelf(address(0)), 0);
         assertEq(harness.nativeAvailable(), 0);
     }
+
+    function test_NativeTransferTrackingInvariant_MatchesPullsMinusTransfers() public {
+        uint256[] memory pulls = new uint256[](3);
+        pulls[0] = 1 ether;
+        pulls[1] = 2 ether;
+        pulls[2] = 3 ether;
+
+        uint256[] memory transfers = new uint256[](4);
+        transfers[0] = 0.5 ether;
+        transfers[1] = 1.5 ether;
+        transfers[2] = 2 ether;
+        transfers[3] = 1 ether;
+
+        uint256 totalPulled;
+        uint256 totalTransferred;
+        for (uint256 i = 0; i < pulls.length; i++) {
+            vm.prank(depositor);
+            harness.pullNative{value: pulls[i]}(pulls[i]);
+            totalPulled += pulls[i];
+            assertEq(harness.nativeTrackedTotal(), totalPulled - totalTransferred);
+            assertEq(harness.nativeAvailable(), 0);
+        }
+
+        for (uint256 i = 0; i < transfers.length; i++) {
+            harness.transferNative(recipient, transfers[i]);
+            totalTransferred += transfers[i];
+            assertEq(harness.nativeTrackedTotal(), totalPulled - totalTransferred);
+            assertEq(harness.nativeAvailable(), 0);
+        }
+    }
+
+    function test_AssertMsgValue_ExhaustiveValidation() public {
+        harness.assertNativeMsgValue{value: 1 ether}(1 ether);
+        harness.assertNativeMsgValue(0);
+        harness.assertTokenMsgValue(address(token), 1 ether);
+
+        vm.expectRevert(abi.encodeWithSelector(UnexpectedMsgValue.selector, 0));
+        harness.assertNativeMsgValue(1 ether);
+
+        vm.expectRevert(abi.encodeWithSelector(UnexpectedMsgValue.selector, 2 ether));
+        harness.assertNativeMsgValue{value: 2 ether}(1 ether);
+
+        vm.expectRevert(abi.encodeWithSelector(UnexpectedMsgValue.selector, 1 wei));
+        harness.assertTokenMsgValue{value: 1 wei}(address(token), 1 ether);
+    }
+
+    function test_NativeLifecycleIntegration_SingleAndMultiPoolTracking() public {
+        LibCurrencyHarness poolA = new LibCurrencyHarness();
+        LibCurrencyHarness poolB = new LibCurrencyHarness();
+
+        vm.prank(depositor);
+        poolA.pullNative{value: 2 ether}(2 ether);
+        assertEq(poolA.nativeTrackedTotal(), 2 ether);
+
+        poolA.transferNative(recipient, 2 ether);
+        assertEq(poolA.nativeTrackedTotal(), 0);
+
+        vm.prank(depositor);
+        poolA.pullNative{value: 1 ether}(1 ether);
+        vm.prank(depositor);
+        poolB.pullNative{value: 3 ether}(3 ether);
+
+        assertEq(poolA.nativeTrackedTotal(), 1 ether);
+        assertEq(poolB.nativeTrackedTotal(), 3 ether);
+
+        poolA.transferNative(recipient, 1 ether);
+        assertEq(poolA.nativeTrackedTotal(), 0);
+        assertEq(poolB.nativeTrackedTotal(), 3 ether);
+
+        poolB.transferNative(recipient, 3 ether);
+        assertEq(poolB.nativeTrackedTotal(), 0);
+    }
+
+    function test_OrphanedEthProtectionIntegration_RevertsBeforePull() public {
+        ForceSend forceSend = new ForceSend{value: 2 ether}();
+        forceSend.destroy(payable(address(harness)));
+
+        assertEq(address(harness).balance, 2 ether);
+        assertEq(harness.nativeTrackedTotal(), 0);
+        assertEq(harness.nativeAvailable(), 2 ether);
+
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(UnexpectedMsgValue.selector, 0));
+        harness.assertAndPullNative(1 ether);
+
+        assertEq(address(harness).balance, 2 ether);
+        assertEq(harness.nativeTrackedTotal(), 0);
+        assertEq(harness.nativeAvailable(), 2 ether);
+    }
 }

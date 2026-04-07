@@ -118,9 +118,6 @@ contract SelfSecuredCreditFacet is ReentrancyGuardModifiers {
             LibSelfSecuredCreditAccounting.increaseDebt(positionKey, tokenId, pid, amount);
 
         pool.trackedBalance -= adjustment.appliedAmount;
-        if (LibCurrency.isNative(pool.underlying)) {
-            LibAppStorage.s().nativeTrackedTotal -= adjustment.appliedAmount;
-        }
 
         received = LibCurrency.transferWithMin(pool.underlying, msg.sender, adjustment.appliedAmount, minReceived);
 

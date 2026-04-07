@@ -355,9 +355,6 @@ contract OptionsFacet is ReentrancyGuardModifiers {
         if (newPrincipal == 0 && pool.userCount > 0) {
             pool.userCount -= 1;
         }
-        if (LibCurrency.isNative(pool.underlying)) {
-            LibAppStorage.s().nativeTrackedTotal -= amount;
-        }
 
         LibCurrency.transferWithMin(pool.underlying, recipient, amount, minReceived);
         LibActiveCreditIndex.settle(poolId, positionKey);

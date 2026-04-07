@@ -135,9 +135,6 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
         p.userClaimableFeeYield[positionKey] = 0;
         p.yieldReserve -= claimed;
         p.trackedBalance -= claimed;
-        if (LibCurrency.isNative(p.underlying)) {
-            LibAppStorage.s().nativeTrackedTotal -= claimed;
-        }
 
         LibCurrency.transferWithMin(p.underlying, recipient, claimed, minReceived);
         emit PositionYieldClaimed(tokenId, msg.sender, pid, recipient, claimed);
@@ -267,9 +264,6 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
         p.trackedBalance -= principalToWithdraw;
         if (newPrincipal == 0 && p.userCount > 0) {
             p.userCount -= 1;
-        }
-        if (LibCurrency.isNative(p.underlying)) {
-            LibAppStorage.s().nativeTrackedTotal -= principalToWithdraw;
         }
 
         LibCurrency.transferWithMin(p.underlying, recipient, principalToWithdraw, minReceived);

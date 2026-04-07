@@ -320,9 +320,6 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         settlementPool.userActiveCreditStateDebt[borrowerPositionKey].indexSnapshot = settlementPool.activeCreditIndex;
 
         settlementPool.trackedBalance -= amount;
-        if (LibCurrency.isNative(settlementPool.underlying)) {
-            LibAppStorage.s().nativeTrackedTotal -= amount;
-        }
 
         _allocateDrawExposure(store, lineId, amount);
         LibCurrency.transfer(settlementPool.underlying, profile.treasuryWallet, amount);

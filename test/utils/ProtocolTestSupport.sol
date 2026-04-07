@@ -165,6 +165,18 @@ contract ProtocolTestSupportFacet is EqualIndexBaseV3 {
         LibAppStorage.s().pools[pid].trackedBalance = amount;
     }
 
+    function nativeTrackedTotal() external view returns (uint256) {
+        return LibAppStorage.s().nativeTrackedTotal;
+    }
+
+    function setPoolYieldReserve(uint256 pid, uint256 amount) external {
+        LibAppStorage.s().pools[pid].yieldReserve = amount;
+    }
+
+    function setUserAccruedYield(uint256 pid, bytes32 positionKey, uint256 amount) external {
+        LibAppStorage.s().pools[pid].userAccruedYield[positionKey] = amount;
+    }
+
     function routeManagedShareExternal(
         uint256 pid,
         uint256 amount,
