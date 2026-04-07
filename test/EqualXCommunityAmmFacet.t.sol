@@ -592,6 +592,70 @@ contract EqualXCommunityAmmFacetTest is Test {
         assertGt(harness.yieldReserveOf(1), 0);
     }
 
+    function test_Integration_CommunityPostGrowthJoinAndLeave_PreservesProportionalOwnership() public {
+        vm.prank(alice);
+        uint256 marketId = harness.createEqualXCommunityAmmMarket(
+            alicePositionId,
+            1,
+            2,
+            100e18,
+            100e18,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 5 days),
+            300,
+            LibEqualXTypes.FeeAsset.TokenIn,
+            LibEqualXTypes.InvariantMode.Volatile
+        );
+
+        vm.warp(block.timestamp + 1 days);
+        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory preview =
+            harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), 15e18);
+        vm.prank(bob);
+        harness.swapEqualXCommunityAmmExactIn(marketId, address(tokenA), 15e18, 15e18, preview.amountOut, bob);
+
+        LibEqualXCommunityAmmStorage.CommunityAmmMarket memory marketBeforeJoin =
+            harness.getEqualXCommunityAmmMarket(marketId);
+        uint256 aliceShareBeforeJoin = _communityMakerShare(marketId, alicePositionKey);
+
+        uint256 amountA = 50e18;
+        uint256 amountB = Math.mulDiv(amountA, marketBeforeJoin.reserveB, marketBeforeJoin.reserveA);
+        uint256 expectedShareA = Math.mulDiv(amountA, marketBeforeJoin.totalShares, marketBeforeJoin.reserveA);
+        uint256 expectedShareB = Math.mulDiv(amountB, marketBeforeJoin.totalShares, marketBeforeJoin.reserveB);
+        uint256 expectedShare = expectedShareA < expectedShareB ? expectedShareA : expectedShareB;
+
+        vm.prank(charlie);
+        harness.joinEqualXCommunityAmmMarket(marketId, charliePositionId, amountA, amountB);
+
+        LibEqualXCommunityAmmStorage.CommunityAmmMarket memory marketAfterJoin =
+            harness.getEqualXCommunityAmmMarket(marketId);
+
+        assertEq(_communityMakerShare(marketId, charliePositionKey), expectedShare);
+        assertEq(
+            _communityMakerShare(marketId, alicePositionKey),
+            aliceShareBeforeJoin,
+            "existing maker share should not be inflated or reduced"
+        );
+        assertEq(marketAfterJoin.totalShares, marketBeforeJoin.totalShares + expectedShare);
+
+        vm.prank(charlie);
+        harness.leaveEqualXCommunityAmmMarket(marketId, charliePositionId);
+
+        LibEqualXCommunityAmmStorage.CommunityAmmMarket memory marketAfterLeave =
+            harness.getEqualXCommunityAmmMarket(marketId);
+
+        assertEq(marketAfterLeave.totalShares, marketBeforeJoin.totalShares);
+        assertEq(marketAfterLeave.makerCount, 1);
+        assertEq(_communityMakerShare(marketId, alicePositionKey), aliceShareBeforeJoin);
+        assertEq(_communityMakerShare(marketId, charliePositionKey), 0);
+        assertEq(harness.encumberedCapitalOf(charliePositionKey, 1), 0);
+        assertEq(harness.encumberedCapitalOf(charliePositionKey, 2), 0);
+    }
+
+    function _communityMakerShare(uint256 marketId, bytes32 positionKey) internal view returns (uint256) {
+        LibEqualXCommunityAmmStorage.CommunityMakerPosition memory maker = harness.getCommunityMaker(marketId, positionKey);
+        return maker.share;
+    }
+
     function _poolConfig() internal pure returns (Types.PoolConfig memory cfg) {
         cfg.rollingApyBps = 500;
         cfg.depositorLTVBps = 7000;
