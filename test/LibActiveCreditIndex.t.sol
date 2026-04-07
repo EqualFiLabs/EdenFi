@@ -11,6 +11,7 @@ contract LibActiveCreditIndexTest is Test {
     uint256 internal constant YIELD_AMOUNT = 10 ether;
 
     bytes32 internal constant USER = keccak256("aci-user");
+    bytes32 internal constant USER_TWO = keccak256("aci-user-two");
 
     LibActiveCreditIndexHarness internal harness;
 
@@ -162,6 +163,63 @@ contract LibActiveCreditIndexTest is Test {
         assertEq(principalAfter, 125 ether, "principal increases normally");
         assertEq(principalTotalAfter, 125 ether, "pool principal total increases normally");
         assertEq(snapshotAfter, indexAfter, "snapshot tracks current index");
+    }
+
+    function test_Integration_AciLifecycle_SettlesYieldAndRemovesNormalAndOverflowBase() external {
+        harness.initPool(POOL_ID, 0);
+        harness.setEncumbranceState(POOL_ID, USER, PRINCIPAL, uint40(block.timestamp - 25 hours), 0);
+        harness.setEncumbranceState(POOL_ID, USER_TWO, PRINCIPAL, uint40(block.timestamp + 25 hours), 0);
+        harness.trackEncumbranceState(POOL_ID, USER);
+        harness.trackEncumbranceState(POOL_ID, USER_TWO);
+
+        uint8 lastBucket = _lastBucketIndex();
+        assertEq(harness.pendingBucket(POOL_ID, lastBucket), PRINCIPAL, "overflow state queued in last bucket");
+
+        harness.accrue(POOL_ID, YIELD_AMOUNT);
+        harness.settle(POOL_ID, USER);
+        harness.settle(POOL_ID, USER_TWO);
+
+        assertEq(harness.userAccruedYield(POOL_ID, USER), YIELD_AMOUNT, "mature state yield settled");
+        assertEq(harness.userAccruedYield(POOL_ID, USER_TWO), 0, "pending overflow state earns no mature yield yet");
+
+        harness.decreaseTrackedEncumbrancePrincipal(POOL_ID, USER, 40 ether);
+        harness.decreaseTrackedEncumbrancePrincipal(POOL_ID, USER_TWO, PRINCIPAL);
+
+        (,, uint256 maturedAfterRemoval,,) = harness.poolState(POOL_ID);
+        assertEq(maturedAfterRemoval, 60 ether, "matured total reflects only remaining mature principal");
+        assertEq(harness.pendingBucket(POOL_ID, lastBucket), 0, "overflow bucket removed symmetrically");
+
+        vm.warp(block.timestamp + 72 hours);
+        harness.roll(POOL_ID);
+
+        (,, uint256 maturedAfterRoll,,) = harness.poolState(POOL_ID);
+        assertEq(maturedAfterRoll, 60 ether, "overflow removal does not phantom-inflate matured total");
+    }
+
+    function test_Integration_MultiEncumbranceYieldAccumulation_PreservesAllPendingYield() external {
+        harness.initPool(POOL_ID, 0);
+        harness.applyEncumbranceIncrease(POOL_ID, USER, PRINCIPAL);
+
+        vm.warp(block.timestamp + 25 hours);
+        harness.roll(POOL_ID);
+        harness.accrue(POOL_ID, 10 ether);
+
+        harness.applyEncumbranceIncrease(POOL_ID, USER, 50 ether);
+        assertEq(harness.userAccruedYield(POOL_ID, USER), 10 ether, "first mature period yield settled");
+
+        vm.warp(block.timestamp + 25 hours);
+        harness.roll(POOL_ID);
+        harness.accrue(POOL_ID, 15 ether);
+
+        harness.applyEncumbranceDecrease(POOL_ID, USER, 40 ether);
+
+        (uint256 principalAfter,, uint256 snapshotAfter) = harness.encumbranceState(POOL_ID, USER);
+        (uint256 indexAfter, uint256 principalTotalAfter, uint256 maturedAfter,,) = harness.poolState(POOL_ID);
+        assertEq(harness.userAccruedYield(POOL_ID, USER), 25 ether, "yield from both mature periods accumulates");
+        assertEq(principalAfter, 110 ether, "principal decreases after final encumbrance reduction");
+        assertEq(principalTotalAfter, 110 ether, "pool principal total tracks remaining encumbrance");
+        assertEq(maturedAfter, 110 ether, "remaining mature base tracks remaining encumbrance");
+        assertEq(snapshotAfter, indexAfter, "snapshot updates after settlement");
     }
 
     function _primeOverflowOffsetState(uint256 principal) internal returns (uint40 futureStart) {

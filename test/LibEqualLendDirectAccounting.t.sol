@@ -379,6 +379,112 @@ contract LibEqualLendDirectAccountingTest is Test {
         assertEq(debtStatePrincipal, 0, "debt state principal cleared");
     }
 
+    function test_Integration_MultiAgreementDebtLifecycle_SettlesBothAgreementsAndClearsTrackers() external {
+        _seedTwoSameAssetAgreements(100 ether, 100 ether);
+
+        harness.settleFixedPrincipal(
+            LENDER_KEY,
+            BORROWER_KEY,
+            BORROWER_POSITION_ID,
+            LENDER_POOL_ID,
+            COLLATERAL_POOL_ID,
+            ASSET_A,
+            ASSET_A,
+            100 ether,
+            120 ether,
+            true
+        );
+
+        assertEq(harness.borrowedPrincipalOf(BORROWER_KEY, LENDER_POOL_ID), 100 ether, "one agreement principal remains");
+        assertEq(harness.sameAssetDebtOf(BORROWER_KEY, ASSET_A), 100 ether, "one agreement same-asset debt remains");
+
+        harness.settleFixedPrincipal(
+            LENDER_KEY,
+            BORROWER_KEY,
+            BORROWER_POSITION_ID_TWO,
+            LENDER_POOL_ID,
+            COLLATERAL_POOL_ID,
+            ASSET_A,
+            ASSET_A,
+            100 ether,
+            120 ether,
+            true
+        );
+
+        assertEq(harness.borrowedPrincipalOf(BORROWER_KEY, LENDER_POOL_ID), 0, "borrowed principal cleared");
+        assertEq(harness.sameAssetDebtOf(BORROWER_KEY, ASSET_A), 0, "same-asset debt by asset cleared");
+
+        (
+            ,
+            ,
+            ,
+            ,
+            uint256 activeCreditPrincipalTotal,
+            uint256 userSameAssetDebt,
+            uint256 tokenSameAssetDebtOne,
+            uint256 debtStatePrincipal
+        ) = harness.poolState(COLLATERAL_POOL_ID, BORROWER_KEY, BORROWER_POSITION_ID);
+        (, , , , , , uint256 tokenSameAssetDebtTwo,) =
+            harness.poolState(COLLATERAL_POOL_ID, BORROWER_KEY, BORROWER_POSITION_ID_TWO);
+
+        assertEq(activeCreditPrincipalTotal, 0, "active credit principal cleared");
+        assertEq(userSameAssetDebt, 0, "user same-asset debt cleared");
+        assertEq(tokenSameAssetDebtOne, 0, "first position debt cleared");
+        assertEq(tokenSameAssetDebtTwo, 0, "second position debt cleared");
+        assertEq(debtStatePrincipal, 0, "debt state principal cleared");
+    }
+
+    function test_Integration_SameAssetLoan_PartialThenFullSettle_ClearsAllDebtTrackers() external {
+        _seedSameAssetExposure(90 ether, 45 ether);
+
+        harness.settleFixedPrincipal(
+            LENDER_KEY,
+            BORROWER_KEY,
+            BORROWER_POSITION_ID,
+            LENDER_POOL_ID,
+            COLLATERAL_POOL_ID,
+            ASSET_A,
+            ASSET_A,
+            30 ether,
+            15 ether,
+            true
+        );
+
+        assertEq(harness.borrowedPrincipalOf(BORROWER_KEY, LENDER_POOL_ID), 60 ether, "borrowed principal after partial settle");
+        assertEq(harness.sameAssetDebtOf(BORROWER_KEY, ASSET_A), 60 ether, "same-asset debt after partial settle");
+
+        harness.settleFixedPrincipal(
+            LENDER_KEY,
+            BORROWER_KEY,
+            BORROWER_POSITION_ID,
+            LENDER_POOL_ID,
+            COLLATERAL_POOL_ID,
+            ASSET_A,
+            ASSET_A,
+            60 ether,
+            30 ether,
+            true
+        );
+
+        assertEq(harness.borrowedPrincipalOf(BORROWER_KEY, LENDER_POOL_ID), 0, "borrowed principal cleared after full settle");
+        assertEq(harness.sameAssetDebtOf(BORROWER_KEY, ASSET_A), 0, "same-asset debt cleared after full settle");
+
+        (
+            ,
+            ,
+            ,
+            ,
+            uint256 activeCreditPrincipalTotal,
+            uint256 userSameAssetDebt,
+            uint256 tokenSameAssetDebt,
+            uint256 debtStatePrincipal
+        ) = harness.poolState(COLLATERAL_POOL_ID, BORROWER_KEY, BORROWER_POSITION_ID);
+        assertEq(activeCreditPrincipalTotal, 0, "active credit principal cleared");
+        assertEq(userSameAssetDebt, 0, "user same-asset debt cleared");
+        assertEq(tokenSameAssetDebt, 0, "position same-asset debt cleared");
+        assertEq(debtStatePrincipal, 0, "debt state principal cleared");
+    }
+
     function test_encumbranceBucketWrappers_useUnifiedPrimitiveAndProtectUnderflow() external {
         harness.increaseOfferEscrow(LENDER_KEY, LENDER_POOL_ID, 10 ether);
         harness.increaseLiveExposure(LENDER_KEY, LENDER_POOL_ID, 20 ether);

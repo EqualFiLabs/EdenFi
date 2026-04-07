@@ -51,6 +51,10 @@ contract LibActiveCreditIndexHarness {
         LibActiveCreditIndex.accrueWithSource(pid, amount, SOURCE);
     }
 
+    function settle(uint256 pid, bytes32 user) external {
+        LibActiveCreditIndex.settle(pid, user);
+    }
+
     function roll(uint256 pid) external returns (bool) {
         return LibActiveCreditIndex.hasMaturedBase(pid);
     }
