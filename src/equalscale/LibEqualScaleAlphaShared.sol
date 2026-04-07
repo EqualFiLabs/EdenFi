@@ -6,11 +6,11 @@ import {IEqualScaleAlphaErrors} from "src/equalscale/IEqualScaleAlphaErrors.sol"
 import {IEqualScaleAlphaEvents} from "src/equalscale/IEqualScaleAlphaEvents.sol";
 import {LibActiveCreditIndex} from "src/libraries/LibActiveCreditIndex.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
+import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
 import {LibFeeIndex} from "src/libraries/LibFeeIndex.sol";
-import {LibModuleEncumbrance} from "src/libraries/LibModuleEncumbrance.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
-import {DirectError_InvalidPositionNFT} from "src/libraries/Errors.sol";
+import {DirectError_InvalidPositionNFT, EncumbranceUnderflow} from "src/libraries/Errors.sol";
 import {Types} from "src/libraries/Types.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 
@@ -258,23 +258,14 @@ library LibEqualScaleAlphaShared {
         return configured == 0 ? DEFAULT_CHARGE_OFF_THRESHOLD : configured;
     }
 
-    function recoverBorrowerCollateral(
-        uint256 lineId,
-        LibEqualScaleAlphaStorage.CreditLine storage line,
-        uint256 maxRecovery
-    ) internal returns (uint256 recovered) {
+    function recoverBorrowerCollateral(LibEqualScaleAlphaStorage.CreditLine storage line, uint256 maxRecovery)
+        internal
+        returns (uint256 recovered)
+    {
         if (
             maxRecovery == 0 || line.collateralMode != LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted
-                || line.borrowerCollateralPoolId == 0
+                || line.borrowerCollateralPoolId == 0 || line.lockedCollateralAmount == 0
         ) {
-            return 0;
-        }
-
-        uint256 collateralModuleId = borrowerCollateralModuleId(lineId);
-        uint256 encumbered = LibModuleEncumbrance.getEncumberedForModule(
-            line.borrowerPositionKey, line.borrowerCollateralPoolId, collateralModuleId
-        );
-        if (encumbered == 0) {
             return 0;
         }
 
@@ -291,7 +282,8 @@ library LibEqualScaleAlphaShared {
         }
 
         uint256 borrowerPrincipal = collateralPool.userPrincipal[line.borrowerPositionKey];
-        recovered = encumbered;
+        uint256 lockedCollateralAmount = line.lockedCollateralAmount;
+        recovered = lockedCollateralAmount;
         if (recovered > borrowerPrincipal) {
             recovered = borrowerPrincipal;
         }
@@ -319,9 +311,10 @@ library LibEqualScaleAlphaShared {
             collateralPool.userMaintenanceIndex[line.borrowerPositionKey] = collateralPool.maintenanceIndex;
         }
 
-        LibModuleEncumbrance.unencumber(
-            line.borrowerPositionKey, line.borrowerCollateralPoolId, collateralModuleId, encumbered
+        decreaseBorrowerCollateralReservation(
+            collateralPool, line.borrowerCollateralPoolId, line.borrowerPositionKey, lockedCollateralAmount
         );
+        line.lockedCollateralAmount = 0;
     }
 
     function allocateRecovery(
@@ -446,9 +439,7 @@ library LibEqualScaleAlphaShared {
         LibEqualScaleAlphaStorage.CreditLine storage line,
         bool closedWithLoss
     ) internal {
-        finalizeClosedLine(
-            store, lineId, line, LibEqualScaleAlphaStorage.CreditLineStatus.ChargedOff, closedWithLoss, false
-        );
+        finalizeClosedLine(store, lineId, line, LibEqualScaleAlphaStorage.CreditLineStatus.ChargedOff, closedWithLoss);
     }
 
     function finalizeRepaidLine(
@@ -457,21 +448,7 @@ library LibEqualScaleAlphaShared {
         LibEqualScaleAlphaStorage.CreditLine storage line,
         LibEqualScaleAlphaStorage.CreditLineStatus previousStatus
     ) internal {
-        if (line.collateralMode == LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted && line.borrowerCollateralPoolId != 0)
-        {
-            uint256 collateralModuleId = borrowerCollateralModuleId(lineId);
-            uint256 encumbered = LibModuleEncumbrance.getEncumberedForModule(
-                line.borrowerPositionKey, line.borrowerCollateralPoolId, collateralModuleId
-            );
-            if (encumbered != 0) {
-                settlePosition(line.borrowerCollateralPoolId, line.borrowerPositionKey);
-                LibModuleEncumbrance.unencumber(
-                    line.borrowerPositionKey, line.borrowerCollateralPoolId, collateralModuleId, encumbered
-                );
-            }
-        }
-
-        finalizeClosedLine(store, lineId, line, previousStatus, false, true);
+        finalizeClosedLine(store, lineId, line, previousStatus, false);
     }
 
     function finalizeClosedLine(
@@ -479,26 +456,22 @@ library LibEqualScaleAlphaShared {
         uint256 lineId,
         LibEqualScaleAlphaStorage.CreditLine storage line,
         LibEqualScaleAlphaStorage.CreditLineStatus previousStatus,
-        bool closedWithLoss,
-        bool releaseCollateral
+        bool closedWithLoss
     ) internal {
         uint256[] storage lenderPositionIds = store.lineCommitmentPositionIds[lineId];
-        uint256 commitmentModuleId = settlementCommitmentModuleId(lineId);
         uint256 len = lenderPositionIds.length;
 
         for (uint256 i = 0; i < len; i++) {
             LibEqualScaleAlphaStorage.Commitment storage commitment =
                 store.lineCommitments[lineId][lenderPositionIds[i]];
-            if (commitment.lenderPositionKey != bytes32(0)) {
+            if (commitment.lenderPositionKey != bytes32(0) && commitment.committedAmount != 0) {
                 settleSettlementPosition(line.settlementPoolId, commitment.lenderPositionKey);
-                uint256 encumbered = LibModuleEncumbrance.getEncumberedForModule(
-                    commitment.lenderPositionKey, line.settlementPoolId, commitmentModuleId
+                decreaseSettlementCommitmentReservation(
+                    LibAppStorage.s().pools[line.settlementPoolId],
+                    line.settlementPoolId,
+                    commitment.lenderPositionKey,
+                    commitment.committedAmount
                 );
-                if (encumbered != 0) {
-                    LibModuleEncumbrance.unencumber(
-                        commitment.lenderPositionKey, line.settlementPoolId, commitmentModuleId, encumbered
-                    );
-                }
             }
 
             commitment.committedAmount = 0;
@@ -509,16 +482,15 @@ library LibEqualScaleAlphaShared {
             }
         }
 
-        if (!releaseCollateral && line.collateralMode == LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted) {
-            uint256 collateralModuleId = borrowerCollateralModuleId(lineId);
-            uint256 collateralEncumbered = LibModuleEncumbrance.getEncumberedForModule(
-                line.borrowerPositionKey, line.borrowerCollateralPoolId, collateralModuleId
+        if (line.collateralMode == LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted && line.lockedCollateralAmount != 0) {
+            settlePosition(line.borrowerCollateralPoolId, line.borrowerPositionKey);
+            decreaseBorrowerCollateralReservation(
+                LibAppStorage.s().pools[line.borrowerCollateralPoolId],
+                line.borrowerCollateralPoolId,
+                line.borrowerPositionKey,
+                line.lockedCollateralAmount
             );
-            if (collateralEncumbered != 0) {
-                LibModuleEncumbrance.unencumber(
-                    line.borrowerPositionKey, line.borrowerCollateralPoolId, collateralModuleId, collateralEncumbered
-                );
-            }
+            line.lockedCollateralAmount = 0;
         }
 
         line.activeLimit = 0;
@@ -534,12 +506,70 @@ library LibEqualScaleAlphaShared {
         emit IEqualScaleAlphaEvents.CreditLineClosed(lineId, previousStatus, closedWithLoss);
     }
 
-    function settlementCommitmentModuleId(uint256 lineId) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encodePacked("equalscale.alpha.commitment.", lineId)));
+    function increaseSettlementCommitmentReservation(
+        Types.PoolData storage settlementPool,
+        uint256 settlementPoolId,
+        bytes32 lenderPositionKey,
+        uint256 amount
+    ) internal {
+        if (amount == 0) {
+            return;
+        }
+
+        LibEncumbrance.position(lenderPositionKey, settlementPoolId).encumberedCapital += amount;
+        LibActiveCreditIndex.applyEncumbranceIncrease(settlementPool, settlementPoolId, lenderPositionKey, amount);
     }
 
-    function borrowerCollateralModuleId(uint256 lineId) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encodePacked("equalscale.alpha.collateral.", lineId)));
+    function decreaseSettlementCommitmentReservation(
+        Types.PoolData storage settlementPool,
+        uint256 settlementPoolId,
+        bytes32 lenderPositionKey,
+        uint256 amount
+    ) internal {
+        if (amount == 0) {
+            return;
+        }
+
+        LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(lenderPositionKey, settlementPoolId);
+        uint256 current = enc.encumberedCapital;
+        if (amount > current) {
+            revert EncumbranceUnderflow(amount, current);
+        }
+        enc.encumberedCapital = current - amount;
+        LibActiveCreditIndex.applyEncumbranceDecrease(settlementPool, settlementPoolId, lenderPositionKey, amount);
+    }
+
+    function increaseBorrowerCollateralReservation(
+        Types.PoolData storage collateralPool,
+        uint256 collateralPoolId,
+        bytes32 borrowerPositionKey,
+        uint256 amount
+    ) internal {
+        if (amount == 0) {
+            return;
+        }
+
+        LibEncumbrance.position(borrowerPositionKey, collateralPoolId).lockedCapital += amount;
+        LibActiveCreditIndex.applyEncumbranceIncrease(collateralPool, collateralPoolId, borrowerPositionKey, amount);
+    }
+
+    function decreaseBorrowerCollateralReservation(
+        Types.PoolData storage collateralPool,
+        uint256 collateralPoolId,
+        bytes32 borrowerPositionKey,
+        uint256 amount
+    ) internal {
+        if (amount == 0) {
+            return;
+        }
+
+        LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(borrowerPositionKey, collateralPoolId);
+        uint256 current = enc.lockedCapital;
+        if (amount > current) {
+            revert EncumbranceUnderflow(amount, current);
+        }
+        enc.lockedCapital = current - amount;
+        LibActiveCreditIndex.applyEncumbranceDecrease(collateralPool, collateralPoolId, borrowerPositionKey, amount);
     }
 
     function settleSettlementPosition(uint256 settlementPoolId, bytes32 lenderPositionKey) internal {

@@ -200,7 +200,7 @@ abstract contract LaunchFixture is DeployEqualFi {
 
     function _installTestSupportFacet() internal {
         ProtocolTestSupportFacet facet = new ProtocolTestSupportFacet();
-        bytes4[] memory selectors = new bytes4[](12);
+        bytes4[] memory selectors = new bytes4[](16);
         selectors[0] = ProtocolTestSupportFacet.setManagedPoolCreationFee.selector;
         selectors[1] = ProtocolTestSupportFacet.setManagedPoolSystemShareBps.selector;
         selectors[2] = ProtocolTestSupportFacet.setTreasuryShareBps.selector;
@@ -211,8 +211,12 @@ abstract contract LaunchFixture is DeployEqualFi {
         selectors[7] = ProtocolTestSupportFacet.getPoolView.selector;
         selectors[8] = ProtocolTestSupportFacet.isWhitelisted.selector;
         selectors[9] = ProtocolTestSupportFacet.principalOf.selector;
-        selectors[10] = ProtocolTestSupportFacet.canClearMembership.selector;
-        selectors[11] = ProtocolTestSupportFacet.setVaultBalance.selector;
+        selectors[10] = ProtocolTestSupportFacet.indexEncumberedOf.selector;
+        selectors[11] = ProtocolTestSupportFacet.indexEncumberedForIndex.selector;
+        selectors[12] = ProtocolTestSupportFacet.encumberedCapitalOf.selector;
+        selectors[13] = ProtocolTestSupportFacet.lockedCapitalOf.selector;
+        selectors[14] = ProtocolTestSupportFacet.canClearMembership.selector;
+        selectors[15] = ProtocolTestSupportFacet.setVaultBalance.selector;
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = IDiamondCut.FacetCut({

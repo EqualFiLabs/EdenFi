@@ -131,12 +131,14 @@ contract EqualScaleAlphaIntegrationTest is DeployEqualFi {
     function test_unsecuredSoloLine_flowsFromRequestToDrawToRepayToClose() external {
         uint256 borrowerPositionId = _createRegisteredBorrower(alice, borrowerTreasury, 0);
         uint256 lenderPositionId = _fundSettlementPosition(bob, TARGET_LIMIT);
+        bytes32 lenderPositionKey = positionNft.getPositionKey(lenderPositionId);
 
         vm.prank(alice);
         uint256 lineId = EqualScaleAlphaFacet(diamond).createLineProposal(borrowerPositionId, _defaultProposal());
 
         vm.prank(bob);
         EqualScaleAlphaFacet(diamond).commitSolo(lineId, lenderPositionId);
+        assertEq(testSupport.encumberedCapitalOf(lenderPositionKey, SETTLEMENT_POOL_ID), TARGET_LIMIT);
 
         vm.prank(carol);
         EqualScaleAlphaFacet(diamond).activateLine(lineId);
@@ -174,6 +176,7 @@ contract EqualScaleAlphaIntegrationTest is DeployEqualFi {
         assertEq(commitments[0].principalRepaid, MAX_DRAW_PER_PERIOD);
         assertGt(commitments[0].interestReceived, 0);
         assertEq(uint256(commitments[0].status), uint256(LibEqualScaleAlphaStorage.CommitmentStatus.Closed));
+        assertEq(testSupport.encumberedCapitalOf(lenderPositionKey, SETTLEMENT_POOL_ID), 0);
 
         vm.prank(alice);
         vm.expectRevert(
@@ -245,6 +248,7 @@ contract EqualScaleAlphaIntegrationTest is DeployEqualFi {
 
         (uint256 lineId, uint256 lenderPositionOne, uint256 lenderPositionTwo) =
             _createActivePooledLine(borrowerPositionId, params, 600e18, 400e18);
+        assertEq(testSupport.lockedCapitalOf(borrowerPositionKey, SETTLEMENT_POOL_ID), COLLATERAL_AMOUNT);
 
         vm.prank(alice);
         EqualScaleAlphaFacet(diamond).draw(lineId, 500e18);
@@ -271,6 +275,9 @@ contract EqualScaleAlphaIntegrationTest is DeployEqualFi {
         assertEq(commitments[1].recoveryReceived, 100e18);
         assertEq(commitments[1].lossWrittenDown, 100e18);
         assertEq(testSupport.principalOf(SETTLEMENT_POOL_ID, borrowerPositionKey), 0);
+        assertEq(testSupport.lockedCapitalOf(borrowerPositionKey, SETTLEMENT_POOL_ID), 0);
+        assertEq(testSupport.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionOne), SETTLEMENT_POOL_ID), 0);
+        assertEq(testSupport.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionTwo), SETTLEMENT_POOL_ID), 0);
         assertEq(lossSummary.totalRecoveryReceived, COLLATERAL_AMOUNT);
         assertEq(lossSummary.totalLossWrittenDown, 250e18);
     }
@@ -463,9 +470,11 @@ contract EqualScaleAlphaIntegrationTest is DeployEqualFi {
         ProtocolTestSupportFacet supportFacet = new ProtocolTestSupportFacet();
         PositionNFTTransferHookStub transferHookStub = new PositionNFTTransferHookStub();
 
-        bytes4[] memory supportSelectors = new bytes4[](2);
+        bytes4[] memory supportSelectors = new bytes4[](4);
         supportSelectors[0] = ProtocolTestSupportFacet.getPoolView.selector;
         supportSelectors[1] = ProtocolTestSupportFacet.principalOf.selector;
+        supportSelectors[2] = ProtocolTestSupportFacet.encumberedCapitalOf.selector;
+        supportSelectors[3] = ProtocolTestSupportFacet.lockedCapitalOf.selector;
 
         bytes4[] memory transferHookSelectors = new bytes4[](3);
         transferHookSelectors[0] = PositionNFTTransferHookStub.cancelOffersForPosition.selector;

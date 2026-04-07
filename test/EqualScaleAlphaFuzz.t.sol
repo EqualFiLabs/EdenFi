@@ -20,20 +20,12 @@ contract EqualScaleAlphaFuzzInspector {
         return LibEncumbrance.total(positionKey, poolId);
     }
 
-    function moduleEncumbrance(bytes32 positionKey, uint256 poolId, uint256 moduleId) external view returns (uint256) {
-        return LibEncumbrance.getModuleEncumberedForModule(positionKey, poolId, moduleId);
+    function encumberedCapital(bytes32 positionKey, uint256 poolId) external view returns (uint256) {
+        return LibEncumbrance.position(positionKey, poolId).encumberedCapital;
     }
 
-    function alphaCommitmentModuleId(uint256 lineId) external pure returns (uint256) {
-        return uint256(keccak256(abi.encodePacked("equalscale.alpha.commitment.", lineId)));
-    }
-
-    function alphaCollateralModuleId(uint256 lineId) external pure returns (uint256) {
-        return uint256(keccak256(abi.encodePacked("equalscale.alpha.collateral.", lineId)));
-    }
-
-    function edenLoanModuleId(uint256 loanId) external pure returns (uint256) {
-        return uint256(keccak256(abi.encodePacked("EDEN_LOAN", loanId)));
+    function lockedCapital(bytes32 positionKey, uint256 poolId) external view returns (uint256) {
+        return LibEncumbrance.position(positionKey, poolId).lockedCapital;
     }
 }
 
@@ -48,12 +40,10 @@ abstract contract EqualScaleAlphaFuzzBase is EqualScaleAlphaIntegrationTest {
     function _installInspectorFacet() internal {
         EqualScaleAlphaFuzzInspector inspectorFacet = new EqualScaleAlphaFuzzInspector();
 
-        bytes4[] memory selectors = new bytes4[](5);
+        bytes4[] memory selectors = new bytes4[](3);
         selectors[0] = EqualScaleAlphaFuzzInspector.totalEncumbrance.selector;
-        selectors[1] = EqualScaleAlphaFuzzInspector.moduleEncumbrance.selector;
-        selectors[2] = EqualScaleAlphaFuzzInspector.alphaCommitmentModuleId.selector;
-        selectors[3] = EqualScaleAlphaFuzzInspector.alphaCollateralModuleId.selector;
-        selectors[4] = EqualScaleAlphaFuzzInspector.edenLoanModuleId.selector;
+        selectors[1] = EqualScaleAlphaFuzzInspector.encumberedCapital.selector;
+        selectors[2] = EqualScaleAlphaFuzzInspector.lockedCapital.selector;
 
         IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
         cuts[0] = _cut(address(inspectorFacet), selectors);
@@ -282,12 +272,11 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
         LibEqualScaleAlphaStorage.Commitment[] memory commitments =
             EqualScaleAlphaViewFacet(diamond).getLineCommitments(lineId);
         bytes32 lenderPositionKey = positionNft.getPositionKey(lenderPositionId);
-        uint256 moduleId = inspector.alphaCommitmentModuleId(lineId);
 
         assertEq(commitments.length, 1);
         assertEq(commitments[0].committedAmount, 0);
         assertEq(uint256(commitments[0].status), uint256(LibEqualScaleAlphaStorage.CommitmentStatus.Canceled));
-        assertEq(inspector.moduleEncumbrance(lenderPositionKey, SETTLEMENT_POOL_ID, moduleId), 0);
+        assertEq(inspector.encumberedCapital(lenderPositionKey, SETTLEMENT_POOL_ID), 0);
     }
 
     function testFuzz_CommitmentEncumbranceNeverExceedsAvailableLenderPrincipal(
@@ -329,14 +318,11 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
         LibEqualScaleAlphaStorage.CreditLine memory lineOne = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineOneId);
         LibEqualScaleAlphaStorage.CreditLine memory lineTwo = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineTwoId);
         uint256 totalEncumbrance = inspector.totalEncumbrance(lenderPositionKey, SETTLEMENT_POOL_ID);
-        uint256 lineOneModule = inspector.alphaCommitmentModuleId(lineOneId);
-        uint256 lineTwoModule = inspector.alphaCommitmentModuleId(lineTwoId);
 
         assertLe(totalEncumbrance, principal);
         assertLe(lineOne.currentCommittedAmount, TARGET_LIMIT);
         assertLe(lineTwo.currentCommittedAmount, TARGET_LIMIT);
-        assertEq(inspector.moduleEncumbrance(lenderPositionKey, SETTLEMENT_POOL_ID, lineOneModule), lineOne.currentCommittedAmount);
-        assertEq(inspector.moduleEncumbrance(lenderPositionKey, SETTLEMENT_POOL_ID, lineTwoModule), lineTwo.currentCommittedAmount);
+        assertEq(inspector.encumberedCapital(lenderPositionKey, SETTLEMENT_POOL_ID), totalEncumbrance);
         assertEq(totalEncumbrance, lineOne.currentCommittedAmount + lineTwo.currentCommittedAmount);
     }
 
@@ -578,18 +564,19 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
 
         (uint256 lineId,) = _createActiveFourLenderLine(borrowerPositionId, params);
         bytes32 borrowerPositionKey = positionNft.getPositionKey(borrowerPositionId);
-        uint256 collateralModuleId = inspector.alphaCollateralModuleId(lineId);
+        LibEqualScaleAlphaStorage.CreditLine memory line = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
 
         assertEq(
-            inspector.moduleEncumbrance(borrowerPositionKey, SETTLEMENT_POOL_ID, collateralModuleId),
+            inspector.lockedCapital(borrowerPositionKey, SETTLEMENT_POOL_ID),
             securedLine ? COLLATERAL_AMOUNT : 0
         );
+        assertEq(line.lockedCollateralAmount, securedLine ? COLLATERAL_AMOUNT : 0);
 
         uint256 drawAmount = _boundAmount(drawSeed, 100, 500);
         vm.prank(alice);
         EqualScaleAlphaFacet(diamond).draw(lineId, drawAmount);
 
-        LibEqualScaleAlphaStorage.CreditLine memory line = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
+        line = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
         uint256 outstandingBeforeChargeOff = line.outstandingPrincipal;
 
         vm.warp(uint256(line.nextDueAt) + GRACE_PERIOD_SECS + 1);
@@ -613,7 +600,8 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
             assertEq(lossWrittenDown, outstandingBeforeChargeOff);
         }
 
-        assertEq(inspector.moduleEncumbrance(borrowerPositionKey, SETTLEMENT_POOL_ID, collateralModuleId), 0);
+        assertEq(inspector.lockedCapital(borrowerPositionKey, SETTLEMENT_POOL_ID), 0);
+        assertEq(EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId).lockedCollateralAmount, 0);
     }
 }
 
@@ -791,97 +779,5 @@ contract EqualScaleAlphaOwnershipInvariantTest is StdInvariant, EqualScaleAlphaF
         assertEq(handler.lenderUnauthorizedSuccesses(), 0);
         assertGt(handler.borrowerOwnerSuccesses(), 0);
         assertGt(handler.lenderOwnerSuccesses(), 0);
-    }
-}
-
-contract EqualScaleAlphaNamespaceHandler {
-    uint256 internal constant MAX_TRACKED_IDS = 16;
-
-    uint256[] internal lineIds;
-    uint256[] internal loanIds;
-
-    function seedDefaults() external {
-        _trackLineId(0);
-        _trackLineId(1);
-        _trackLineId(type(uint32).max);
-
-        _trackLoanId(0);
-        _trackLoanId(1);
-        _trackLoanId(type(uint32).max);
-    }
-
-    function trackModuleNamespaceInputs(uint256 lineSeed, uint256 loanSeed) external {
-        _trackLineId(lineSeed);
-        _trackLoanId(loanSeed);
-    }
-
-    function lineIdCount() external view returns (uint256) {
-        return lineIds.length;
-    }
-
-    function loanIdCount() external view returns (uint256) {
-        return loanIds.length;
-    }
-
-    function lineIdAt(uint256 index) external view returns (uint256) {
-        return lineIds[index];
-    }
-
-    function loanIdAt(uint256 index) external view returns (uint256) {
-        return loanIds[index];
-    }
-
-    function _trackLineId(uint256 lineId) internal {
-        if (lineIds.length < MAX_TRACKED_IDS) {
-            lineIds.push(lineId);
-            return;
-        }
-
-        lineIds[lineId % MAX_TRACKED_IDS] = lineId;
-    }
-
-    function _trackLoanId(uint256 loanId) internal {
-        if (loanIds.length < MAX_TRACKED_IDS) {
-            loanIds.push(loanId);
-            return;
-        }
-
-        loanIds[loanId % MAX_TRACKED_IDS] = loanId;
-    }
-}
-
-contract EqualScaleAlphaNamespaceInvariantTest is StdInvariant {
-    EqualScaleAlphaNamespaceHandler internal handler;
-
-    function setUp() public {
-        handler = new EqualScaleAlphaNamespaceHandler();
-        handler.seedDefaults();
-
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = handler.trackModuleNamespaceInputs.selector;
-        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
-    }
-
-    function invariant_ModuleNamespacesDoNotCollideWithEDENLending() public view {
-        uint256 lineCount = handler.lineIdCount();
-        uint256 loanCount = handler.loanIdCount();
-
-        for (uint256 i = 0; i < lineCount; i++) {
-            uint256 lineId = handler.lineIdAt(i);
-            uint256 alphaCommitmentModuleId =
-                uint256(keccak256(abi.encodePacked("equalscale.alpha.commitment.", lineId)));
-            uint256 alphaCollateralModuleId =
-                uint256(keccak256(abi.encodePacked("equalscale.alpha.collateral.", lineId)));
-
-            require(alphaCommitmentModuleId != alphaCollateralModuleId, "alpha namespaces collide");
-
-            for (uint256 j = 0; j < loanCount; j++) {
-                uint256 loanId = handler.loanIdAt(j);
-                uint256 edenLoanModuleId = uint256(keccak256(abi.encodePacked("EDEN_LOAN", loanId)));
-
-                require(alphaCommitmentModuleId != edenLoanModuleId, "commitment namespace collides");
-                require(alphaCollateralModuleId != edenLoanModuleId, "collateral namespace collides");
-            }
-        }
     }
 }

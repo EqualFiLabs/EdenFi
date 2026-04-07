@@ -62,6 +62,7 @@ library LibEqualScaleAlphaStorage {
         // Live accounting and lifecycle state
         uint256 activeLimit;
         uint256 currentCommittedAmount;
+        uint256 lockedCollateralAmount;
         uint256 outstandingPrincipal;
         uint256 accruedInterest;
         uint256 interestAccruedSinceLastDue;

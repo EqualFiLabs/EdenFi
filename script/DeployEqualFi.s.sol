@@ -437,7 +437,7 @@ contract DeployEqualFi is Script {
     }
 
     function _selectorsEqualIndexLending() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](16);
+        s = new bytes4[](15);
         s[0] = EqualIndexLendingFacet.configureLending.selector;
         s[1] = EqualIndexLendingFacet.configureBorrowFeeTiers.selector;
         s[2] = EqualIndexLendingFacet.borrowFromPosition.selector;
@@ -453,7 +453,6 @@ contract DeployEqualFi is Script {
         s[12] = EqualIndexLendingFacet.quoteBorrowBasket.selector;
         s[13] = EqualIndexLendingFacet.quoteBorrowFee.selector;
         s[14] = EqualIndexLendingFacet.getBorrowFeeTiers.selector;
-        s[15] = EqualIndexLendingFacet.lendingModuleId.selector;
     }
 
     function _selectorsEqualLendDirectFixedOffer() internal pure returns (bytes4[] memory s) {

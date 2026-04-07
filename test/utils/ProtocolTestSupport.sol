@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
+import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibFeeRouter} from "src/libraries/LibFeeRouter.sol";
 import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
@@ -22,6 +23,7 @@ contract ProtocolTestSupportFacet is EqualIndexBaseV3 {
         uint256 yieldReserve;
         uint256 feeIndex;
         uint256 activeCreditPrincipalTotal;
+        uint256 indexEncumberedTotal;
         uint256 userCount;
     }
 
@@ -72,6 +74,7 @@ contract ProtocolTestSupportFacet is EqualIndexBaseV3 {
         view_.yieldReserve = pool.yieldReserve;
         view_.feeIndex = pool.feeIndex;
         view_.activeCreditPrincipalTotal = pool.activeCreditPrincipalTotal;
+        view_.indexEncumberedTotal = pool.indexEncumberedTotal;
         view_.userCount = pool.userCount;
     }
 
@@ -83,6 +86,26 @@ contract ProtocolTestSupportFacet is EqualIndexBaseV3 {
 
     function principalOf(uint256 pid, bytes32 positionKey) external view returns (uint256) {
         return LibAppStorage.s().pools[pid].userPrincipal[positionKey];
+    }
+
+    function indexEncumberedOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
+        return LibEncumbrance.getIndexEncumbered(positionKey, pid);
+    }
+
+    function indexEncumberedForIndex(bytes32 positionKey, uint256 pid, uint256 indexId)
+        external
+        view
+        returns (uint256)
+    {
+        return LibEncumbrance.getIndexEncumberedForIndex(positionKey, pid, indexId);
+    }
+
+    function encumberedCapitalOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
+        return LibEncumbrance.position(positionKey, pid).encumberedCapital;
+    }
+
+    function lockedCapitalOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
+        return LibEncumbrance.position(positionKey, pid).lockedCapital;
     }
 
     function canClearMembership(uint256 pid, bytes32 positionKey)
