@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, stdError} from "forge-std/Test.sol";
 import {EncumbranceUnderflow} from "src/libraries/Errors.sol";
 import {EqualLendDirectAccountingHarness} from "test/utils/EqualLendDirectAccountingHarness.sol";
 
@@ -15,6 +15,7 @@ contract LibEqualLendDirectAccountingTest is Test {
     uint256 internal constant COLLATERAL_POOL_ID = 22;
     uint256 internal constant NATIVE_POOL_ID = 33;
     uint256 internal constant BORROWER_POSITION_ID = 444;
+    uint256 internal constant BORROWER_POSITION_ID_TWO = 555;
 
     address internal constant ASSET_A = address(0xA11);
     address internal constant ASSET_B = address(0xB22);
@@ -259,6 +260,89 @@ contract LibEqualLendDirectAccountingTest is Test {
         assertEq(debtStatePrincipal, 0, "debt state cleared");
     }
 
+    function test_BugCondition_DebtTrackerOverSubtraction_ShouldRevertWhenSettlementExceedsPositionDebt() external {
+        _seedTwoSameAssetAgreements(100 ether, 100 ether);
+
+        vm.expectRevert(stdError.arithmeticError);
+        harness.settleFixedPrincipal(
+            LENDER_KEY,
+            BORROWER_KEY,
+            BORROWER_POSITION_ID,
+            LENDER_POOL_ID,
+            COLLATERAL_POOL_ID,
+            ASSET_A,
+            ASSET_A,
+            120 ether,
+            0,
+            false
+        );
+    }
+
+    function test_BugCondition_DebtTrackerDesync_ShouldLeaveTrackersZeroAfterRejectedOverSettlement() external {
+        _seedTwoSameAssetAgreements(100 ether, 100 ether);
+
+        vm.expectRevert(stdError.arithmeticError);
+        harness.settleFixedPrincipal(
+            LENDER_KEY,
+            BORROWER_KEY,
+            BORROWER_POSITION_ID,
+            LENDER_POOL_ID,
+            COLLATERAL_POOL_ID,
+            ASSET_A,
+            ASSET_A,
+            120 ether,
+            0,
+            false
+        );
+
+        harness.settleFixedPrincipal(
+            LENDER_KEY,
+            BORROWER_KEY,
+            BORROWER_POSITION_ID,
+            LENDER_POOL_ID,
+            COLLATERAL_POOL_ID,
+            ASSET_A,
+            ASSET_A,
+            100 ether,
+            0,
+            false
+        );
+        harness.settleFixedPrincipal(
+            LENDER_KEY,
+            BORROWER_KEY,
+            BORROWER_POSITION_ID_TWO,
+            LENDER_POOL_ID,
+            COLLATERAL_POOL_ID,
+            ASSET_A,
+            ASSET_A,
+            100 ether,
+            0,
+            false
+        );
+
+        assertEq(harness.borrowedPrincipalOf(BORROWER_KEY, LENDER_POOL_ID), 0, "borrowed principal by pool");
+        assertEq(harness.sameAssetDebtOf(BORROWER_KEY, ASSET_A), 0, "same-asset debt by asset");
+
+        (
+            ,
+            ,
+            ,
+            ,
+            uint256 activeCreditPrincipalTotal,
+            uint256 userSameAssetDebt,
+            uint256 tokenSameAssetDebtOne,
+            uint256 debtStatePrincipal
+        ) = harness.poolState(COLLATERAL_POOL_ID, BORROWER_KEY, BORROWER_POSITION_ID);
+        (, , , , , , uint256 tokenSameAssetDebtTwo,) =
+            harness.poolState(COLLATERAL_POOL_ID, BORROWER_KEY, BORROWER_POSITION_ID_TWO);
+
+        assertEq(userSameAssetDebt, 0, "user same-asset debt");
+        assertEq(tokenSameAssetDebtOne, 0, "first position same-asset debt");
+        assertEq(tokenSameAssetDebtTwo, 0, "second position same-asset debt");
+        assertEq(activeCreditPrincipalTotal, 0, "active credit principal total");
+        assertEq(debtStatePrincipal, 0, "debt state principal");
+    }
+
     function test_encumbranceBucketWrappers_useUnifiedPrimitiveAndProtectUnderflow() external {
         harness.increaseOfferEscrow(LENDER_KEY, LENDER_POOL_ID, 10 ether);
         harness.increaseLiveExposure(LENDER_KEY, LENDER_POOL_ID, 20 ether);
@@ -295,6 +379,37 @@ contract LibEqualLendDirectAccountingTest is Test {
             ASSET_A,
             principal,
             collateralLock
+        );
+    }
+
+    function _seedTwoSameAssetAgreements(uint256 firstPrincipal, uint256 secondPrincipal) internal {
+        _seedLenderPool(ASSET_A, 400 ether);
+        harness.setPool(COLLATERAL_POOL_ID, ASSET_A, 0, 0, 0);
+
+        harness.increaseOfferEscrow(LENDER_KEY, LENDER_POOL_ID, firstPrincipal);
+        harness.originateFixed(
+            LENDER_KEY,
+            BORROWER_KEY,
+            BORROWER_POSITION_ID,
+            LENDER_POOL_ID,
+            COLLATERAL_POOL_ID,
+            ASSET_A,
+            ASSET_A,
+            firstPrincipal,
+            120 ether
+        );
+
+        harness.increaseOfferEscrow(LENDER_KEY, LENDER_POOL_ID, secondPrincipal);
+        harness.originateFixed(
+            LENDER_KEY,
+            BORROWER_KEY,
+            BORROWER_POSITION_ID_TWO,
+            LENDER_POOL_ID,
+            COLLATERAL_POOL_ID,
+            ASSET_A,
+            ASSET_A,
+            secondPrincipal,
+            120 ether
         );
     }
 }
