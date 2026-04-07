@@ -239,7 +239,7 @@ library LibEqualLendDirectAccounting {
         uint256 amount
     ) private {
         uint256 current = store.borrowedPrincipalByPool[borrowerPositionKey][lenderPoolId];
-        store.borrowedPrincipalByPool[borrowerPositionKey][lenderPoolId] = amount >= current ? 0 : current - amount;
+        store.borrowedPrincipalByPool[borrowerPositionKey][lenderPoolId] = current - amount;
     }
 
     function _increaseSameAssetDebt(
@@ -277,22 +277,19 @@ library LibEqualLendDirectAccounting {
         uint256 principalComponent
     ) private {
         uint256 storedDebt = store.sameAssetDebtByAsset[borrowerPositionKey][collateralAsset];
-        store.sameAssetDebtByAsset[borrowerPositionKey][collateralAsset] =
-            principalComponent >= storedDebt ? 0 : storedDebt - principalComponent;
+        store.sameAssetDebtByAsset[borrowerPositionKey][collateralAsset] = storedDebt - principalComponent;
 
         Types.PoolData storage collateralPool = LibAppStorage.s().pools[collateralPoolId];
 
         uint256 sameAssetDebt = collateralPool.userSameAssetDebt[borrowerPositionKey];
-        collateralPool.userSameAssetDebt[borrowerPositionKey] =
-            principalComponent >= sameAssetDebt ? 0 : sameAssetDebt - principalComponent;
+        collateralPool.userSameAssetDebt[borrowerPositionKey] = sameAssetDebt - principalComponent;
 
         uint256 tokenDebt = collateralPool.sameAssetDebt[borrowerPositionId];
-        collateralPool.sameAssetDebt[borrowerPositionId] =
-            principalComponent >= tokenDebt ? 0 : tokenDebt - principalComponent;
+        collateralPool.sameAssetDebt[borrowerPositionId] = tokenDebt - principalComponent;
 
         Types.ActiveCreditState storage debtState = collateralPool.userActiveCreditStateDebt[borrowerPositionKey];
         uint256 debtPrincipalBefore = debtState.principal;
-        uint256 debtDecrease = debtPrincipalBefore > principalComponent ? principalComponent : debtPrincipalBefore;
+        uint256 debtDecrease = principalComponent;
         LibActiveCreditIndex.applyPrincipalDecrease(collateralPool, debtState, debtDecrease);
 
         if (debtPrincipalBefore <= principalComponent || debtState.principal == 0) {
@@ -301,10 +298,6 @@ library LibEqualLendDirectAccounting {
             debtState.indexSnapshot = collateralPool.activeCreditIndex;
         }
 
-        if (collateralPool.activeCreditPrincipalTotal >= debtDecrease) {
-            collateralPool.activeCreditPrincipalTotal -= debtDecrease;
-        } else {
-            collateralPool.activeCreditPrincipalTotal = 0;
-        }
+        collateralPool.activeCreditPrincipalTotal -= debtDecrease;
     }
 }
