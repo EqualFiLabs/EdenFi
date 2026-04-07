@@ -8,6 +8,7 @@ import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibFeeRouter} from "src/libraries/LibFeeRouter.sol";
 import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
+import {LibSelfSecuredCreditStorage} from "src/libraries/LibSelfSecuredCreditStorage.sol";
 import {Types} from "src/libraries/Types.sol";
 
 contract ProtocolTestSupportFacet is EqualIndexBaseV3 {
@@ -88,6 +89,10 @@ contract ProtocolTestSupportFacet is EqualIndexBaseV3 {
         return LibAppStorage.s().pools[pid].userPrincipal[positionKey];
     }
 
+    function sameAssetDebtOf(uint256 pid, bytes32 positionKey) external view returns (uint256) {
+        return LibAppStorage.s().pools[pid].userSameAssetDebt[positionKey];
+    }
+
     function indexEncumberedOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
         return LibEncumbrance.getIndexEncumbered(positionKey, pid);
     }
@@ -108,6 +113,10 @@ contract ProtocolTestSupportFacet is EqualIndexBaseV3 {
         return LibEncumbrance.position(positionKey, pid).lockedCapital;
     }
 
+    function sscLineOf(uint256 pid, bytes32 positionKey) external view returns (Types.SscLine memory line_) {
+        line_ = LibSelfSecuredCreditStorage.lineView(positionKey, pid);
+    }
+
     function canClearMembership(uint256 pid, bytes32 positionKey)
         external
         view
@@ -118,6 +127,10 @@ contract ProtocolTestSupportFacet is EqualIndexBaseV3 {
 
     function setVaultBalance(uint256 indexId, address asset, uint256 amount) external {
         s().vaultBalances[indexId][asset] = amount;
+    }
+
+    function setPoolTrackedBalance(uint256 pid, uint256 amount) external {
+        LibAppStorage.s().pools[pid].trackedBalance = amount;
     }
 
     function routeManagedShareExternal(

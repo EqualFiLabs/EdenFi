@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {LibAppStorage} from "./LibAppStorage.sol";
 import {LibMaintenance} from "./LibMaintenance.sol";
+import {LibSelfSecuredCreditStorage} from "./LibSelfSecuredCreditStorage.sol";
 import {Types} from "./Types.sol";
 
 /// @notice Active Credit index accounting with 24h time-gated eligibility
@@ -234,7 +235,7 @@ library LibActiveCreditIndex {
         _rollMatured(p);
 
         _settleState(p, p.userActiveCreditStateEncumbrance[user], pid, user);
-        _settleState(p, p.userActiveCreditStateDebt[user], pid, user);
+        _settleDebtState(p, p.userActiveCreditStateDebt[user], pid, user);
     }
 
     /// @notice View helper returning accrued + pending active credit yield for a user.
@@ -242,10 +243,56 @@ library LibActiveCreditIndex {
         LibAppStorage.AppStorage storage store = LibAppStorage.s();
         Types.PoolData storage p = store.pools[pid];
 
-        uint256 amount = p.userAccruedYield[user];
+        uint256 accrued = p.userAccruedYield[user];
+        uint256 feeAccrued = p.userClaimableFeeYield[user];
+        uint256 amount = accrued > feeAccrued ? accrued - feeAccrued : 0;
         amount += _pendingForState(p, p.userActiveCreditStateEncumbrance[user]);
-        amount += _pendingForState(p, p.userActiveCreditStateDebt[user]);
+        amount += _pendingDebtYieldExcludingSsc(p, pid, user);
         return amount;
+    }
+
+    /// @notice View helper returning claimable SSC-routed ACI yield.
+    function pendingSscClaimableYield(uint256 pid, bytes32 user) internal view returns (uint256 amount) {
+        Types.PoolData storage p = LibAppStorage.s().pools[pid];
+        Types.SscLine memory lineState = LibSelfSecuredCreditStorage.lineView(user, pid);
+        if (lineState.aciMode == Types.SscAciMode.SelfPay) {
+            uint256 protectedClaimable = LibSelfSecuredCreditStorage.protectedClaimableAciYieldOf(user, pid);
+            uint256 storedClaimable = LibSelfSecuredCreditStorage.claimableAciYieldOf(user, pid);
+            return protectedClaimable > storedClaimable ? storedClaimable : protectedClaimable;
+        }
+
+        amount = LibSelfSecuredCreditStorage.claimableAciYieldOf(user, pid);
+        amount += _pendingSscDebtYield(p, pid, user);
+    }
+
+    /// @notice View helper returning pending SSC debt-side ACI before self-pay routing is applied.
+    function pendingSscDebtYield(uint256 pid, bytes32 user) internal view returns (uint256 amount) {
+        Types.PoolData storage p = LibAppStorage.s().pools[pid];
+        amount = _pendingSscDebtYield(p, pid, user);
+    }
+
+    /// @notice View helper returning stored claimable SSC ACI after hypothetical settlement.
+    function previewStoredSscClaimableYield(uint256 pid, bytes32 user) internal view returns (uint256 amount) {
+        amount = LibSelfSecuredCreditStorage.claimableAciYieldOf(user, pid);
+        amount += pendingSscDebtYield(pid, user);
+    }
+
+    /// @notice View helper returning the amount of SSC ACI that would self-pay debt on the next service.
+    function previewSelfPayAciApplied(uint256 pid, bytes32 user) internal view returns (uint256 amount) {
+        Types.SscLine memory lineState = LibSelfSecuredCreditStorage.lineView(user, pid);
+        if (lineState.aciMode != Types.SscAciMode.SelfPay || lineState.outstandingDebt == 0) {
+            return 0;
+        }
+
+        uint256 claimableBefore = previewStoredSscClaimableYield(pid, user);
+        uint256 protectedClaimable = LibSelfSecuredCreditStorage.protectedClaimableAciYieldOf(user, pid);
+        if (protectedClaimable > claimableBefore) {
+            protectedClaimable = claimableBefore;
+        }
+
+        uint256 serviceableAciYield =
+            claimableBefore > protectedClaimable ? claimableBefore - protectedClaimable : 0;
+        return serviceableAciYield > lineState.outstandingDebt ? lineState.outstandingDebt : serviceableAciYield;
     }
 
     /// @notice View helper returning only active credit pending yield (excludes already accrued ledger).
@@ -300,6 +347,113 @@ library LibActiveCreditIndex {
             }
         }
         state.indexSnapshot = globalIndex;
+    }
+
+    function _settleDebtState(
+        Types.PoolData storage p,
+        Types.ActiveCreditState storage state,
+        uint256 pid,
+        bytes32 user
+    ) private {
+        uint256 globalIndex = p.activeCreditIndex;
+        uint256 prevIndex = state.indexSnapshot;
+
+        if (state.principal == 0) {
+            state.indexSnapshot = globalIndex;
+            state.startTime = 0;
+            return;
+        }
+
+        if (!_isMature(state)) {
+            state.indexSnapshot = globalIndex;
+            return;
+        }
+
+        if (globalIndex > prevIndex) {
+            uint256 delta = globalIndex - prevIndex;
+            uint256 totalAdded = Math.mulDiv(state.principal, delta, INDEX_SCALE);
+            if (totalAdded > 0) {
+                _routeDebtSettlement(p, pid, user, prevIndex, globalIndex, state.principal, totalAdded);
+            }
+        }
+        state.indexSnapshot = globalIndex;
+    }
+
+    function _routeDebtSettlement(
+        Types.PoolData storage p,
+        uint256 pid,
+        bytes32 user,
+        uint256 prevIndex,
+        uint256 globalIndex,
+        uint256 debtPrincipal,
+        uint256 totalAdded
+    ) private {
+        uint256 sscPrincipal = _sscDebtPrincipal(pid, user, debtPrincipal);
+        uint256 sscAdded;
+        if (sscPrincipal != 0) {
+            sscAdded = sscPrincipal >= debtPrincipal
+                ? totalAdded
+                : Math.mulDiv(totalAdded, sscPrincipal, debtPrincipal);
+            if (sscAdded != 0) {
+                LibSelfSecuredCreditStorage.increaseClaimableAciYield(user, pid, sscAdded);
+            }
+        }
+
+        uint256 claimableAdded = totalAdded - sscAdded;
+        if (claimableAdded == 0) {
+            return;
+        }
+
+        uint256 newAccruedYield = p.userAccruedYield[user] + claimableAdded;
+        p.userAccruedYield[user] = newAccruedYield;
+        emit ActiveCreditSettled(pid, user, prevIndex, globalIndex, claimableAdded, newAccruedYield);
+    }
+
+    function _pendingDebtYieldExcludingSsc(Types.PoolData storage p, uint256 pid, bytes32 user)
+        private
+        view
+        returns (uint256 amount)
+    {
+        uint256 totalPending = _pendingForState(p, p.userActiveCreditStateDebt[user]);
+        if (totalPending == 0) {
+            return 0;
+        }
+
+        uint256 sscPending = _pendingSscDebtYield(p, pid, user);
+        return totalPending > sscPending ? totalPending - sscPending : 0;
+    }
+
+    function _pendingSscDebtYield(Types.PoolData storage p, uint256 pid, bytes32 user) private view returns (uint256 amount) {
+        Types.ActiveCreditState storage debtState = p.userActiveCreditStateDebt[user];
+        uint256 totalPending = _pendingForState(p, debtState);
+        if (totalPending == 0 || debtState.principal == 0) {
+            return 0;
+        }
+
+        uint256 sscPrincipal = _sscDebtPrincipal(pid, user, debtState.principal);
+        if (sscPrincipal == 0) {
+            return 0;
+        }
+
+        return sscPrincipal >= debtState.principal
+            ? totalPending
+            : Math.mulDiv(totalPending, sscPrincipal, debtState.principal);
+    }
+
+    function _sscDebtPrincipal(uint256 pid, bytes32 user, uint256 debtStatePrincipal)
+        private
+        view
+        returns (uint256 sscPrincipal)
+    {
+        Types.SscLine memory lineState = LibSelfSecuredCreditStorage.lineView(user, pid);
+        if (!lineState.active) {
+            return 0;
+        }
+
+        sscPrincipal = lineState.outstandingDebt;
+        if (sscPrincipal > debtStatePrincipal) {
+            sscPrincipal = debtStatePrincipal;
+        }
     }
 
     function _rollMatured(Types.PoolData storage p) private {

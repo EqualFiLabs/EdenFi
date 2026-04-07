@@ -132,6 +132,7 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
         }
 
         p.userAccruedYield[positionKey] = 0;
+        p.userClaimableFeeYield[positionKey] = 0;
         p.yieldReserve -= claimed;
         p.trackedBalance -= claimed;
         if (LibCurrency.isNative(p.underlying)) {
@@ -278,13 +279,6 @@ contract PositionManagementFacet is ReentrancyGuardModifiers {
     }
 
     function _previewPositionYield(bytes32 positionKey, uint256 pid) internal view returns (uint256 claimable) {
-        Types.PoolData storage p = _pool(pid);
-        uint256 accrued = p.userAccruedYield[positionKey];
-        uint256 feePending = LibFeeIndex.pendingYield(pid, positionKey);
-        uint256 activePending = LibActiveCreditIndex.pendingYield(pid, positionKey);
-
-        uint256 feeOnly = feePending > accrued ? feePending - accrued : 0;
-        uint256 activeOnly = activePending > accrued ? activePending - accrued : 0;
-        claimable = accrued + feeOnly + activeOnly;
+        claimable = LibFeeIndex.pendingYield(pid, positionKey) + LibActiveCreditIndex.pendingYield(pid, positionKey);
     }
 }

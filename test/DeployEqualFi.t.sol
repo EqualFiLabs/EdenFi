@@ -9,6 +9,8 @@ import {OwnershipFacet} from "src/core/OwnershipFacet.sol";
 import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {FlashLoanFacet} from "src/equallend/FlashLoanFacet.sol";
+import {SelfSecuredCreditFacet} from "src/equallend/SelfSecuredCreditFacet.sol";
+import {SelfSecuredCreditViewFacet} from "src/equallend/SelfSecuredCreditViewFacet.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
@@ -53,6 +55,18 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         bytes4(keccak256("settlementCommitmentModuleId(uint256)"));
     bytes4 internal constant LEGACY_ALPHA_COLLATERAL_MODULE_SELECTOR =
         bytes4(keccak256("borrowerCollateralModuleId(uint256)"));
+    bytes4 internal constant LEGACY_SSC_OPEN_ROLLING_SELECTOR =
+        bytes4(keccak256("openRollingFromPosition(uint256,uint256,uint256,uint256)"));
+    bytes4 internal constant LEGACY_SSC_PAYMENT_SELECTOR =
+        bytes4(keccak256("makePaymentFromPosition(uint256,uint256,uint256,uint256)"));
+    bytes4 internal constant LEGACY_SSC_EXPAND_ROLLING_SELECTOR =
+        bytes4(keccak256("expandRollingFromPosition(uint256,uint256,uint256,uint256)"));
+    bytes4 internal constant LEGACY_SSC_CLOSE_ROLLING_SELECTOR =
+        bytes4(keccak256("closeRollingCreditFromPosition(uint256,uint256,uint256)"));
+    bytes4 internal constant LEGACY_SSC_OPEN_FIXED_SELECTOR =
+        bytes4(keccak256("openFixedFromPosition(uint256,uint256,uint256,uint256,uint256)"));
+    bytes4 internal constant LEGACY_SSC_REPAY_FIXED_SELECTOR =
+        bytes4(keccak256("repayFixedFromPosition(uint256,uint256,uint256,uint256,uint256)"));
 
     address internal treasury = makeAddr("treasury");
 
@@ -95,6 +109,8 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         assertTrue(loupe.facetAddress(PositionManagementFacet.mintPosition.selector) != address(0));
         assertTrue(loupe.facetAddress(PositionManagementFacet.joinPositionPool.selector) != address(0));
         assertTrue(loupe.facetAddress(FlashLoanFacet.flashLoan.selector) != address(0));
+        assertTrue(loupe.facetAddress(SelfSecuredCreditFacet.drawSelfSecuredCredit.selector) != address(0));
+        assertTrue(loupe.facetAddress(SelfSecuredCreditViewFacet.getSscLine.selector) != address(0));
         assertTrue(loupe.facetAddress(EqualIndexAdminFacetV3.createIndex.selector) != address(0));
         assertTrue(loupe.facetAddress(EqualIndexActionsFacetV3.mint.selector) != address(0));
         assertTrue(loupe.facetAddress(EqualIndexPositionFacet.mintFromPosition.selector) != address(0));
@@ -128,6 +144,12 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         assertEq(loupe.facetAddress(LEGACY_EQUAL_INDEX_LENDING_MODULE_SELECTOR), address(0));
         assertEq(loupe.facetAddress(LEGACY_ALPHA_SETTLEMENT_MODULE_SELECTOR), address(0));
         assertEq(loupe.facetAddress(LEGACY_ALPHA_COLLATERAL_MODULE_SELECTOR), address(0));
+        assertEq(loupe.facetAddress(LEGACY_SSC_OPEN_ROLLING_SELECTOR), address(0));
+        assertEq(loupe.facetAddress(LEGACY_SSC_PAYMENT_SELECTOR), address(0));
+        assertEq(loupe.facetAddress(LEGACY_SSC_EXPAND_ROLLING_SELECTOR), address(0));
+        assertEq(loupe.facetAddress(LEGACY_SSC_CLOSE_ROLLING_SELECTOR), address(0));
+        assertEq(loupe.facetAddress(LEGACY_SSC_OPEN_FIXED_SELECTOR), address(0));
+        assertEq(loupe.facetAddress(LEGACY_SSC_REPAY_FIXED_SELECTOR), address(0));
     }
 
     function test_DeployLaunch_InitializesTimelockGovernanceForEdenRewards() public {
@@ -187,10 +209,18 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
     }
 
     function _assertNativeFacetSurfaceInstalled(IDiamondLoupe loupe) internal view {
+        _assertFacetSelectorsInstalled(loupe, _selectorsSelfSecuredCredit());
+        _assertFacetSelectorsInstalled(loupe, _selectorsSelfSecuredCreditView());
         _assertFacetSelectorsInstalled(loupe, _selectorsEqualIndexLending());
         _assertFacetSelectorsInstalled(loupe, _selectorsEqualScaleAlpha());
         _assertFacetSelectorsInstalled(loupe, _selectorsEqualScaleAlphaAdmin());
         _assertFacetSelectorsInstalled(loupe, _selectorsEqualScaleAlphaView());
+
+        address sscLifecycleFacet = loupe.facetAddress(SelfSecuredCreditFacet.drawSelfSecuredCredit.selector);
+        address sscViewFacet = loupe.facetAddress(SelfSecuredCreditViewFacet.getSscLine.selector);
+        assertTrue(sscLifecycleFacet != address(0));
+        assertTrue(sscViewFacet != address(0));
+        assertTrue(sscLifecycleFacet != sscViewFacet);
     }
 
     function _assertEqualXViewSurfaceInstalled(IDiamondLoupe loupe) internal view {
