@@ -1015,7 +1015,7 @@ contract EqualXSoloAmmFacetTest is Test {
             2,
             50e18,
             50e18,
-            uint64(block.timestamp),
+            uint64(block.timestamp + 1 days),
             uint64(block.timestamp + 3 days),
             DEFAULT_REBALANCE_TIMELOCK,
             300,

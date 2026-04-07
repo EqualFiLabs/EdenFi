@@ -31,6 +31,7 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
     error EqualXSoloAmm_InvalidFee(uint16 feeBps);
     error EqualXSoloAmm_InvalidTimeWindow(uint64 startTime, uint64 endTime);
     error EqualXSoloAmm_NotStarted(uint256 marketId);
+    error EqualXSoloAmm_MarketStarted(uint256 marketId);
     error EqualXSoloAmm_NotExpired(uint256 marketId);
     error EqualXSoloAmm_Expired(uint256 marketId);
     error EqualXSoloAmm_AlreadyFinalized(uint256 marketId);
@@ -407,6 +408,9 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         LibEqualXSoloAmmStorage.SoloAmmMarket storage market = LibEqualXSoloAmmStorage.s().markets[marketId];
         _requireMarketExists(marketId, market);
         LibPositionHelpers.requireOwnership(market.makerPositionId);
+        if (block.timestamp >= market.startTime) {
+            revert EqualXSoloAmm_MarketStarted(marketId);
+        }
         _closeMarket(marketId, market, true);
     }
 
@@ -428,21 +432,10 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         LibActiveCreditIndex.applyEncumbranceDecrease(poolA, market.poolIdA, makerPositionKey, market.reserveA);
         LibActiveCreditIndex.applyEncumbranceDecrease(poolB, market.poolIdB, makerPositionKey, market.reserveB);
 
-        uint256 reserveAForPrincipal = market.reserveA;
-        uint256 reserveBForPrincipal = market.reserveB;
-
-        if (market.feeIndexFeeAAccrued > 0 && reserveAForPrincipal >= market.feeIndexFeeAAccrued) {
-            reserveAForPrincipal -= market.feeIndexFeeAAccrued;
-        }
-        if (market.activeCreditFeeAAccrued > 0 && reserveAForPrincipal >= market.activeCreditFeeAAccrued) {
-            reserveAForPrincipal -= market.activeCreditFeeAAccrued;
-        }
-        if (market.feeIndexFeeBAccrued > 0 && reserveBForPrincipal >= market.feeIndexFeeBAccrued) {
-            reserveBForPrincipal -= market.feeIndexFeeBAccrued;
-        }
-        if (market.activeCreditFeeBAccrued > 0 && reserveBForPrincipal >= market.activeCreditFeeBAccrued) {
-            reserveBForPrincipal -= market.activeCreditFeeBAccrued;
-        }
+        uint256 totalProtocolA = market.feeIndexFeeAAccrued + market.activeCreditFeeAAccrued;
+        uint256 totalProtocolB = market.feeIndexFeeBAccrued + market.activeCreditFeeBAccrued;
+        uint256 reserveAForPrincipal = market.reserveA > totalProtocolA ? market.reserveA - totalProtocolA : 0;
+        uint256 reserveBForPrincipal = market.reserveB > totalProtocolB ? market.reserveB - totalProtocolB : 0;
 
         _applyPrincipalDelta(poolA, market.poolIdA, makerPositionKey, reserveAForPrincipal, market.baselineReserveA);
         _applyPrincipalDelta(poolB, market.poolIdB, makerPositionKey, reserveBForPrincipal, market.baselineReserveB);
