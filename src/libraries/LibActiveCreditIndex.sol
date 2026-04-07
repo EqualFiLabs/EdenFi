@@ -161,8 +161,9 @@ library LibActiveCreditIndex {
         uint256 amount
     ) private {
         if (amount == 0) return;
-        p.activeCreditPrincipalTotal += amount;
         Types.ActiveCreditState storage enc = p.userActiveCreditStateEncumbrance[user];
+        _settleState(p, enc, pid, user);
+        p.activeCreditPrincipalTotal += amount;
         applyWeightedIncreaseWithGate(p, enc, amount, pid, user, false);
         enc.indexSnapshot = p.activeCreditIndex;
     }
@@ -175,6 +176,7 @@ library LibActiveCreditIndex {
     ) private {
         if (amount == 0) return;
         Types.ActiveCreditState storage enc = p.userActiveCreditStateEncumbrance[user];
+        _settleState(p, enc, pid, user);
         uint256 principalBefore = enc.principal;
         uint256 decrease = principalBefore >= amount ? amount : principalBefore;
         if (p.activeCreditPrincipalTotal >= decrease) {
