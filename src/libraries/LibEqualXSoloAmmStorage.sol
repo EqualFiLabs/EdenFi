@@ -5,6 +5,16 @@ import {LibEqualXTypes} from "./LibEqualXTypes.sol";
 
 library LibEqualXSoloAmmStorage {
     bytes32 internal constant STORAGE_POSITION = keccak256("equalfi.equalx.solo-amm.storage");
+    uint64 internal constant DEFAULT_MIN_REBALANCE_TIMELOCK = 1 minutes;
+
+    struct SoloAmmPendingRebalance {
+        uint256 snapshotReserveA;
+        uint256 snapshotReserveB;
+        uint256 targetReserveA;
+        uint256 targetReserveB;
+        uint64 executeAfter;
+        bool exists;
+    }
 
     struct SoloAmmMarket {
         bytes32 makerPositionKey;
@@ -15,10 +25,12 @@ library LibEqualXSoloAmmStorage {
         address tokenB;
         uint256 reserveA;
         uint256 reserveB;
-        uint256 initialReserveA;
-        uint256 initialReserveB;
+        uint256 baselineReserveA;
+        uint256 baselineReserveB;
         uint64 startTime;
         uint64 endTime;
+        uint64 lastRebalanceExecutionAt;
+        uint64 rebalanceTimelock;
         uint16 feeBps;
         LibEqualXTypes.FeeAsset feeAsset;
         LibEqualXTypes.InvariantMode invariantMode;
@@ -38,7 +50,9 @@ library LibEqualXSoloAmmStorage {
 
     struct SoloAmmStorage {
         uint256 nextMarketId;
+        uint64 minRebalanceTimelock;
         mapping(uint256 => SoloAmmMarket) markets;
+        mapping(uint256 => SoloAmmPendingRebalance) pendingRebalances;
     }
 
     function s() internal pure returns (SoloAmmStorage storage store) {
@@ -48,7 +62,17 @@ library LibEqualXSoloAmmStorage {
         }
     }
 
+    function minRebalanceTimelock(SoloAmmStorage storage store) internal view returns (uint64 timelock) {
+        timelock = store.minRebalanceTimelock;
+        if (timelock == 0) {
+            timelock = DEFAULT_MIN_REBALANCE_TIMELOCK;
+        }
+    }
+
     function allocateMarketId(SoloAmmStorage storage store) internal returns (uint256 marketId) {
+        if (store.minRebalanceTimelock == 0) {
+            store.minRebalanceTimelock = DEFAULT_MIN_REBALANCE_TIMELOCK;
+        }
         marketId = store.nextMarketId + 1;
         store.nextMarketId = marketId;
     }

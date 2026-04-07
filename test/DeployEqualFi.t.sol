@@ -16,6 +16,7 @@ import {EqualIndexLendingFacet} from "src/equalindex/EqualIndexLendingFacet.sol"
 import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
 import {EqualScaleAlphaAdminFacet} from "src/equalscale/EqualScaleAlphaAdminFacet.sol";
 import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.sol";
+import {EqualXViewFacet} from "src/equalx/EqualXViewFacet.sol";
 import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockController.sol";
 import {IDiamondLoupe} from "src/interfaces/IDiamondLoupe.sol";
 import {PositionAgentConfigFacet} from "src/agent-wallet/erc6551/PositionAgentConfigFacet.sol";
@@ -47,6 +48,11 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
     bytes4 internal constant LEGACY_CREATE_BASKET_SELECTOR = 0x58e4bfcc;
     bytes4 internal constant LEGACY_PRODUCT_MINT_SELECTOR = 0x7fdd64b4;
     bytes4 internal constant LEGACY_PRODUCT_CREATE_SELECTOR = 0x7f45d621;
+    bytes4 internal constant LEGACY_EQUAL_INDEX_LENDING_MODULE_SELECTOR = bytes4(keccak256("lendingModuleId()"));
+    bytes4 internal constant LEGACY_ALPHA_SETTLEMENT_MODULE_SELECTOR =
+        bytes4(keccak256("settlementCommitmentModuleId(uint256)"));
+    bytes4 internal constant LEGACY_ALPHA_COLLATERAL_MODULE_SELECTOR =
+        bytes4(keccak256("borrowerCollateralModuleId(uint256)"));
 
     address internal treasury = makeAddr("treasury");
 
@@ -100,12 +106,15 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         assertTrue(loupe.facetAddress(EqualScaleAlphaFacet.registerBorrowerProfile.selector) != address(0));
         assertTrue(loupe.facetAddress(EqualScaleAlphaAdminFacet.freezeLine.selector) != address(0));
         assertTrue(loupe.facetAddress(EqualScaleAlphaViewFacet.getBorrowerProfile.selector) != address(0));
+        assertTrue(loupe.facetAddress(EqualXViewFacet.getEqualXSoloAmmPendingRebalance.selector) != address(0));
         assertTrue(loupe.facetAddress(OptionTokenAdminFacet.deployOptionToken.selector) != address(0));
         assertTrue(loupe.facetAddress(OptionTokenViewFacet.getOptionToken.selector) != address(0));
         assertTrue(loupe.facetAddress(OptionsFacet.createOptionSeries.selector) != address(0));
         assertTrue(loupe.facetAddress(OptionsViewFacet.getOptionSeriesProductiveCollateral.selector) != address(0));
         assertTrue(loupe.facetAddress(EdenRewardsFacet.createRewardProgram.selector) != address(0));
 
+        _assertNativeFacetSurfaceInstalled(loupe);
+        _assertEqualXViewSurfaceInstalled(loupe);
         _assertDirectFacetSurfaceInstalled(loupe);
 
         assertEq(OptionTokenViewFacet(deployment.diamond).getOptionToken(), deployment.optionToken);
@@ -116,6 +125,9 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         assertEq(loupe.facetAddress(LEGACY_CREATE_BASKET_SELECTOR), address(0));
         assertEq(loupe.facetAddress(LEGACY_PRODUCT_MINT_SELECTOR), address(0));
         assertEq(loupe.facetAddress(LEGACY_PRODUCT_CREATE_SELECTOR), address(0));
+        assertEq(loupe.facetAddress(LEGACY_EQUAL_INDEX_LENDING_MODULE_SELECTOR), address(0));
+        assertEq(loupe.facetAddress(LEGACY_ALPHA_SETTLEMENT_MODULE_SELECTOR), address(0));
+        assertEq(loupe.facetAddress(LEGACY_ALPHA_COLLATERAL_MODULE_SELECTOR), address(0));
     }
 
     function test_DeployLaunch_InitializesTimelockGovernanceForEdenRewards() public {
@@ -172,6 +184,17 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         _assertFacetSelectorsInstalled(loupe, _selectorsEqualLendDirectRollingLifecycle());
         _assertFacetSelectorsInstalled(loupe, _selectorsEqualLendDirectConfig());
         _assertFacetSelectorsInstalled(loupe, _selectorsEqualLendDirectView());
+    }
+
+    function _assertNativeFacetSurfaceInstalled(IDiamondLoupe loupe) internal view {
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualIndexLending());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualScaleAlpha());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualScaleAlphaAdmin());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualScaleAlphaView());
+    }
+
+    function _assertEqualXViewSurfaceInstalled(IDiamondLoupe loupe) internal view {
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualXView());
     }
 
     function _assertFacetSelectorsInstalled(IDiamondLoupe loupe, bytes4[] memory expectedSelectors) internal view {
