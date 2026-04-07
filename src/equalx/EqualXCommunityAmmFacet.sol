@@ -302,7 +302,14 @@ contract EqualXCommunityAmmFacet is ReentrancyGuardModifiers {
         _lockReserveBacking(poolA, positionKey, market.poolIdA, amountA);
         _lockReserveBacking(poolB, positionKey, market.poolIdB, amountB);
 
-        uint256 share = Math.sqrt(Math.mulDiv(amountA, amountB, 1));
+        uint256 share;
+        if (market.totalShares == 0) {
+            share = Math.sqrt(Math.mulDiv(amountA, amountB, 1));
+        } else {
+            uint256 shareA = Math.mulDiv(amountA, market.totalShares, market.reserveA);
+            uint256 shareB = Math.mulDiv(amountB, market.totalShares, market.reserveB);
+            share = shareA < shareB ? shareA : shareB;
+        }
         maker.share += share;
         maker.initialContributionA += amountA;
         maker.initialContributionB += amountB;

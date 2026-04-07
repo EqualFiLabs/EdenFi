@@ -752,8 +752,8 @@ contract EqualXSoloInvariantTest is StdInvariant, Test {
         if (market.active) {
             assertEq(harness.encumberedCapitalOf(makerKey, market.poolIdA), market.reserveA);
             assertEq(harness.encumberedCapitalOf(makerKey, market.poolIdB), market.reserveB);
-            assertEq(harness.activeCreditPrincipalTotalOf(1), market.baselineReserveA);
-            assertEq(harness.activeCreditPrincipalTotalOf(2), market.baselineReserveB);
+            assertEq(harness.activeCreditPrincipalTotalOf(1), market.reserveA);
+            assertEq(harness.activeCreditPrincipalTotalOf(2), market.reserveB);
             assertEq(harness.principalOf(1, makerKey), handler.fundedPrincipalA());
             assertEq(harness.principalOf(2, makerKey), handler.fundedPrincipalB());
         } else if (market.finalized) {
