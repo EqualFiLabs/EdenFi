@@ -1854,7 +1854,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         );
     }
 
-    function test_frozenLine_canStillEnterRefinancingPermissionlesslyAtTermEnd() external {
+    function test_frozenLine_cannotEnterRefinancingAtTermEnd() external {
         uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
 
         _timelockCall(abi.encodeWithSelector(EqualScaleAlphaAdminFacet.freezeLine.selector, lineId, OPS_FREEZE_REASON));
@@ -1864,21 +1864,19 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         );
 
         uint40 termEndAt = facet.line(lineId).termEndAt;
-        uint40 refinanceEndAt = facet.line(lineId).refinanceEndAt;
         vm.warp(termEndAt);
 
-        vm.expectEmit(true, false, false, true, address(facet));
-        emit CreditLineEnteredRefinancing(lineId, refinanceEndAt, TARGET_LIMIT, 0);
-
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IEqualScaleAlphaErrors.InvalidProposalTerms.selector, "line not active for refinancing"
+            )
+        );
         vm.prank(dave);
         facet.enterRefinancing(lineId);
 
         LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
-        require(
-            line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing,
-            "frozen line should progress into refinancing"
-        );
-        require(line.activeLimit == TARGET_LIMIT, "refinancing should preserve active limit");
+        require(line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Frozen, "frozen line should remain frozen");
+        require(line.activeLimit == TARGET_LIMIT, "freeze should preserve active limit");
     }
 
     function test_refinancing_allowsFullRenewalWithRolledAndNewPooledCommitments() external {
@@ -2706,7 +2704,7 @@ contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
         facet.markDelinquent(lineId);
     }
 
-    function test_BugCondition_EnterRefinancing_ShouldRejectFrozenLines() external {
+    function test_BugCondition_FreezeBypass_ShouldRejectFrozenLines() external {
         uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
 
         _timelockCall(abi.encodeWithSelector(EqualScaleAlphaAdminFacet.freezeLine.selector, lineId, OPS_FREEZE_REASON));

@@ -78,10 +78,7 @@ library LibEqualScaleAlphaLifecycle {
 
     function enterRefinancing(uint256 lineId) external {
         LibEqualScaleAlphaStorage.CreditLine storage line = LibEqualScaleAlphaStorage.s().lines[lineId];
-        if (
-            line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Active
-                && line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Frozen
-        ) {
+        if (line.status != LibEqualScaleAlphaStorage.CreditLineStatus.Active) {
             revert IEqualScaleAlphaErrors.InvalidProposalTerms("line not active for refinancing");
         }
         if (block.timestamp < line.termEndAt) {
