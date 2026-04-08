@@ -471,9 +471,9 @@ contract EqualXCommunityAmmFacetTest is Test {
         assertEq(harness.principalOf(2, charliePositionKey), 500e18);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 100e18);
         assertEq(harness.encumberedCapitalOf(charliePositionKey, 1), 50e18);
-        assertEq(market.treasuryFeeAAccrued, preview.treasuryFee);
-        assertEq(market.activeCreditFeeAAccrued, preview.activeCreditFee);
-        assertEq(market.feeIndexFeeAAccrued, preview.feeIndexFee);
+        assertEq(market.treasuryFeeAAccrued, 0);
+        assertEq(market.activeCreditFeeAAccrued, 0);
+        assertEq(market.feeIndexFeeAAccrued, preview.activeCreditFee + preview.feeIndexFee);
         assertEq(harness.yieldReserveOf(1), preview.activeCreditFee + preview.feeIndexFee);
     }
 

@@ -16,7 +16,6 @@ import {LibFeeRouter} from "../libraries/LibFeeRouter.sol";
 import {LibPoolMembership} from "../libraries/LibPoolMembership.sol";
 import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
 import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
-import {TransientSwapCache} from "../libraries/TransientSwapCache.sol";
 import {Types} from "../libraries/Types.sol";
 import {InsufficientPrincipal, InvalidParameterRange, PoolMembershipRequired} from "../libraries/Errors.sol";
 
@@ -504,22 +503,19 @@ contract EqualXCommunityAmmFacet is ReentrancyGuardModifiers {
         }
 
         if (split.protocolFee > 0) {
-            TransientSwapCache.cacheFeePool(ctx.feePoolId);
-            uint256 cachedFeePoolId = TransientSwapCache.loadFeePool();
-            if (cachedFeePoolId != 0) {
-                ctx.feePoolId = cachedFeePoolId;
-            }
             uint256 extraBacking = _feeSideReserve(market, ctx.feePoolId);
             (uint256 toTreasury, uint256 toActive, uint256 toIndex) =
-                LibFeeRouter.routeSamePool(ctx.feePoolId, split.protocolFee, COMMUNITY_AMM_FEE_SOURCE, false, extraBacking);
+                LibFeeRouter.routeSamePoolPreSplit(
+                    ctx.feePoolId,
+                    split.treasuryFee,
+                    split.activeCreditFee,
+                    split.feeIndexFee,
+                    COMMUNITY_AMM_FEE_SOURCE,
+                    false,
+                    extraBacking
+                );
 
-            if (toTreasury > 0) {
-                if (ctx.feeToken == market.tokenA) {
-                    market.treasuryFeeAAccrued += toTreasury;
-                } else {
-                    market.treasuryFeeBAccrued += toTreasury;
-                }
-            }
+            toTreasury;
             if (toActive > 0 || toIndex > 0) {
                 Types.PoolData storage feePool =
                     ctx.feePoolId == market.poolIdA ? LibPositionHelpers.pool(market.poolIdA) : LibPositionHelpers.pool(market.poolIdB);
@@ -528,11 +524,9 @@ contract EqualXCommunityAmmFacet is ReentrancyGuardModifiers {
                     LibAppStorage.s().nativeTrackedTotal += toActive + toIndex;
                 }
                 if (ctx.feePoolId == market.poolIdA) {
-                    market.activeCreditFeeAAccrued += toActive;
-                    market.feeIndexFeeAAccrued += toIndex;
+                    market.feeIndexFeeAAccrued += toActive + toIndex;
                 } else {
-                    market.activeCreditFeeBAccrued += toActive;
-                    market.feeIndexFeeBAccrued += toIndex;
+                    market.feeIndexFeeBAccrued += toActive + toIndex;
                 }
             }
         }
@@ -619,14 +613,13 @@ contract EqualXCommunityAmmFacet is ReentrancyGuardModifiers {
     function _prepareSwapContext(
         LibEqualXCommunityAmmStorage.CommunityAmmMarket storage market,
         address tokenIn
-    ) internal returns (SwapContext memory ctx) {
+    ) internal view returns (SwapContext memory ctx) {
         ctx.inIsA = _isTokenA(tokenIn, market);
         ctx.reserveIn = ctx.inIsA ? market.reserveA : market.reserveB;
         ctx.reserveOut = ctx.inIsA ? market.reserveB : market.reserveA;
         ctx.decimalsIn = ctx.inIsA ? market.tokenADecimals : market.tokenBDecimals;
         ctx.decimalsOut = ctx.inIsA ? market.tokenBDecimals : market.tokenADecimals;
         ctx.tokenOut = ctx.inIsA ? market.tokenB : market.tokenA;
-        TransientSwapCache.cacheReserves(ctx.reserveIn, ctx.reserveOut);
         if (market.feeAsset == LibEqualXTypes.FeeAsset.TokenIn) {
             ctx.feePoolId = ctx.inIsA ? market.poolIdA : market.poolIdB;
             ctx.feeToken = tokenIn;
