@@ -9,7 +9,8 @@ import {
     DirectError_InvalidAgreementState,
     DirectError_InvalidTimestamp,
     DirectError_LenderCallNotAllowed,
-    InsufficientPrincipal
+    InsufficientPrincipal,
+    MaxUserCountExceeded
 } from "src/libraries/Errors.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
@@ -232,6 +233,10 @@ contract EqualLendDirectLifecycleFacet is ReentrancyGuardModifiers {
         pool.userPrincipal[positionKey] = principalBefore + amount;
         pool.totalDeposits += amount;
         if (principalBefore == 0) {
+            uint256 maxUsers = pool.poolConfig.maxUserCount;
+            if (maxUsers > 0 && pool.userCount >= maxUsers) {
+                revert MaxUserCountExceeded(maxUsers);
+            }
             pool.userCount += 1;
         }
     }
