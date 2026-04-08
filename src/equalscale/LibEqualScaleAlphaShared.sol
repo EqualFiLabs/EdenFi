@@ -145,7 +145,11 @@ library LibEqualScaleAlphaShared {
     }
 
     function advanceDueCheckpoint(LibEqualScaleAlphaStorage.CreditLine storage line) internal {
-        line.nextDueAt += line.paymentIntervalSecs;
+        uint40 newDueAt = line.nextDueAt + line.paymentIntervalSecs;
+        if (newDueAt > line.termEndAt) {
+            newDueAt = line.termEndAt;
+        }
+        line.nextDueAt = newDueAt;
         line.interestAccruedSinceLastDue = 0;
         line.paidSinceLastDue = 0;
     }

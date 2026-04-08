@@ -31,33 +31,41 @@ library LibEqualScaleAlphaLifecycle {
 
         uint256 effectiveAmount = amount > totalOutstanding ? totalOutstanding : amount;
         uint256 requiredMinimumDue = LibEqualScaleAlphaShared.requiredMinimumDue(line);
+        bool dueWindowFreshlyResetThisBlock =
+            line.interestAccruedAt == block.timestamp && line.interestAccruedSinceLastDue == 0 && line.paidSinceLastDue == 0;
+        bool advanceCheckpoint = requiredMinimumDue != 0 && line.paidSinceLastDue < requiredMinimumDue
+            && (
+                line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Delinquent || block.timestamp >= line.nextDueAt
+            ) && !dueWindowFreshlyResetThisBlock;
         uint256 interestComponent = effectiveAmount > line.accruedInterest ? line.accruedInterest : effectiveAmount;
         uint256 principalComponent = effectiveAmount - interestComponent;
 
-        Types.PoolData storage settlementPool = LibAppStorage.s().pools[line.settlementPoolId];
-        uint256 received =
-            LibCurrency.pullAtLeast(settlementPool.underlying, msg.sender, effectiveAmount, effectiveAmount);
-        settlementPool.trackedBalance += received;
+        {
+            Types.PoolData storage settlementPool = LibAppStorage.s().pools[line.settlementPoolId];
+            uint256 received =
+                LibCurrency.pullAtLeast(settlementPool.underlying, msg.sender, effectiveAmount, effectiveAmount);
+            settlementPool.trackedBalance += received;
 
-        LibEqualScaleAlphaShared.settleSettlementPosition(line.settlementPoolId, borrowerPositionKey);
+            LibEqualScaleAlphaShared.settleSettlementPosition(line.settlementPoolId, borrowerPositionKey);
 
-        line.accruedInterest -= interestComponent;
-        line.outstandingPrincipal -= principalComponent;
-        line.totalInterestRepaid += interestComponent;
-        line.totalPrincipalRepaid += principalComponent;
-        line.paidSinceLastDue += effectiveAmount;
+            line.accruedInterest -= interestComponent;
+            line.outstandingPrincipal -= principalComponent;
+            line.totalInterestRepaid += interestComponent;
+            line.totalPrincipalRepaid += principalComponent;
+            line.paidSinceLastDue += effectiveAmount;
 
-        if (principalComponent != 0) {
-            LibEqualScaleAlphaShared.reduceBorrowerDebt(
-                settlementPool, line.settlementPoolId, borrowerPositionKey, principalComponent
-            );
+            if (principalComponent != 0) {
+                LibEqualScaleAlphaShared.reduceBorrowerDebt(
+                    settlementPool, line.settlementPoolId, borrowerPositionKey, principalComponent
+                );
+            }
         }
 
         LibEqualScaleAlphaShared.allocateRepayment(store, lineId, interestComponent, principalComponent);
         LibEqualScaleAlphaShared.recordPaymentRecord(store, lineId, effectiveAmount, principalComponent, interestComponent);
 
         bool minimumDueSatisfied = requiredMinimumDue == 0 || line.paidSinceLastDue >= requiredMinimumDue;
-        if (minimumDueSatisfied) {
+        if (minimumDueSatisfied && advanceCheckpoint) {
             LibEqualScaleAlphaShared.advanceDueCheckpoint(line);
         }
 
