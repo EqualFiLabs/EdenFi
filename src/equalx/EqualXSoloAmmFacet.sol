@@ -728,12 +728,10 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         if (previousReserve == newReserve) {
             return;
         }
-        Types.PoolData storage pool = LibPositionHelpers.pool(poolId);
         LibEncumbrance.Encumbrance storage enc = LibEncumbrance.position(makerPositionKey, poolId);
         if (newReserve > previousReserve) {
             uint256 delta = newReserve - previousReserve;
             enc.encumberedCapital += delta;
-            LibActiveCreditIndex.applyEncumbranceIncrease(pool, poolId, makerPositionKey, delta);
         } else {
             uint256 delta = previousReserve - newReserve;
             uint256 currentEncumberedCapital = enc.encumberedCapital;
@@ -741,7 +739,6 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
                 revert InsufficientPrincipal(delta, currentEncumberedCapital);
             }
             enc.encumberedCapital = currentEncumberedCapital - delta;
-            LibActiveCreditIndex.applyEncumbranceDecrease(pool, poolId, makerPositionKey, delta);
         }
     }
 
