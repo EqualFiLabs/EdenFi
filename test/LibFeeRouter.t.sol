@@ -141,4 +141,46 @@ contract LibFeeRouterPreservationTest is ManagedFeeRoutingTest {
         assertEq(beforePool.trackedBalance - afterPool.trackedBalance, 1e18);
         assertEq(afterPool.yieldReserve, beforePool.yieldReserve + 9e18);
     }
+
+    function test_Integration_TreasuryRouting_ExoticTokenHelpersShouldShareOnePoolSideInvariant() public {
+        MockSenderDeltaToken canonicalExotic = new MockSenderDeltaToken("Canonical Exotic", "CEXO");
+        MockSenderDeltaToken managedExotic = new MockSenderDeltaToken("Managed Exotic", "MEXO");
+
+        testSupport.setManagedPoolCreationFee(CREATION_FEE);
+        testSupport.setTreasuryShareBps(10_000);
+        testSupport.setActiveCreditShareBps(0);
+        testSupport.setManagedPoolSystemShareBps(2000);
+
+        _initPoolWithActionFees(170, address(canonicalExotic), _poolConfig(), _actionFees());
+        _createManagedPool(alice, MANAGED_PID, address(managedExotic));
+
+        uint256 canonicalPositionId = _mintPosition(alice, 170);
+        canonicalExotic.mint(alice, 110e18);
+        vm.startPrank(alice);
+        canonicalExotic.approve(diamond, type(uint256).max);
+        PositionManagementFacet(diamond).depositToPosition(canonicalPositionId, 170, 100e18, 100e18);
+        vm.stopPrank();
+
+        uint256 managedPositionId = _whitelistedPosition(alice, MANAGED_PID);
+        managedExotic.mint(alice, 110e18);
+        vm.startPrank(alice);
+        managedExotic.approve(diamond, type(uint256).max);
+        PositionManagementFacet(diamond).depositToPosition(managedPositionId, MANAGED_PID, 100e18, 100e18);
+        vm.stopPrank();
+
+        uint256 canonicalTrackedBefore = testSupport.getPoolView(170).trackedBalance;
+        uint256 canonicalBalanceBefore = canonicalExotic.balanceOf(diamond);
+        testSupport.routeManagedShareExternal(170, 10e18, PRESERVATION_SOURCE, true, 0);
+        uint256 canonicalTrackedAfter = testSupport.getPoolView(170).trackedBalance;
+        uint256 canonicalBalanceAfter = canonicalExotic.balanceOf(diamond);
+
+        uint256 managedTrackedBefore = testSupport.getPoolView(MANAGED_PID).trackedBalance;
+        uint256 managedBalanceBefore = managedExotic.balanceOf(diamond);
+        testSupport.routeManagedShareExternal(MANAGED_PID, 50e18, PRESERVATION_SOURCE, true, 0);
+        uint256 managedTrackedAfter = testSupport.getPoolView(MANAGED_PID).trackedBalance;
+        uint256 managedBalanceAfter = managedExotic.balanceOf(diamond);
+
+        assertEq(canonicalTrackedBefore - canonicalTrackedAfter, canonicalBalanceBefore - canonicalBalanceAfter);
+        assertEq(managedTrackedBefore - managedTrackedAfter, managedBalanceBefore - managedBalanceAfter);
+    }
 }

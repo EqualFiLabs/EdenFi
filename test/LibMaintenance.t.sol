@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
@@ -76,6 +78,14 @@ contract LibMaintenanceBugConditionTest is LaunchFixture {
 }
 
 contract LibMaintenancePreservationTest is LaunchFixture {
+    struct MaintenanceExpectations {
+        uint256 totalDepositsBefore;
+        uint256 amountAccrued;
+        uint256 maintenanceDelta;
+        uint256 aliceMaintenanceFee;
+        uint256 bobMaintenanceFee;
+    }
+
     function setUp() public override {
         super.setUp();
         _bootstrapCorePools();
@@ -184,5 +194,86 @@ contract LibMaintenancePreservationTest is LaunchFixture {
         PositionManagementFacet(diamond).depositToPosition(alicePositionId, 1, 1e18, 1e18);
 
         assertEq(PositionManagementFacet(diamond).previewPositionYield(alicePositionId, 1), 0);
+    }
+
+    function test_Integration_MaintenanceMixedEncumbrance_ShouldTrackChargeablePrincipalAcrossEpochs() public {
+        address foundation = makeAddr("foundation");
+        testSupport.setFoundationReceiver(foundation);
+
+        uint256 alicePositionId = _mintPosition(alice, 1);
+        uint256 bobPositionId = _mintPosition(bob, 1);
+        bytes32 alicePositionKey = positionNft.getPositionKey(alicePositionId);
+        bytes32 bobPositionKey = positionNft.getPositionKey(bobPositionId);
+
+        eve.mint(alice, 121e18);
+        eve.mint(bob, 81e18);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, type(uint256).max);
+        PositionManagementFacet(diamond).depositToPosition(alicePositionId, 1, 120e18, 120e18);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        eve.approve(diamond, type(uint256).max);
+        PositionManagementFacet(diamond).depositToPosition(bobPositionId, 1, 80e18, 80e18);
+        vm.stopPrank();
+
+        (uint256 indexId,) =
+            _createIndexThroughTimelock(_singleAssetIndexParams("Mixed Maintenance Index", "MMI", address(eve), 0, 0));
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, indexId, 30e18);
+
+        vm.warp(block.timestamp + 30 days);
+        MaintenanceExpectations memory expected = _maintenanceExpectations(alicePositionKey, bobPositionKey);
+
+        vm.prank(alice);
+        PositionManagementFacet(diamond).depositToPosition(alicePositionId, 1, 1e18, 1e18);
+
+        vm.prank(bob);
+        PositionManagementFacet(diamond).depositToPosition(bobPositionId, 1, 1e18, 1e18);
+
+        uint256 alicePrincipalAfter = testSupport.principalOf(1, alicePositionKey);
+        uint256 bobPrincipalAfter = testSupport.principalOf(1, bobPositionKey);
+        uint256 totalDepositsAfter = testSupport.getPoolView(1).totalDeposits;
+        uint256 aliceMaintenanceFeeActual = 121e18 - alicePrincipalAfter;
+        uint256 bobMaintenanceFeeActual = 81e18 - bobPrincipalAfter;
+        uint256 aliceFullPrincipalCounterfactual = Math.mulDiv(120e18, expected.maintenanceDelta, 1e18);
+
+        assertTrue(_absDiff(aliceMaintenanceFeeActual, expected.aliceMaintenanceFee) <= 100);
+        assertTrue(_absDiff(bobMaintenanceFeeActual, expected.bobMaintenanceFee) <= 100);
+        assertTrue(aliceMaintenanceFeeActual < aliceFullPrincipalCounterfactual);
+        assertEq(
+            totalDepositsAfter,
+            expected.totalDepositsBefore + 2e18 - expected.amountAccrued
+        );
+    }
+
+    function _maintenanceExpectations(bytes32 alicePositionKey, bytes32 bobPositionKey)
+        internal
+        view
+        returns (MaintenanceExpectations memory expected)
+    {
+        PoolManagementFacet.PoolMaintenanceView memory maintenanceBefore =
+            PoolManagementFacet(diamond).getPoolMaintenanceView(1);
+        expected.totalDepositsBefore = testSupport.getPoolView(1).totalDeposits;
+        uint256 chargeableTvlBefore = expected.totalDepositsBefore - testSupport.getPoolView(1).indexEncumberedTotal;
+        uint256 aliceChargeablePrincipal =
+            testSupport.principalOf(1, alicePositionKey) - testSupport.indexEncumberedOf(alicePositionKey, 1);
+        uint256 bobChargeablePrincipal = testSupport.principalOf(1, bobPositionKey);
+        uint256 epochs = (block.timestamp - uint256(maintenanceBefore.lastMaintenanceTimestamp)) / maintenanceBefore.epochLength;
+        uint256 amountAccrued =
+            (chargeableTvlBefore * uint256(maintenanceBefore.maintenanceRateBps) * epochs) / (365 * 10_000);
+        uint256 maintenanceDelta =
+            (amountAccrued * 1e18 + maintenanceBefore.maintenanceIndexRemainder) / chargeableTvlBefore;
+
+        expected.amountAccrued = amountAccrued;
+        expected.maintenanceDelta = maintenanceDelta;
+        expected.aliceMaintenanceFee = (aliceChargeablePrincipal * maintenanceDelta) / 1e18;
+        expected.bobMaintenanceFee = (bobChargeablePrincipal * maintenanceDelta) / 1e18;
+    }
+
+    function _absDiff(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a >= b ? a - b : b - a;
     }
 }
