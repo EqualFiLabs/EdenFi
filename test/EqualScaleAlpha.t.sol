@@ -282,6 +282,115 @@ contract EqualScaleAlphaIntegrationTest is DeployEqualFi {
         assertEq(lossSummary.totalLossWrittenDown, 250e18);
     }
 
+    function test_chargeOffLifecycle_clearsBorrowerDebtRecognizesInterestLossAndAllowsBorrowerExit() external {
+        EqualScaleAlphaAdminFacet(diamond).setChargeOffThreshold(1 days);
+
+        uint256 borrowerPositionId = _createRegisteredBorrower(alice, borrowerTreasury, 400e18);
+        bytes32 borrowerPositionKey = positionNft.getPositionKey(borrowerPositionId);
+
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposal();
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+        params.collateralMode = LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted;
+        params.borrowerCollateralPoolId = SETTLEMENT_POOL_ID;
+        params.borrowerCollateralAmount = COLLATERAL_AMOUNT;
+
+        (uint256 lineId, uint256 lenderPositionOne, uint256 lenderPositionTwo) =
+            _createActivePooledLine(borrowerPositionId, params, 600e18, 400e18);
+
+        vm.prank(alice);
+        EqualScaleAlphaFacet(diamond).draw(lineId, 500e18);
+
+        vm.warp(uint256(EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId).nextDueAt) + GRACE_PERIOD_SECS + 1);
+        vm.prank(dave);
+        EqualScaleAlphaFacet(diamond).markDelinquent(lineId);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(dave);
+        EqualScaleAlphaFacet(diamond).chargeOffLine(lineId);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
+        EqualScaleAlphaViewFacet.LineLossSummaryView memory lossSummary =
+            EqualScaleAlphaViewFacet(diamond).getLineLossSummary(lineId);
+
+        assertEq(uint256(line.status), uint256(LibEqualScaleAlphaStorage.CreditLineStatus.Closed));
+        assertEq(testSupport.sameAssetDebtOf(SETTLEMENT_POOL_ID, borrowerPositionKey), 0);
+        assertEq(testSupport.principalOf(SETTLEMENT_POOL_ID, borrowerPositionKey), 150e18);
+        assertGt(lossSummary.totalInterestLossAllocated, 0);
+        assertEq(testSupport.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionOne), SETTLEMENT_POOL_ID), 0);
+        assertEq(testSupport.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionTwo), SETTLEMENT_POOL_ID), 0);
+
+        vm.prank(alice);
+        PositionManagementFacet(diamond).withdrawFromPosition(borrowerPositionId, SETTLEMENT_POOL_ID, 150e18, 150e18);
+        assertEq(alt.balanceOf(alice), 150e18);
+    }
+
+    function test_repaymentCheckpointLifecycle_advancesOncePerWindowAndCapsAtTermEnd() external {
+        uint256 borrowerPositionId = _createRegisteredBorrower(alice, borrowerTreasury, 0);
+
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposal();
+        params.requestedTargetLimit = 2e18;
+        params.minimumViableLine = 1e18;
+        params.minimumPaymentPerPeriod = 1e18;
+        params.maxDrawPerPeriod = 2e18;
+
+        uint256 lenderPositionId = _fundSettlementPosition(bob, 2e18);
+
+        vm.prank(alice);
+        uint256 lineId = EqualScaleAlphaFacet(diamond).createLineProposal(borrowerPositionId, params);
+
+        vm.prank(bob);
+        EqualScaleAlphaFacet(diamond).commitSolo(lineId, lenderPositionId);
+        vm.prank(alice);
+        EqualScaleAlphaFacet(diamond).activateLine(lineId);
+        vm.prank(alice);
+        EqualScaleAlphaFacet(diamond).draw(lineId, 2e18);
+
+        uint40 dueBefore = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId).nextDueAt;
+        vm.warp(uint256(dueBefore) + GRACE_PERIOD_SECS + 1);
+
+        alt.mint(alice, 2e18);
+        vm.startPrank(alice);
+        alt.approve(diamond, 2e18);
+        EqualScaleAlphaFacet(diamond).repayLine(lineId, 1e18);
+        vm.stopPrank();
+
+        uint40 dueAfterFirstPayment = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId).nextDueAt;
+        assertEq(uint256(dueAfterFirstPayment), uint256(dueBefore) + PAYMENT_INTERVAL_SECS);
+
+        vm.prank(alice);
+        EqualScaleAlphaFacet(diamond).repayLine(lineId, 1e18);
+
+        assertEq(EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId).nextDueAt, dueAfterFirstPayment);
+
+        EqualScaleAlphaFacet.LineProposalParams memory cappedParams = params;
+        cappedParams.aprBps = 0;
+        cappedParams.requestedTargetLimit = 1e18;
+        cappedParams.maxDrawPerPeriod = 1e18;
+        cappedParams.facilityTermSecs = PAYMENT_INTERVAL_SECS;
+        uint256 cappedLenderPositionId = _fundSettlementPosition(bob, 1e18);
+
+        vm.prank(alice);
+        uint256 cappedLineId = EqualScaleAlphaFacet(diamond).createLineProposal(borrowerPositionId, cappedParams);
+        vm.prank(bob);
+        EqualScaleAlphaFacet(diamond).commitSolo(cappedLineId, cappedLenderPositionId);
+        vm.prank(alice);
+        EqualScaleAlphaFacet(diamond).activateLine(cappedLineId);
+        vm.prank(alice);
+        EqualScaleAlphaFacet(diamond).draw(cappedLineId, 1e18);
+
+        LibEqualScaleAlphaStorage.CreditLine memory cappedLine = EqualScaleAlphaViewFacet(diamond).getCreditLine(cappedLineId);
+        assertEq(cappedLine.nextDueAt, cappedLine.termEndAt);
+
+        vm.warp(uint256(cappedLine.nextDueAt) + 1);
+        alt.mint(alice, 1e18);
+        vm.startPrank(alice);
+        alt.approve(diamond, 1e18);
+        EqualScaleAlphaFacet(diamond).repayLine(cappedLineId, 1e18);
+        vm.stopPrank();
+
+        assertEq(EqualScaleAlphaViewFacet(diamond).getCreditLine(cappedLineId).nextDueAt, cappedLine.termEndAt);
+    }
+
     function test_refinancing_handlesFullRenewalResizedRenewalRunoffAndRunoffCure() external {
         uint256 borrowerPositionId = _createRegisteredBorrower(alice, borrowerTreasury, 0);
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposal();
@@ -366,6 +475,70 @@ contract EqualScaleAlphaIntegrationTest is DeployEqualFi {
         }
     }
 
+    function test_runoffCureLifecycle_respectsMinimumViableLineFloor() external {
+        uint256 borrowerPositionId = _createRegisteredBorrower(alice, borrowerTreasury, 0);
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposal();
+        params.aprBps = 0;
+        params.minimumPaymentPerPeriod = 1;
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+
+        {
+            (uint256 lineId, uint256 lenderPositionOne,) =
+                _createActivePooledLine(borrowerPositionId, params, 700e18, 300e18);
+
+            vm.prank(alice);
+            EqualScaleAlphaFacet(diamond).draw(lineId, 500e18);
+
+            vm.warp(EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId).termEndAt);
+            EqualScaleAlphaFacet(diamond).enterRefinancing(lineId);
+
+            vm.prank(bob);
+            EqualScaleAlphaFacet(diamond).exitCommitment(lineId, lenderPositionOne);
+
+            vm.warp(EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId).refinanceEndAt);
+            EqualScaleAlphaFacet(diamond).resolveRefinancing(lineId);
+
+            alt.mint(alice, 200e18);
+            vm.startPrank(alice);
+            alt.approve(diamond, 200e18);
+            EqualScaleAlphaFacet(diamond).repayLine(lineId, 200e18);
+            vm.stopPrank();
+
+            LibEqualScaleAlphaStorage.CreditLine memory line = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
+            assertEq(uint256(line.status), uint256(LibEqualScaleAlphaStorage.CreditLineStatus.Runoff));
+            assertEq(line.outstandingPrincipal, 300e18);
+            assertEq(line.currentCommittedAmount, 300e18);
+        }
+
+        {
+            (uint256 lineId, uint256 lenderPositionOne,) =
+                _createActivePooledLine(borrowerPositionId, params, 600e18, 400e18);
+
+            vm.prank(alice);
+            EqualScaleAlphaFacet(diamond).draw(lineId, 500e18);
+
+            vm.warp(EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId).termEndAt);
+            EqualScaleAlphaFacet(diamond).enterRefinancing(lineId);
+
+            vm.prank(bob);
+            EqualScaleAlphaFacet(diamond).exitCommitment(lineId, lenderPositionOne);
+
+            vm.warp(EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId).refinanceEndAt);
+            EqualScaleAlphaFacet(diamond).resolveRefinancing(lineId);
+
+            alt.mint(alice, 100e18);
+            vm.startPrank(alice);
+            alt.approve(diamond, 100e18);
+            EqualScaleAlphaFacet(diamond).repayLine(lineId, 100e18);
+            vm.stopPrank();
+
+            LibEqualScaleAlphaStorage.CreditLine memory line = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
+            assertEq(uint256(line.status), uint256(LibEqualScaleAlphaStorage.CreditLineStatus.Active));
+            assertEq(line.outstandingPrincipal, 400e18);
+            assertEq(line.activeLimit, 400e18);
+        }
+    }
+
     function test_delinquencyChargeOffAndLossRecognition_arePermissionlessAndProRata() external {
         EqualScaleAlphaAdminFacet(diamond).setChargeOffThreshold(1 days);
 
@@ -400,6 +573,107 @@ contract EqualScaleAlphaIntegrationTest is DeployEqualFi {
         assertEq(commitments[1].lossWrittenDown, 200e18);
         assertEq(uint256(commitments[0].status), uint256(LibEqualScaleAlphaStorage.CommitmentStatus.WrittenDown));
         assertEq(uint256(commitments[1].status), uint256(LibEqualScaleAlphaStorage.CommitmentStatus.WrittenDown));
+    }
+
+    function test_recoveryAllocationLifecycle_fullyCreditsSkewedLendersWithoutStranding() external {
+        EqualScaleAlphaAdminFacet(diamond).setChargeOffThreshold(1 days);
+
+        uint256 borrowerPositionId = _createRegisteredBorrower(alice, borrowerTreasury, 10e18);
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposal();
+        params.requestedTargetLimit = 21e18;
+        params.minimumViableLine = 1e18;
+        params.aprBps = 0;
+        params.minimumPaymentPerPeriod = 1;
+        params.maxDrawPerPeriod = 21e18;
+        params.collateralMode = LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted;
+        params.borrowerCollateralPoolId = SETTLEMENT_POOL_ID;
+        params.borrowerCollateralAmount = 10e18;
+
+        vm.prank(alice);
+        uint256 lineId = EqualScaleAlphaFacet(diamond).createLineProposal(borrowerPositionId, params);
+        _openLineToPooled(lineId);
+
+        uint256 lenderPositionOne = _fundSettlementPosition(bob, 1e18);
+        uint256 lenderPositionTwo = _fundSettlementPosition(carol, 10e18);
+        uint256 lenderPositionThree = _fundSettlementPosition(dave, 10e18);
+
+        vm.prank(bob);
+        EqualScaleAlphaFacet(diamond).commitPooled(lineId, lenderPositionOne, 1e18);
+        vm.prank(carol);
+        EqualScaleAlphaFacet(diamond).commitPooled(lineId, lenderPositionTwo, 10e18);
+        vm.prank(dave);
+        EqualScaleAlphaFacet(diamond).commitPooled(lineId, lenderPositionThree, 10e18);
+        vm.prank(alice);
+        EqualScaleAlphaFacet(diamond).activateLine(lineId);
+
+        vm.prank(alice);
+        EqualScaleAlphaFacet(diamond).draw(lineId, 21e18);
+
+        vm.warp(uint256(EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId).nextDueAt) + GRACE_PERIOD_SECS + 1);
+        vm.prank(dave);
+        EqualScaleAlphaFacet(diamond).markDelinquent(lineId);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(dave);
+        EqualScaleAlphaFacet(diamond).chargeOffLine(lineId);
+
+        LibEqualScaleAlphaStorage.Commitment[] memory commitments =
+            EqualScaleAlphaViewFacet(diamond).getLineCommitments(lineId);
+        EqualScaleAlphaViewFacet.LineLossSummaryView memory lossSummary =
+            EqualScaleAlphaViewFacet(diamond).getLineLossSummary(lineId);
+
+        uint256 totalRecovery;
+        for (uint256 i = 0; i < commitments.length; i++) {
+            totalRecovery += commitments[i].recoveryReceived;
+        }
+
+        assertEq(commitments.length, 3);
+        assertEq(totalRecovery, 10e18);
+        assertEq(lossSummary.totalRecoveryReceived, 10e18);
+    }
+
+    function test_treasuryWalletLockLifecycle_unlocksAfterLineClosure() external {
+        uint256 borrowerPositionId = _createRegisteredBorrower(alice, borrowerTreasury, 0);
+        bytes32 borrowerPositionKey = positionNft.getPositionKey(borrowerPositionId);
+        address newTreasury = address(0xD00D);
+
+        uint256 lenderPositionId = _fundSettlementPosition(bob, TARGET_LIMIT);
+
+        vm.prank(alice);
+        uint256 lineId = EqualScaleAlphaFacet(diamond).createLineProposal(borrowerPositionId, _defaultProposal());
+
+        vm.prank(bob);
+        EqualScaleAlphaFacet(diamond).commitSolo(lineId, lenderPositionId);
+        vm.prank(alice);
+        EqualScaleAlphaFacet(diamond).activateLine(lineId);
+
+        vm.prank(alice);
+        EqualScaleAlphaFacet(diamond).draw(lineId, 100e18);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IEqualScaleAlphaErrors.TreasuryWalletLockedDuringLiveLines.selector, borrowerPositionKey
+            )
+        );
+        EqualScaleAlphaFacet(diamond).updateBorrowerProfile(
+            borrowerPositionId, newTreasury, address(eve), keccak256("locked-while-live")
+        );
+
+        uint256 repayAmount = _fullRepayAmount(lineId);
+        alt.mint(alice, repayAmount);
+        vm.startPrank(alice);
+        alt.approve(diamond, repayAmount);
+        EqualScaleAlphaFacet(diamond).repayLine(lineId, repayAmount);
+        EqualScaleAlphaFacet(diamond).closeLine(lineId);
+        EqualScaleAlphaFacet(diamond).updateBorrowerProfile(
+            borrowerPositionId, newTreasury, address(eve), keccak256("updated-after-close")
+        );
+        vm.stopPrank();
+
+        EqualScaleAlphaViewFacet.BorrowerProfileView memory profile =
+            EqualScaleAlphaViewFacet(diamond).getBorrowerProfile(borrowerPositionId);
+        assertEq(profile.treasuryWallet, newTreasury);
     }
 
     function test_positionNFTTransfers_moveBorrowerControlAndLenderCommitmentRightsOnActiveLines() external {
@@ -470,11 +744,12 @@ contract EqualScaleAlphaIntegrationTest is DeployEqualFi {
         ProtocolTestSupportFacet supportFacet = new ProtocolTestSupportFacet();
         PositionNFTTransferHookStub transferHookStub = new PositionNFTTransferHookStub();
 
-        bytes4[] memory supportSelectors = new bytes4[](4);
+        bytes4[] memory supportSelectors = new bytes4[](5);
         supportSelectors[0] = ProtocolTestSupportFacet.getPoolView.selector;
         supportSelectors[1] = ProtocolTestSupportFacet.principalOf.selector;
         supportSelectors[2] = ProtocolTestSupportFacet.encumberedCapitalOf.selector;
         supportSelectors[3] = ProtocolTestSupportFacet.lockedCapitalOf.selector;
+        supportSelectors[4] = ProtocolTestSupportFacet.sameAssetDebtOf.selector;
 
         bytes4[] memory transferHookSelectors = new bytes4[](3);
         transferHookSelectors[0] = PositionNFTTransferHookStub.cancelOffersForPosition.selector;
@@ -607,19 +882,20 @@ contract EqualScaleAlphaIntegrationTest is DeployEqualFi {
     }
 
     function _selectorsEqualScaleAlphaView() internal pure override returns (bytes4[] memory s) {
-        s = new bytes4[](12);
+        s = new bytes4[](13);
         s[0] = EqualScaleAlphaViewFacet.getBorrowerProfile.selector;
         s[1] = EqualScaleAlphaViewFacet.getCreditLine.selector;
         s[2] = EqualScaleAlphaViewFacet.getBorrowerLineIds.selector;
-        s[3] = EqualScaleAlphaViewFacet.getLineCommitments.selector;
-        s[4] = EqualScaleAlphaViewFacet.getLenderPositionCommitments.selector;
-        s[5] = EqualScaleAlphaViewFacet.previewDraw.selector;
-        s[6] = EqualScaleAlphaViewFacet.previewLineRepay.selector;
-        s[7] = EqualScaleAlphaViewFacet.isLineDrawEligible.selector;
-        s[8] = EqualScaleAlphaViewFacet.currentMinimumDue.selector;
-        s[9] = EqualScaleAlphaViewFacet.getTreasuryTelemetry.selector;
-        s[10] = EqualScaleAlphaViewFacet.getRefinanceStatus.selector;
-        s[11] = EqualScaleAlphaViewFacet.getLineLossSummary.selector;
+        s[3] = EqualScaleAlphaViewFacet.getActiveBorrowerLineIds.selector;
+        s[4] = EqualScaleAlphaViewFacet.getLineCommitments.selector;
+        s[5] = EqualScaleAlphaViewFacet.getLenderPositionCommitments.selector;
+        s[6] = EqualScaleAlphaViewFacet.previewDraw.selector;
+        s[7] = EqualScaleAlphaViewFacet.previewLineRepay.selector;
+        s[8] = EqualScaleAlphaViewFacet.isLineDrawEligible.selector;
+        s[9] = EqualScaleAlphaViewFacet.currentMinimumDue.selector;
+        s[10] = EqualScaleAlphaViewFacet.getTreasuryTelemetry.selector;
+        s[11] = EqualScaleAlphaViewFacet.getRefinanceStatus.selector;
+        s[12] = EqualScaleAlphaViewFacet.getLineLossSummary.selector;
     }
 
     function _defaultProposal() internal pure returns (EqualScaleAlphaFacet.LineProposalParams memory params) {

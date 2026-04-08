@@ -2752,6 +2752,39 @@ contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
         require(facet.line(lineId).currentPeriodDrawn == 0, "reentrant native draw should not consume draw capacity");
     }
 
+    function test_Integration_NativeDrawLifecycle_NormalNativeDrawStillSucceeds() external {
+        facet.configurePoolForDeposits(NATIVE_SETTLEMENT_POOL_ID, address(0), 1);
+
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.settlementPoolId = NATIVE_SETTLEMENT_POOL_ID;
+        params.requestedTargetLimit = 2 ether;
+        params.minimumViableLine = 1 ether;
+        params.minimumPaymentPerPeriod = 1;
+        params.maxDrawPerPeriod = 2 ether;
+
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(borrowerPositionId, params);
+
+        uint256 lenderPositionId = positionNft.mint(bob, NATIVE_SETTLEMENT_POOL_ID);
+        vm.deal(bob, 2 ether);
+        vm.prank(bob);
+        facet.depositToPosition{value: 2 ether}(lenderPositionId, NATIVE_SETTLEMENT_POOL_ID, 2 ether, 2 ether);
+
+        vm.prank(bob);
+        facet.commitSolo(lineId, lenderPositionId);
+        vm.prank(alice);
+        facet.activateLine(lineId);
+
+        vm.prank(alice);
+        facet.draw(lineId, 1 ether);
+
+        require(facet.line(lineId).outstandingPrincipal == 1 ether, "normal native draw should succeed");
+        require(facet.line(lineId).currentPeriodDrawn == 1 ether, "normal native draw should consume capacity");
+        require(treasuryWallet.balance == 1 ether, "treasury wallet should receive native draw funds");
+    }
+
     function test_BugCondition_MarkDelinquent_ShouldRevertOnMissedPaymentsOverflow() external {
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
         params.maxDrawPerPeriod = TARGET_LIMIT;

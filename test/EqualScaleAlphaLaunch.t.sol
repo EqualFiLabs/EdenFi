@@ -126,6 +126,36 @@ contract EqualScaleAlphaLaunchTest is LaunchFixture {
         assertEq(testSupport.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionTwo), SETTLEMENT_POOL_ID), 0);
     }
 
+    function test_LiveLaunch_EqualScaleAlpha_FreezeIntegrityBlocksRefinancingUntilUnfreeze() external {
+        uint256 borrowerPositionId = _createRegisteredBorrower(alice, borrowerTreasury, 0);
+        uint256 lenderPositionId = _fundSettlementPosition(bob, TARGET_LIMIT);
+
+        vm.prank(alice);
+        uint256 lineId = EqualScaleAlphaFacet(diamond).createLineProposal(borrowerPositionId, _defaultProposal());
+
+        vm.prank(bob);
+        EqualScaleAlphaFacet(diamond).commitSolo(lineId, lenderPositionId);
+        vm.prank(alice);
+        EqualScaleAlphaFacet(diamond).activateLine(lineId);
+
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(EqualScaleAlphaAdminFacet.freezeLine.selector, lineId, keccak256("ops-freeze"))
+        );
+
+        vm.warp(EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId).termEndAt);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEqualScaleAlphaErrors.InvalidProposalTerms.selector, "line not active for refinancing")
+        );
+        EqualScaleAlphaFacet(diamond).enterRefinancing(lineId);
+
+        _timelockCall(diamond, abi.encodeWithSelector(EqualScaleAlphaAdminFacet.unfreezeLine.selector, lineId));
+        EqualScaleAlphaFacet(diamond).enterRefinancing(lineId);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
+        assertEq(uint256(line.status), uint256(LibEqualScaleAlphaStorage.CreditLineStatus.Refinancing));
+    }
+
     function _createRegisteredBorrower(address owner, address treasuryWallet, uint256 principalDeposit)
         internal
         returns (uint256 borrowerPositionId)
