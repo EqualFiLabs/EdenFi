@@ -2624,7 +2624,7 @@ contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
         require(first.lossWrittenDown + second.lossWrittenDown == 500e18, "principal write-down should stay separate");
     }
 
-    function test_BugCondition_RunoffCure_ShouldNotRestartBelowMinimumViableLine() external {
+    function test_BugCondition_RunoffCureFloor_ShouldNotRestartBelowMinimumViableLine() external {
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
         params.aprBps = 0;
         params.minimumPaymentPerPeriod = 1;

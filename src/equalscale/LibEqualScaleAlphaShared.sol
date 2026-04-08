@@ -167,6 +167,7 @@ library LibEqualScaleAlphaShared {
         if (
             line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Runoff
                 && line.outstandingPrincipal <= line.currentCommittedAmount
+                && line.currentCommittedAmount >= line.minimumViableLine
         ) {
             restartLineTerm(line, line.currentCommittedAmount);
         }
