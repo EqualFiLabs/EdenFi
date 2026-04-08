@@ -6,6 +6,7 @@ import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
 import {LibEqualLendDirectAccounting} from "src/libraries/LibEqualLendDirectAccounting.sol";
 import {LibEqualLendDirectStorage} from "src/libraries/LibEqualLendDirectStorage.sol";
+import {LibFeeIndex} from "src/libraries/LibFeeIndex.sol";
 import {Types} from "src/libraries/Types.sol";
 
 contract EqualLendDirectAccountingHarness {
@@ -26,6 +27,26 @@ contract EqualLendDirectAccountingHarness {
 
     function setUserPrincipal(uint256 pid, bytes32 positionKey, uint256 principal) external {
         LibAppStorage.s().pools[pid].userPrincipal[positionKey] = principal;
+    }
+
+    function setMaxUserCount(uint256 pid, uint256 maxUserCount) external {
+        LibAppStorage.s().pools[pid].poolConfig.maxUserCount = maxUserCount;
+    }
+
+    function setMaintenanceIndex(uint256 pid, uint256 maintenanceIndex) external {
+        LibAppStorage.s().pools[pid].maintenanceIndex = maintenanceIndex;
+    }
+
+    function setUserMaintenanceIndex(uint256 pid, bytes32 positionKey, uint256 maintenanceIndex) external {
+        LibAppStorage.s().pools[pid].userMaintenanceIndex[positionKey] = maintenanceIndex;
+    }
+
+    function setUserFeeIndex(uint256 pid, bytes32 positionKey, uint256 feeIndex) external {
+        LibAppStorage.s().pools[pid].userFeeIndex[positionKey] = feeIndex;
+    }
+
+    function setFoundationReceiver(address receiver) external {
+        LibAppStorage.s().foundationReceiver = receiver;
     }
 
     function setNativeTrackedTotal(uint256 amount) external {
@@ -66,6 +87,10 @@ contract EqualLendDirectAccountingHarness {
 
     function restoreLenderCapital(bytes32 lenderPositionKey, uint256 lenderPoolId, uint256 amount) external {
         LibEqualLendDirectAccounting.restoreLenderCapital(lenderPositionKey, lenderPoolId, amount);
+    }
+
+    function settleFeeIndex(uint256 pid, bytes32 positionKey) external {
+        LibFeeIndex.settle(pid, positionKey);
     }
 
     function originateFixed(
