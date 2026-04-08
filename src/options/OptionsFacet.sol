@@ -122,6 +122,7 @@ contract OptionsFacet is ReentrancyGuardModifiers {
 
         seriesId = ++store.nextOptionSeriesId;
         _writeSeries(store, seriesId, makerPositionKey, params, underlyingAsset, strikeAsset, collateralLocked);
+        store.activeSeriesCount += 1;
 
         LibOptionsStorage.addSeriesForPosition(store, makerPositionKey, seriesId);
         _optionToken().mint(makerOwner, seriesId, params.totalSize, "");
@@ -176,7 +177,9 @@ contract OptionsFacet is ReentrancyGuardModifiers {
         }
 
         series.reclaimed = true;
-        LibOptionsStorage.removeSeriesForPosition(LibOptionsStorage.s(), series.makerPositionKey, seriesId);
+        LibOptionsStorage.OptionsStorage storage store = LibOptionsStorage.s();
+        store.activeSeriesCount -= 1;
+        LibOptionsStorage.removeSeriesForPosition(store, series.makerPositionKey, seriesId);
 
         emit OptionsReclaimed(seriesId, series.makerPositionKey, remainingSize, collateralUnlocked);
     }

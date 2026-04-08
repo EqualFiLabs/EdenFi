@@ -58,6 +58,7 @@ library LibOptionsStorage {
     struct OptionsStorage {
         mapping(uint256 => OptionSeries) optionSeries;
         uint256 nextOptionSeriesId;
+        uint256 activeSeriesCount;
         bool paused;
         uint64 europeanToleranceSeconds;
         mapping(bytes32 => uint256[]) seriesIdsByPosition;

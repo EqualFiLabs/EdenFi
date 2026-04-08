@@ -5,10 +5,12 @@ import {OptionToken} from "src/tokens/OptionToken.sol";
 import {LibAccess} from "src/libraries/LibAccess.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
 import {LibOptionTokenStorage} from "src/libraries/LibOptionTokenStorage.sol";
+import {LibOptionsStorage} from "src/libraries/LibOptionsStorage.sol";
 
 /// @notice Governance surface for the canonical EqualFi option token.
 contract OptionTokenAdminFacet {
     error OptionTokenAdmin_InvalidToken(address token);
+    error OptionTokenAdmin_ActiveSeriesExist(uint256 count);
 
     event OptionTokenUpdated(address indexed previousToken, address indexed newToken);
     event OptionTokenDeployed(address indexed token, address indexed owner, string baseURI);
@@ -33,6 +35,10 @@ contract OptionTokenAdminFacet {
     function _setOptionToken(address token) internal {
         if (token == address(0)) {
             revert OptionTokenAdmin_InvalidToken(token);
+        }
+        uint256 activeSeriesCount = LibOptionsStorage.s().activeSeriesCount;
+        if (activeSeriesCount > 0) {
+            revert OptionTokenAdmin_ActiveSeriesExist(activeSeriesCount);
         }
 
         LibOptionTokenStorage.OptionTokenStorage storage store = LibOptionTokenStorage.s();

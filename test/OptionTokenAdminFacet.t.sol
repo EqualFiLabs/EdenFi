@@ -29,11 +29,17 @@ contract OptionTokenAdminFacetTest is LaunchFixture {
         assertTrue(seriesId != 0);
 
         OptionToken replacement = new OptionToken("ipfs://equalfi/options/v2", address(this), diamond);
+        bytes memory callData =
+            abi.encodeWithSelector(OptionTokenAdminFacet.setOptionToken.selector, address(replacement));
+        bytes32 salt = keccak256(abi.encodePacked("equalfi-test-salt", timelockSaltNonce++));
+
+        timelockController.schedule(diamond, 0, callData, bytes32(0), salt, 7 days);
+        vm.warp(block.timestamp + 7 days + 1);
 
         vm.expectRevert(
             abi.encodeWithSelector(bytes4(keccak256("OptionTokenAdmin_ActiveSeriesExist(uint256)")), 1)
         );
-        _timelockCall(diamond, abi.encodeWithSelector(OptionTokenAdminFacet.setOptionToken.selector, address(replacement)));
+        timelockController.execute(diamond, 0, callData, bytes32(0), salt);
     }
 
     function test_SetOptionToken_UpdatesCanonicalTokenWhenNoLiveSeriesExist() public {
