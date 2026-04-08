@@ -100,14 +100,13 @@ library LibMaintenance {
             totalDepositsAfterAccrual = 0;
         }
 
-        uint256 oldTotal = totalDepositsAfterAccrual + amountAccrued;
-        if (oldTotal == 0) {
+        if (chargeableTvl == 0) {
             return (totalDepositsAfterAccrual, maintenanceIndexAfterAccrual);
         }
 
         uint256 scaledAmount = (amountAccrued * 1e18) / 1;
         uint256 dividend = scaledAmount + p.maintenanceIndexRemainder;
-        uint256 delta = dividend / oldTotal;
+        uint256 delta = dividend / chargeableTvl;
         if (delta > 0) {
             maintenanceIndexAfterAccrual += delta;
         }
@@ -170,19 +169,22 @@ library LibMaintenance {
 
         // Apply negative fee index to proportionally reduce all user principals
         // This works like negative yield - reducing everyone's balance proportionally
-        _applyMaintenanceToIndex(store, p, amountAccrued);
+        _applyMaintenanceToIndex(store, p, amountAccrued, chargeableTvl);
 
         p.pendingMaintenance += amountAccrued;
         return (amountAccrued, epochs);
     }
 
-    function _applyMaintenanceToIndex(LibAppStorage.AppStorage storage, Types.PoolData storage p, uint256 amount)
+    function _applyMaintenanceToIndex(
+        LibAppStorage.AppStorage storage,
+        Types.PoolData storage p,
+        uint256 amount,
+        uint256 chargeableTvl
+    )
         private
     {
         if (amount == 0) return;
-        // Note: totalDeposits has already been reduced, so we use the OLD value for calculation
-        uint256 oldTotal = p.totalDeposits + amount;
-        if (oldTotal == 0) return;
+        if (chargeableTvl == 0) return;
 
         // Calculate the reduction ratio: amount / oldTotal
         // We'll reduce each user's principal by this ratio when they settle
@@ -190,14 +192,14 @@ library LibMaintenance {
         uint256 scaledAmount = (amount * 1e18) / 1;
         // Use per-pool remainder instead of global
         uint256 dividend = scaledAmount + p.maintenanceIndexRemainder;
-        uint256 delta = dividend / oldTotal;
+        uint256 delta = dividend / chargeableTvl;
 
         if (delta == 0) {
             p.maintenanceIndexRemainder = dividend;
             return;
         }
 
-        p.maintenanceIndexRemainder = dividend - (delta * oldTotal);
+        p.maintenanceIndexRemainder = dividend - (delta * chargeableTvl);
         p.maintenanceIndex += delta;
     }
 

@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { InsufficientPoolLiquidity } from "./Errors.sol";
 import { LibAppStorage } from "./LibAppStorage.sol";
+import { LibEncumbrance } from "./LibEncumbrance.sol";
 import { LibMaintenance } from "./LibMaintenance.sol";
 import { Types } from "./Types.sol";
 
@@ -98,7 +99,8 @@ library LibFeeIndex {
         uint256 prevMaintenanceIndex = p.userMaintenanceIndex[user];
         if (globalMaintenanceIndex > prevMaintenanceIndex) {
             uint256 maintenanceDelta = globalMaintenanceIndex - prevMaintenanceIndex;
-            uint256 maintenanceFee = Math.mulDiv(principal, maintenanceDelta, INDEX_SCALE);
+            uint256 chargeablePrincipal = _chargeablePrincipal(user, pid, principal);
+            uint256 maintenanceFee = Math.mulDiv(chargeablePrincipal, maintenanceDelta, INDEX_SCALE);
             if (maintenanceFee > 0) {
                 if (maintenanceFee >= principal) {
                     principal = 0;
@@ -158,11 +160,20 @@ library LibFeeIndex {
         }
 
         uint256 maintenanceDelta = globalMaintenanceIndex - userMaintenanceIndex;
-        uint256 maintenanceFee = Math.mulDiv(principal, maintenanceDelta, INDEX_SCALE);
+        uint256 chargeablePrincipal = _chargeablePrincipal(user, pid, principal);
+        uint256 maintenanceFee = Math.mulDiv(chargeablePrincipal, maintenanceDelta, INDEX_SCALE);
         if (maintenanceFee >= principal) {
             return 0;
         }
         return principal - maintenanceFee;
+    }
+
+    function _chargeablePrincipal(bytes32 user, uint256 pid, uint256 principal) private view returns (uint256) {
+        uint256 indexEncumbered = LibEncumbrance.getIndexEncumbered(user, pid);
+        if (indexEncumbered >= principal) {
+            return 0;
+        }
+        return principal - indexEncumbered;
     }
 
     function _feeBase(Types.PoolData storage p, bytes32 user, uint256 principal) private view returns (uint256) {

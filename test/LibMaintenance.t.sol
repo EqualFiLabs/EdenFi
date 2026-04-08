@@ -2,8 +2,8 @@
 pragma solidity ^0.8.20;
 
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
-import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
+import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 
 import {LaunchFixture} from "test/utils/LaunchFixture.t.sol";
@@ -13,6 +13,7 @@ contract LibMaintenanceBugConditionTest is LaunchFixture {
         super.setUp();
         _bootstrapCorePools();
         _installTestSupportFacet();
+        testSupport.setFoundationReceiver(makeAddr("foundation"));
     }
 
     function test_BugCondition_MaintenanceSettlement_ShouldChargeOnlyChargeablePrincipal() public {
@@ -36,16 +37,29 @@ contract LibMaintenanceBugConditionTest is LaunchFixture {
 
         (uint256 indexId,) =
             _createIndexThroughTimelock(_singleAssetIndexParams("Maintenance Index", "MIDX", address(eve), 0, 0));
-        uint256 indexPoolId = EqualIndexAdminFacetV3(diamond).getIndexPoolId(indexId);
 
         vm.prank(alice);
         EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, indexId, 50e18);
 
-        assertEq(testSupport.indexEncumberedOf(alicePositionKey, indexPoolId), 50e18);
+        assertEq(testSupport.indexEncumberedOf(alicePositionKey, 1), 50e18);
         assertEq(testSupport.principalOf(1, alicePositionKey), 100e18);
         assertEq(testSupport.principalOf(1, bobPositionKey), 100e18);
 
+        PoolManagementFacet.PoolMaintenanceView memory maintenanceBefore =
+            PoolManagementFacet(diamond).getPoolMaintenanceView(1);
+        uint256 totalDepositsBefore = testSupport.getPoolView(1).totalDeposits;
+        uint256 chargeableTvlBefore = totalDepositsBefore - testSupport.getPoolView(1).indexEncumberedTotal;
+
         vm.warp(block.timestamp + 365 days);
+
+        uint256 epochs = (block.timestamp - uint256(maintenanceBefore.lastMaintenanceTimestamp)) / maintenanceBefore.epochLength;
+        uint256 amountAccrued = (
+            chargeableTvlBefore * uint256(maintenanceBefore.maintenanceRateBps) * epochs
+        ) / (365 * 10_000);
+        uint256 maintenanceDelta =
+            (amountAccrued * 1e18 + maintenanceBefore.maintenanceIndexRemainder) / chargeableTvlBefore;
+        uint256 aliceMaintenanceFee = ((100e18 - 50e18) * maintenanceDelta) / 1e18;
+        uint256 bobMaintenanceFee = (100e18 * maintenanceDelta) / 1e18;
 
         vm.prank(alice);
         PositionManagementFacet(diamond).depositToPosition(alicePositionId, 1, 1e18, 1e18);
@@ -53,8 +67,11 @@ contract LibMaintenanceBugConditionTest is LaunchFixture {
         vm.prank(bob);
         PositionManagementFacet(diamond).depositToPosition(bobPositionId, 1, 1e18, 1e18);
 
-        assertEq(testSupport.principalOf(1, alicePositionKey), 100.5e18);
-        assertEq(testSupport.principalOf(1, bobPositionKey), 100e18);
+        uint256 aliceAfter = testSupport.principalOf(1, alicePositionKey);
+        uint256 bobAfter = testSupport.principalOf(1, bobPositionKey);
+
+        assertEq(aliceAfter, 101e18 - aliceMaintenanceFee);
+        assertEq(bobAfter, 101e18 - bobMaintenanceFee);
     }
 }
 
