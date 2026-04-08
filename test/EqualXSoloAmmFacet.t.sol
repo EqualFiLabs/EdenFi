@@ -843,6 +843,121 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(aciDeltaB, encDeltaB, "pool B ACI delta should match encumbrance delta");
     }
 
+    function test_BugCondition_Redesign_SoloSwap_ShouldNotMutateAciWhileMarketIsActive() public {
+        uint256 marketId = _createSoloMarket(uint64(block.timestamp), uint64(block.timestamp + 5 days), DEFAULT_REBALANCE_TIMELOCK);
+
+        vm.warp(block.timestamp + 1 days);
+        tokenA.mint(bob, 100e18);
+        vm.prank(bob);
+        tokenA.approve(address(harness), type(uint256).max);
+
+        uint256 encBeforeA = harness.encumberedCapitalOf(alicePositionKey, 1);
+        uint256 encBeforeB = harness.encumberedCapitalOf(alicePositionKey, 2);
+        uint256 aciBeforeA = harness.activeCreditPrincipalTotalOf(1);
+        uint256 aciBeforeB = harness.activeCreditPrincipalTotalOf(2);
+
+        EqualXSoloAmmFacet.SoloAmmSwapPreview memory preview =
+            harness.previewEqualXSoloAmmSwapExactIn(marketId, address(tokenA), 10e18);
+
+        vm.prank(bob);
+        harness.swapEqualXSoloAmmExactIn(marketId, address(tokenA), 10e18, 10e18, preview.amountOut, bob);
+
+        uint256 encAfterA = harness.encumberedCapitalOf(alicePositionKey, 1);
+        uint256 encAfterB = harness.encumberedCapitalOf(alicePositionKey, 2);
+        uint256 aciAfterA = harness.activeCreditPrincipalTotalOf(1);
+        uint256 aciAfterB = harness.activeCreditPrincipalTotalOf(2);
+
+        assertTrue(encAfterA != encBeforeA, "pool A encumbrance should move with live reserve");
+        assertTrue(encAfterB != encBeforeB, "pool B encumbrance should move with live reserve");
+        assertEq(aciAfterA, aciBeforeA, "pool A ACI should stay at the synced baseline during active swaps");
+        assertEq(aciAfterB, aciBeforeB, "pool B ACI should stay at the synced baseline during active swaps");
+    }
+
+    function test_BugCondition_Redesign_SoloRebalance_ShouldBeTheAciSyncBoundary() public {
+        uint256 marketId = _createSoloMarket(uint64(block.timestamp), uint64(block.timestamp + 5 days), DEFAULT_REBALANCE_TIMELOCK);
+
+        vm.warp(block.timestamp + 1 days);
+        tokenA.mint(bob, 100e18);
+        vm.prank(bob);
+        tokenA.approve(address(harness), type(uint256).max);
+
+        EqualXSoloAmmFacet.SoloAmmSwapPreview memory preview =
+            harness.previewEqualXSoloAmmSwapExactIn(marketId, address(tokenA), 10e18);
+
+        vm.prank(bob);
+        harness.swapEqualXSoloAmmExactIn(marketId, address(tokenA), 10e18, 10e18, preview.amountOut, bob);
+
+        LibEqualXSoloAmmStorage.SoloAmmMarket memory drifted = harness.getEqualXSoloAmmMarket(marketId);
+        uint256 aciBeforeRebalanceA = harness.activeCreditPrincipalTotalOf(1);
+        uint256 aciBeforeRebalanceB = harness.activeCreditPrincipalTotalOf(2);
+
+        vm.prank(alice);
+        uint64 executeAfter = harness.scheduleEqualXSoloAmmRebalance(marketId, 105e18, 95e18);
+
+        vm.warp(executeAfter);
+        vm.prank(bob);
+        harness.executeEqualXSoloAmmRebalance(marketId);
+
+        int256 aciDeltaA = _signedDelta(harness.activeCreditPrincipalTotalOf(1), aciBeforeRebalanceA);
+        int256 aciDeltaB = _signedDelta(harness.activeCreditPrincipalTotalOf(2), aciBeforeRebalanceB);
+        int256 expectedBoundaryDeltaA = _signedDelta(105e18, drifted.baselineReserveA);
+        int256 expectedBoundaryDeltaB = _signedDelta(95e18, drifted.baselineReserveB);
+
+        assertEq(
+            aciDeltaA,
+            expectedBoundaryDeltaA,
+            "pool A rebalance ACI delta should be measured from the synced baseline"
+        );
+        assertEq(
+            aciDeltaB,
+            expectedBoundaryDeltaB,
+            "pool B rebalance ACI delta should be measured from the synced baseline"
+        );
+    }
+
+    function test_BugCondition_Redesign_SoloFinalize_ShouldUnwindBaselineSyncedAciNotLiveReserveAci() public {
+        uint256 marketId = _createSoloMarket(uint64(block.timestamp), uint64(block.timestamp + 5 days), DEFAULT_REBALANCE_TIMELOCK);
+
+        vm.warp(block.timestamp + 1 days);
+        tokenA.mint(bob, 100e18);
+        vm.prank(bob);
+        tokenA.approve(address(harness), type(uint256).max);
+
+        EqualXSoloAmmFacet.SoloAmmSwapPreview memory preview =
+            harness.previewEqualXSoloAmmSwapExactIn(marketId, address(tokenA), 10e18);
+
+        vm.prank(bob);
+        harness.swapEqualXSoloAmmExactIn(marketId, address(tokenA), 10e18, 10e18, preview.amountOut, bob);
+
+        LibEqualXSoloAmmStorage.SoloAmmMarket memory preFinalize = harness.getEqualXSoloAmmMarket(marketId);
+        uint256 encBeforeFinalizeA = harness.encumberedCapitalOf(alicePositionKey, 1);
+        uint256 encBeforeFinalizeB = harness.encumberedCapitalOf(alicePositionKey, 2);
+        uint256 aciBeforeFinalizeA = harness.activeCreditPrincipalTotalOf(1);
+        uint256 aciBeforeFinalizeB = harness.activeCreditPrincipalTotalOf(2);
+
+        vm.warp(preFinalize.endTime);
+        vm.prank(bob);
+        harness.finalizeEqualXSoloAmmMarket(marketId);
+
+        int256 encDeltaA = _signedDelta(harness.encumberedCapitalOf(alicePositionKey, 1), encBeforeFinalizeA);
+        int256 encDeltaB = _signedDelta(harness.encumberedCapitalOf(alicePositionKey, 2), encBeforeFinalizeB);
+        int256 aciDeltaA = _signedDelta(harness.activeCreditPrincipalTotalOf(1), aciBeforeFinalizeA);
+        int256 aciDeltaB = _signedDelta(harness.activeCreditPrincipalTotalOf(2), aciBeforeFinalizeB);
+
+        assertEq(encDeltaA, -int256(preFinalize.reserveA), "pool A live encumbrance should unwind by live reserve");
+        assertEq(encDeltaB, -int256(preFinalize.reserveB), "pool B live encumbrance should unwind by live reserve");
+        assertEq(
+            aciDeltaA,
+            -int256(preFinalize.baselineReserveA),
+            "pool A ACI unwind should use the synced baseline reserve"
+        );
+        assertEq(
+            aciDeltaB,
+            -int256(preFinalize.baselineReserveB),
+            "pool B ACI unwind should use the synced baseline reserve"
+        );
+    }
+
     function test_BugCondition_SoloClose_ShouldClampPrincipalReserveWhenFeesExceedReserve() public {
         vm.prank(alice);
         uint256 marketId = harness.createEqualXSoloAmmMarket(
