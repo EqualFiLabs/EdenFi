@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {OptionTokenAdminFacet} from "src/options/OptionTokenAdminFacet.sol";
+import {OptionTokenViewFacet} from "src/options/OptionTokenViewFacet.sol";
 import {OptionsFacet} from "src/options/OptionsFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {LibOptionsStorage} from "src/libraries/LibOptionsStorage.sol";
@@ -33,6 +34,16 @@ contract OptionTokenAdminFacetTest is LaunchFixture {
             abi.encodeWithSelector(bytes4(keccak256("OptionTokenAdmin_ActiveSeriesExist(uint256)")), 1)
         );
         _timelockCall(diamond, abi.encodeWithSelector(OptionTokenAdminFacet.setOptionToken.selector, address(replacement)));
+    }
+
+    function test_SetOptionToken_UpdatesCanonicalTokenWhenNoLiveSeriesExist() public {
+        address previousToken = OptionTokenViewFacet(diamond).getOptionToken();
+        OptionToken replacement = new OptionToken("ipfs://equalfi/options/v2", address(this), diamond);
+
+        _timelockCall(diamond, abi.encodeWithSelector(OptionTokenAdminFacet.setOptionToken.selector, address(replacement)));
+
+        assertEq(OptionTokenViewFacet(diamond).getOptionToken(), address(replacement));
+        assertTrue(previousToken != address(replacement));
     }
 
     function _fundCallWriter(address user, uint256 amount) internal returns (uint256 positionId) {

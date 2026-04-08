@@ -15,7 +15,7 @@ import {LibDiamond} from "src/libraries/LibDiamond.sol";
 import {LibOptionsStorage} from "src/libraries/LibOptionsStorage.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {Types} from "src/libraries/Types.sol";
-import {PoolMembershipRequired} from "src/libraries/Errors.sol";
+import {NotNFTOwner, PoolMembershipRequired} from "src/libraries/Errors.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {OptionToken} from "src/tokens/OptionToken.sol";
 
@@ -416,6 +416,45 @@ contract OptionsFacetTest is LaunchFixture {
         vm.prank(operator);
         OptionsFacet(diamond).burnReclaimedOptionsClaims(alice, seriesId, makerClaims / 2);
         assertEq(optionToken.balanceOf(alice, seriesId), makerClaims / 2);
+    }
+
+    function test_ReclaimFullyExercisedSeries_MarksSeriesReclaimedWithoutUnlockingExtraCollateral() public {
+        (uint256 positionId, bytes32 positionKey) = _prepareCallWriter(alice, 10e18, 10e18, SIX_DEC_PID);
+        uint256 seriesId = _createSeries(alice, _callParams(positionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE));
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, seriesId, 1e18, "");
+
+        uint256 payment = OptionsViewFacet(diamond).previewExercisePayment(seriesId, 1e18);
+        sixDecStrike.mint(bob, payment);
+        vm.startPrank(bob);
+        IERC20(address(sixDecStrike)).approve(diamond, payment);
+        OptionsFacet(diamond).exerciseOptions(seriesId, 1e18, bob, payment, 1e18);
+        vm.stopPrank();
+
+        uint256 principalBefore = testSupport.principalOf(UNDERLYING_PID, positionKey);
+
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(alice);
+        OptionsFacet(diamond).reclaimOptions(seriesId);
+
+        LibOptionsStorage.OptionSeries memory series = OptionsViewFacet(diamond).getOptionSeries(seriesId);
+        uint256 principalAfter = testSupport.principalOf(UNDERLYING_PID, positionKey);
+
+        assertTrue(series.reclaimed);
+        assertEq(series.remainingSize, 0);
+        assertEq(series.collateralLocked, 0);
+        assertEq(principalAfter, principalBefore);
+    }
+
+    function test_RevertWhen_ReclaimCalledByNonOwner() public {
+        (uint256 positionId,) = _prepareCallWriter(alice, 10e18, 10e18, SIX_DEC_PID);
+        uint256 seriesId = _createSeries(alice, _callParams(positionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE));
+
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(NotNFTOwner.selector, bob, positionId));
+        OptionsFacet(diamond).reclaimOptions(seriesId);
     }
 
     function test_ExercisePut_TransfersStrikeAndCreditsUnderlyingPrincipal() public {
