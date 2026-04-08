@@ -133,6 +133,7 @@ error RollingError_ExcessivePremium(uint256 provided, uint256 maxPremium);
 error RollingError_MinPayment(uint256 amount, uint256 minimum);
 error RollingError_AmortizationDisabled();
 error RollingError_RecoveryNotEligible();
+error RollingError_PaymentCapReached();
 error RollingError_DustPayment(uint256 amount, uint256 minPayment);
 error RollingError_InterestExceedsMax(uint256 actual, uint256 max);
 

@@ -5,7 +5,8 @@ import {
     DirectError_InvalidAgreementState,
     RollingError_AmortizationDisabled,
     RollingError_DustPayment,
-    RollingError_InterestExceedsMax
+    RollingError_InterestExceedsMax,
+    RollingError_PaymentCapReached
 } from "src/libraries/Errors.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
@@ -48,6 +49,9 @@ contract EqualLendDirectRollingPaymentFacet is ReentrancyGuardModifiers {
 
         LibPositionHelpers.requireOwnership(agreement.borrowerPositionId);
         _settleAgreementPositions(agreement);
+        if (agreement.paymentCount >= agreement.maxPaymentCount) {
+            revert RollingError_PaymentCapReached();
+        }
 
         uint256 minPayment = (agreement.outstandingPrincipal * store.rollingConfig.minPaymentBps + 9_999)
             / LibEqualLendDirectStorage.BPS_DENOMINATOR;
