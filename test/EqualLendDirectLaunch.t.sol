@@ -647,7 +647,7 @@ contract EqualLendDirectRollingLaunchTest is Test {
         borrowToken.mint(bob, firstPayment);
         vm.startPrank(bob);
         borrowToken.approve(address(harness), type(uint256).max);
-        harness.makeRollingPayment(agreementId, firstPayment, firstPayment, 0);
+        harness.makeRollingPayment(agreementId, firstPayment, firstPayment, type(uint256).max);
         vm.stopPrank();
 
         vm.warp(block.timestamp + 3 days);
@@ -656,7 +656,7 @@ contract EqualLendDirectRollingLaunchTest is Test {
 
         borrowToken.mint(bob, closeoutTotal);
         vm.startPrank(bob);
-        harness.repayRollingInFull(agreementId, closeoutTotal, 0);
+        harness.repayRollingInFull(agreementId, closeoutTotal, type(uint256).max);
         vm.stopPrank();
 
         (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);
@@ -751,7 +751,7 @@ contract EqualLendDirectRollingLaunchTest is Test {
         sameAssetToken.mint(bob, firstPayment);
         vm.startPrank(bob);
         sameAssetToken.approve(address(harness), type(uint256).max);
-        harness.makeRollingPayment(agreementId, firstPayment, firstPayment, 0);
+        harness.makeRollingPayment(agreementId, firstPayment, firstPayment, type(uint256).max);
         vm.stopPrank();
 
         vm.warp(block.timestamp + 3 days);
@@ -759,7 +759,7 @@ contract EqualLendDirectRollingLaunchTest is Test {
 
         sameAssetToken.mint(bob, closeoutTotal);
         vm.startPrank(bob);
-        harness.repayRollingInFull(agreementId, closeoutTotal, 0);
+        harness.repayRollingInFull(agreementId, closeoutTotal, type(uint256).max);
         vm.stopPrank();
 
         (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);
@@ -882,12 +882,12 @@ contract EqualLendDirectRollingLaunchTest is Test {
         vm.startPrank(bob);
         borrowToken.approve(address(harness), paymentDue);
         vm.expectRevert(abi.encodeWithSelector(NotNFTOwner.selector, bob, borrowerPositionId));
-        harness.makeRollingPayment(agreementId, paymentDue, paymentDue, 0);
+        harness.makeRollingPayment(agreementId, paymentDue, paymentDue, type(uint256).max);
         vm.stopPrank();
 
         vm.startPrank(carol);
         borrowToken.approve(address(harness), paymentDue);
-        harness.makeRollingPayment(agreementId, paymentDue, paymentDue, 0);
+        harness.makeRollingPayment(agreementId, paymentDue, paymentDue, type(uint256).max);
         vm.stopPrank();
 
         (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);

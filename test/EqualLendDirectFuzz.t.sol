@@ -649,7 +649,7 @@ contract EqualLendDirectRollingFuzzTest is Test {
         borrowToken.mint(bob, closeoutTotal);
         vm.startPrank(bob);
         borrowToken.approve(address(harness), closeoutTotal);
-        harness.repayRollingInFull(agreementId, closeoutTotal, 0);
+        harness.repayRollingInFull(agreementId, closeoutTotal, type(uint256).max);
         vm.stopPrank();
 
         assertEq(harness.principalOf(1, lenderKey), lenderDeposit + interestDue, "lender principal after closeout");
@@ -700,7 +700,7 @@ contract EqualLendDirectRollingFuzzTest is Test {
         sameAssetToken.mint(bob, paymentAmount);
         vm.startPrank(bob);
         sameAssetToken.approve(address(harness), paymentAmount);
-        harness.makeRollingPayment(agreementId, paymentAmount, paymentAmount, 0);
+        harness.makeRollingPayment(agreementId, paymentAmount, paymentAmount, type(uint256).max);
         vm.stopPrank();
 
         _assertRollingPaymentRestoration(
@@ -788,14 +788,14 @@ contract EqualLendDirectRollingFuzzTest is Test {
             borrowToken.mint(dave, paymentDue);
             vm.startPrank(dave);
             borrowToken.approve(address(harness), paymentDue);
-            harness.makeRollingPayment(agreementId, paymentDue, paymentDue, 0);
+            harness.makeRollingPayment(agreementId, paymentDue, paymentDue, type(uint256).max);
             vm.stopPrank();
 
             (, uint256 closeoutTotal) = _closeoutTotals(agreementId);
             borrowToken.mint(dave, closeoutTotal);
             vm.startPrank(dave);
             borrowToken.approve(address(harness), closeoutTotal);
-            harness.repayRollingInFull(agreementId, closeoutTotal, 0);
+            harness.repayRollingInFull(agreementId, closeoutTotal, type(uint256).max);
             vm.stopPrank();
         }
 

@@ -4,7 +4,8 @@ pragma solidity ^0.8.20;
 import {
     DirectError_InvalidAgreementState,
     RollingError_AmortizationDisabled,
-    RollingError_DustPayment
+    RollingError_DustPayment,
+    RollingError_InterestExceedsMax
 } from "src/libraries/Errors.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
@@ -37,13 +38,11 @@ contract EqualLendDirectRollingPaymentFacet is ReentrancyGuardModifiers {
         uint256 newArrears
     );
 
-    function makeRollingPayment(uint256 agreementId, uint256 amount, uint256 maxPayment, uint256 minReceived)
+    function makeRollingPayment(uint256 agreementId, uint256 amount, uint256 maxPayment, uint256 maxInterestDue)
         external
         payable
         nonReentrant
     {
-        minReceived;
-
         LibEqualLendDirectStorage.DirectStorage storage store = LibEqualLendDirectStorage.s();
         LibEqualLendDirectStorage.RollingAgreement storage agreement = _requireActiveAgreement(store, agreementId);
 
@@ -58,6 +57,10 @@ contract EqualLendDirectRollingPaymentFacet is ReentrancyGuardModifiers {
 
         uint256 asOf = block.timestamp;
         LibEqualLendDirectRolling.AccrualSnapshot memory snapshot = LibEqualLendDirectRolling.previewAccrual(agreement, asOf);
+        uint256 totalInterest = snapshot.arrearsDue + snapshot.currentInterestDue;
+        if (totalInterest > maxInterestDue) {
+            revert RollingError_InterestExceedsMax(totalInterest, maxInterestDue);
+        }
         PaymentAllocation memory allocation = _collectPayment(agreement, snapshot, amount, maxPayment);
         _applyPaymentAccounting(store, agreement, snapshot, allocation, asOf);
 

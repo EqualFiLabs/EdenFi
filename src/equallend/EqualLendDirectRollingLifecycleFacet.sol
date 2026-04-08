@@ -8,6 +8,7 @@ import {
     DirectError_InvalidConfiguration,
     InsufficientPrincipal,
     MaxUserCountExceeded,
+    RollingError_InterestExceedsMax,
     RollingError_RecoveryNotEligible
 } from "src/libraries/Errors.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
@@ -122,13 +123,11 @@ contract EqualLendDirectRollingLifecycleFacet is ReentrancyGuardModifiers {
         );
     }
 
-    function repayRollingInFull(uint256 agreementId, uint256 maxPayment, uint256 minReceived)
+    function repayRollingInFull(uint256 agreementId, uint256 maxPayment, uint256 maxInterestDue)
         external
         payable
         nonReentrant
     {
-        minReceived;
-
         LibEqualLendDirectStorage.DirectStorage storage store = LibEqualLendDirectStorage.s();
         LibEqualLendDirectStorage.RollingAgreement storage agreement = _requireActiveRollingAgreement(store, agreementId);
 
@@ -142,6 +141,9 @@ contract EqualLendDirectRollingLifecycleFacet is ReentrancyGuardModifiers {
         uint256 asOf = block.timestamp;
         LibEqualLendDirectRolling.AccrualSnapshot memory snapshot = LibEqualLendDirectRolling.previewAccrual(agreement, asOf);
         uint256 interestDue = snapshot.arrearsDue + snapshot.currentInterestDue;
+        if (interestDue > maxInterestDue) {
+            revert RollingError_InterestExceedsMax(interestDue, maxInterestDue);
+        }
         uint256 principalDue = agreement.outstandingPrincipal;
         uint256 totalDue = interestDue + principalDue;
 
