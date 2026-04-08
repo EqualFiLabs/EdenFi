@@ -275,8 +275,22 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         uint256 previousReserveA = market.reserveA;
         uint256 previousReserveB = market.reserveB;
 
-        _applyExecutedRebalanceDelta(poolA, market.poolIdA, makerPositionKey, previousReserveA, pending.targetReserveA);
-        _applyExecutedRebalanceDelta(poolB, market.poolIdB, makerPositionKey, previousReserveB, pending.targetReserveB);
+        _applyExecutedRebalanceDelta(
+            poolA,
+            market.poolIdA,
+            makerPositionKey,
+            previousReserveA,
+            market.baselineReserveA,
+            pending.targetReserveA
+        );
+        _applyExecutedRebalanceDelta(
+            poolB,
+            market.poolIdB,
+            makerPositionKey,
+            previousReserveB,
+            market.baselineReserveB,
+            pending.targetReserveB
+        );
 
         market.reserveA = pending.targetReserveA;
         market.reserveB = pending.targetReserveB;
@@ -747,11 +761,12 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         uint256 poolId,
         bytes32 makerPositionKey,
         uint256 previousReserve,
+        uint256 baselineReserve,
         uint256 targetReserve
     ) internal {
         LibPositionHelpers.settlePosition(poolId, makerPositionKey);
         _applyRebalanceReserveEncumbranceDelta(pool, poolId, makerPositionKey, previousReserve, targetReserve);
-        _applyRebalanceActiveCreditDelta(pool, poolId, makerPositionKey, previousReserve, targetReserve);
+        _applyRebalanceActiveCreditDelta(pool, poolId, makerPositionKey, baselineReserve, targetReserve);
     }
 
     function _applyRebalanceReserveEncumbranceDelta(

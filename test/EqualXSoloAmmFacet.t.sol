@@ -813,7 +813,7 @@ contract EqualXSoloAmmFacetTest is Test {
         );
     }
 
-    function test_BugCondition_SoloSwap_AciShouldTrackEncumbranceDelta() public {
+    function test_BugCondition_SoloRebalance_AciShouldSyncFromBoundaryBaseline() public {
         uint256 marketId = _createSoloMarket(uint64(block.timestamp), uint64(block.timestamp + 5 days), DEFAULT_REBALANCE_TIMELOCK);
 
         vm.warp(block.timestamp + 1 days);
@@ -821,8 +821,6 @@ contract EqualXSoloAmmFacetTest is Test {
         vm.prank(bob);
         tokenA.approve(address(harness), type(uint256).max);
 
-        uint256 encBeforeA = harness.encumberedCapitalOf(alicePositionKey, 1);
-        uint256 encBeforeB = harness.encumberedCapitalOf(alicePositionKey, 2);
         uint256 aciBeforeA = harness.activeCreditPrincipalTotalOf(1);
         uint256 aciBeforeB = harness.activeCreditPrincipalTotalOf(2);
 
@@ -832,13 +830,23 @@ contract EqualXSoloAmmFacetTest is Test {
         vm.prank(bob);
         harness.swapEqualXSoloAmmExactIn(marketId, address(tokenA), 10e18, 10e18, preview.amountOut, bob);
 
-        int256 encDeltaA = _signedDelta(harness.encumberedCapitalOf(alicePositionKey, 1), encBeforeA);
-        int256 encDeltaB = _signedDelta(harness.encumberedCapitalOf(alicePositionKey, 2), encBeforeB);
+        LibEqualXSoloAmmStorage.SoloAmmMarket memory drifted = harness.getEqualXSoloAmmMarket(marketId);
+        vm.prank(alice);
+        uint64 executeAfter = harness.scheduleEqualXSoloAmmRebalance(marketId, 105e18, 95e18);
+
+        vm.warp(executeAfter);
+        vm.prank(bob);
+        harness.executeEqualXSoloAmmRebalance(marketId);
+
         int256 aciDeltaA = _signedDelta(harness.activeCreditPrincipalTotalOf(1), aciBeforeA);
         int256 aciDeltaB = _signedDelta(harness.activeCreditPrincipalTotalOf(2), aciBeforeB);
+        int256 expectedBoundaryDeltaA = _signedDelta(105e18, drifted.baselineReserveA);
+        int256 expectedBoundaryDeltaB = _signedDelta(95e18, drifted.baselineReserveB);
 
-        assertEq(aciDeltaA, encDeltaA, "pool A ACI delta should match encumbrance delta");
-        assertEq(aciDeltaB, encDeltaB, "pool B ACI delta should match encumbrance delta");
+        assertEq(aciDeltaA, expectedBoundaryDeltaA, "pool A ACI delta should sync from the old baseline");
+        assertEq(aciDeltaB, expectedBoundaryDeltaB, "pool B ACI delta should sync from the old baseline");
+        assertEq(harness.activeCreditPrincipalTotalOf(1), 105e18, "pool A ACI should equal rebalance target");
+        assertEq(harness.activeCreditPrincipalTotalOf(2), 95e18, "pool B ACI should equal rebalance target");
     }
 
     function test_BugCondition_Redesign_SoloSwap_ShouldNotMutateAciWhileMarketIsActive() public {
