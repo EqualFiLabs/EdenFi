@@ -442,8 +442,8 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         LibActiveCreditIndex.settle(market.poolIdB, makerPositionKey);
         _unlockReserveBacking(makerPositionKey, market.poolIdA, market.reserveA);
         _unlockReserveBacking(makerPositionKey, market.poolIdB, market.reserveB);
-        LibActiveCreditIndex.applyEncumbranceDecrease(poolA, market.poolIdA, makerPositionKey, market.reserveA);
-        LibActiveCreditIndex.applyEncumbranceDecrease(poolB, market.poolIdB, makerPositionKey, market.reserveB);
+        LibActiveCreditIndex.applyEncumbranceDecrease(poolA, market.poolIdA, makerPositionKey, market.baselineReserveA);
+        LibActiveCreditIndex.applyEncumbranceDecrease(poolB, market.poolIdB, makerPositionKey, market.baselineReserveB);
 
         uint256 totalProtocolA = market.feeIndexFeeAAccrued + market.activeCreditFeeAAccrued;
         uint256 totalProtocolB = market.feeIndexFeeBAccrued + market.activeCreditFeeBAccrued;
