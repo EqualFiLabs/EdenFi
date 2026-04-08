@@ -202,9 +202,7 @@ library LibEqualScaleAlphaLifecycle {
 
         line.status = LibEqualScaleAlphaStorage.CreditLineStatus.Delinquent;
         line.delinquentSince = currentTimestamp;
-        unchecked {
-            ++line.missedPayments;
-        }
+        ++line.missedPayments;
 
         emit IEqualScaleAlphaEvents.CreditLineMarkedDelinquent(
             lineId, currentTimestamp, currentMinimumDue, line.nextDueAt
