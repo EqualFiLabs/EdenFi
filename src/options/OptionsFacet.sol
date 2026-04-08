@@ -275,7 +275,7 @@ contract OptionsFacet is ReentrancyGuardModifiers {
 
         paymentAmount = _collectExercisePayment(series.strikeAsset, holder, strikeAmount, maxPayment);
         strikePool.trackedBalance += paymentAmount;
-        _increasePrincipal(strikePool, series.strikePoolId, series.makerPositionKey, paymentAmount);
+        _increasePrincipal(strikePool, series.strikePoolId, series.makerPositionKey, paymentAmount, true);
 
         _decreasePrincipalAndTransfer(
             underlyingPool,
@@ -303,7 +303,7 @@ contract OptionsFacet is ReentrancyGuardModifiers {
 
         paymentAmount = _collectExercisePayment(series.underlyingAsset, holder, underlyingAmount, maxPayment);
         underlyingPool.trackedBalance += paymentAmount;
-        _increasePrincipal(underlyingPool, series.underlyingPoolId, series.makerPositionKey, paymentAmount);
+        _increasePrincipal(underlyingPool, series.underlyingPoolId, series.makerPositionKey, paymentAmount, true);
 
         _decreasePrincipalAndTransfer(
             strikePool, series.strikePoolId, series.makerPositionKey, strikeAmount, recipient, minReceived
@@ -322,18 +322,27 @@ contract OptionsFacet is ReentrancyGuardModifiers {
         }
     }
 
-    function _increasePrincipal(Types.PoolData storage pool, uint256 poolId, bytes32 positionKey, uint256 amount) internal {
+    function _increasePrincipal(
+        Types.PoolData storage pool,
+        uint256 poolId,
+        bytes32 positionKey,
+        uint256 amount,
+        bool isExerciseSettlement
+    ) internal {
         uint256 currentPrincipal = pool.userPrincipal[positionKey];
         if (currentPrincipal == 0) {
             uint256 maxUsers = pool.poolConfig.maxUserCount;
-            if (maxUsers != 0 && pool.userCount >= maxUsers) {
+            if (!isExerciseSettlement && maxUsers != 0 && pool.userCount >= maxUsers) {
                 revert InvalidParameterRange("maxUserCount");
             }
             pool.userCount += 1;
         }
 
         uint256 newPrincipal = currentPrincipal + amount;
-        if (pool.poolConfig.isCapped && pool.poolConfig.depositCap != 0 && newPrincipal > pool.poolConfig.depositCap) {
+        if (
+            !isExerciseSettlement && pool.poolConfig.isCapped && pool.poolConfig.depositCap != 0
+                && newPrincipal > pool.poolConfig.depositCap
+        ) {
             revert InvalidParameterRange("depositCap");
         }
 
