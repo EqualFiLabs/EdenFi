@@ -38,6 +38,7 @@ contract OptionsFacet is ReentrancyGuardModifiers {
     error Options_InvalidAssetPair(address underlying, address strike);
     error Options_InvalidSeries(uint256 seriesId);
     error Options_ExerciseWindowClosed(uint256 seriesId);
+    error Options_ExerciseWindowStillOpen(uint256 seriesId);
     error Options_Reclaimed(uint256 seriesId);
     error Options_NotReclaimed(uint256 seriesId);
     error Options_NotTokenHolder(address caller, uint256 seriesId);
@@ -152,6 +153,12 @@ contract OptionsFacet is ReentrancyGuardModifiers {
         LibCurrency.assertZeroMsgValue();
         LibOptionsStorage.OptionSeries storage series = _series(seriesId);
         if (block.timestamp <= series.expiry) revert Options_ExerciseWindowClosed(seriesId);
+        if (!series.isAmerican) {
+            uint64 tolerance = LibOptionsStorage.s().europeanToleranceSeconds;
+            if (block.timestamp <= uint256(series.expiry) + uint256(tolerance)) {
+                revert Options_ExerciseWindowStillOpen(seriesId);
+            }
+        }
         if (series.reclaimed) revert Options_Reclaimed(seriesId);
 
         LibPositionHelpers.requireOwnership(series.makerPositionId);
