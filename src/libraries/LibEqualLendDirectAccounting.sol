@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {EncumbranceUnderflow, InsufficientPoolLiquidity, InsufficientPrincipal, DirectError_ZeroAmount} from
-    "src/libraries/Errors.sol";
+import {
+    EncumbranceUnderflow,
+    InsufficientPoolLiquidity,
+    InsufficientPrincipal,
+    DirectError_ZeroAmount,
+    MaxUserCountExceeded
+} from "src/libraries/Errors.sol";
 import {LibActiveCreditIndex} from "src/libraries/LibActiveCreditIndex.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
@@ -129,6 +134,10 @@ library LibEqualLendDirectAccounting {
         lenderPool.trackedBalance += amount;
 
         if (principalBefore == 0) {
+            uint256 maxUsers = lenderPool.poolConfig.maxUserCount;
+            if (maxUsers > 0 && lenderPool.userCount >= maxUsers) {
+                revert MaxUserCountExceeded(maxUsers);
+            }
             lenderPool.userCount += 1;
         }
 
