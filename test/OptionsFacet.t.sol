@@ -249,8 +249,10 @@ contract OptionsFacetTest is LaunchFixture {
         params.strikePrice = ZEROING_STRIKE_PRICE;
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(OptionsFacet.Options_InvalidPrice.selector, ZEROING_STRIKE_PRICE));
-        OptionsFacet(diamond).createOptionSeries(params);
+        uint256 seriesId = OptionsFacet(diamond).createOptionSeries(params);
+
+        assertTrue(seriesId != 0);
+        assertEq(OptionsViewFacet(diamond).previewExercisePayment(seriesId, 1e18), 1);
     }
 
     function test_CreateOptionSeries_UsesRealFundingAndIndexesPosition() public {

@@ -115,6 +115,11 @@ contract OptionsFacet is ReentrancyGuardModifiers {
         uint256 collateralLocked = params.isCall
             ? underlyingNotional
             : _normalizeStrikeAmount(underlyingNotional, params.strikePrice, underlyingAsset, strikeAsset);
+        if (params.isCall) {
+            uint256 exerciseStrike =
+                _normalizeStrikeAmount(params.contractSize, params.strikePrice, underlyingAsset, strikeAsset);
+            if (exerciseStrike == 0) revert Options_InvalidAmount(exerciseStrike);
+        }
         if (collateralLocked == 0) revert Options_InvalidAmount(collateralLocked);
 
         uint256 collateralPoolId = params.isCall ? params.underlyingPoolId : params.strikePoolId;
