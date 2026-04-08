@@ -1727,6 +1727,21 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(trackedBalanceAfterSwap, 500e18 + preview.activeCreditFee + preview.feeIndexFee);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), afterSwap.reserveA);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), afterSwap.reserveB);
+        assertEq(harness.activeCreditPrincipalTotalOf(1), 100e18, "ACI should stay at the synced baseline during active swaps");
+        assertEq(harness.activeCreditPrincipalTotalOf(2), 100e18, "ACI should stay at the synced baseline during active swaps");
+
+        uint256 liveClaimable = harness.previewPositionYield(alicePositionId, 1);
+        assertGt(liveClaimable, 0, "live yield should be claimable before rebalance");
+
+        uint256 reserveBeforeLiveClaim = harness.yieldReserveOf(1);
+        uint256 aliceBalanceBeforeLiveClaim = tokenA.balanceOf(alice);
+        vm.prank(alice);
+        uint256 liveClaimed = harness.claimPositionYield(alicePositionId, 1, alice, 0);
+
+        assertEq(liveClaimed, liveClaimable);
+        assertEq(tokenA.balanceOf(alice), aliceBalanceBeforeLiveClaim + liveClaimed);
+        assertEq(harness.yieldReserveOf(1), reserveBeforeLiveClaim - liveClaimed);
+        uint256 trackedBalanceAfterLiveClaim = harness.trackedBalanceOf(1);
 
         vm.prank(alice);
         uint64 executeAfter = harness.scheduleEqualXSoloAmmRebalance(marketId, 105e18, 95e18);
@@ -1738,7 +1753,7 @@ contract EqualXSoloAmmFacetTest is Test {
         LibEqualXSoloAmmStorage.SoloAmmMarket memory afterRebalance = harness.getEqualXSoloAmmMarket(marketId);
         assertEq(afterRebalance.baselineReserveA, 105e18);
         assertEq(afterRebalance.baselineReserveB, 95e18);
-        assertEq(harness.trackedBalanceOf(1), trackedBalanceAfterSwap, "rebalance should not change live fee backing");
+        assertEq(harness.trackedBalanceOf(1), trackedBalanceAfterLiveClaim, "rebalance should not change live fee backing");
         assertEq(harness.activeCreditPrincipalTotalOf(1), afterRebalance.reserveA);
         assertEq(harness.activeCreditPrincipalTotalOf(2), afterRebalance.reserveB);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), afterRebalance.reserveA);
@@ -1781,6 +1796,10 @@ contract EqualXSoloAmmFacetTest is Test {
 
         uint256 cancellableMarketId =
             _createSoloMarket(uint64(block.timestamp + 1 days), uint64(block.timestamp + 4 days), DEFAULT_REBALANCE_TIMELOCK);
+        uint256 aciBeforeCancelA = harness.activeCreditPrincipalTotalOf(1);
+        uint256 aciBeforeCancelB = harness.activeCreditPrincipalTotalOf(2);
+        uint256 encBeforeCancelA = harness.encumberedCapitalOf(alicePositionKey, 1);
+        uint256 encBeforeCancelB = harness.encumberedCapitalOf(alicePositionKey, 2);
 
         vm.prank(alice);
         harness.cancelEqualXSoloAmmMarket(cancellableMarketId);
@@ -1788,6 +1807,26 @@ contract EqualXSoloAmmFacetTest is Test {
         LibEqualXSoloAmmStorage.SoloAmmMarket memory cancelled = harness.getEqualXSoloAmmMarket(cancellableMarketId);
         assertTrue(cancelled.finalized);
         assertFalse(cancelled.active);
+        assertEq(
+            harness.activeCreditPrincipalTotalOf(1),
+            aciBeforeCancelA - cancelled.baselineReserveA,
+            "pool A ACI should unwind the cancelled market baseline on pre-start cancel"
+        );
+        assertEq(
+            harness.activeCreditPrincipalTotalOf(2),
+            aciBeforeCancelB - cancelled.baselineReserveB,
+            "pool B ACI should unwind the cancelled market baseline on pre-start cancel"
+        );
+        assertEq(
+            harness.encumberedCapitalOf(alicePositionKey, 1),
+            encBeforeCancelA - cancelled.reserveA,
+            "pool A encumbrance should release the cancelled market live reserve on pre-start cancel"
+        );
+        assertEq(
+            harness.encumberedCapitalOf(alicePositionKey, 2),
+            encBeforeCancelB - cancelled.reserveB,
+            "pool B encumbrance should release the cancelled market live reserve on pre-start cancel"
+        );
     }
 
     function _createSoloMarket(uint64 startTime, uint64 endTime, uint64 rebalanceTimelock)
