@@ -17,7 +17,7 @@ import {LibEqualScaleAlphaShared} from "src/equalscale/LibEqualScaleAlphaShared.
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
 import {LibPositionAgentStorage} from "src/libraries/LibPositionAgentStorage.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
-import {InsufficientPoolLiquidity, InvalidParameterRange} from "src/libraries/Errors.sol";
+import {InsufficientPoolLiquidity, InvalidParameterRange, NativeTransferFailed} from "src/libraries/Errors.sol";
 import {Types} from "src/libraries/Types.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {MockERC6551RegistryLaunch, MockIdentityRegistryLaunch} from "test/utils/PositionAgentBootstrapMocks.sol";
@@ -2658,7 +2658,7 @@ contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
         );
     }
 
-    function test_BugCondition_Draw_ShouldBlockNativeTreasuryReentrancy() external {
+    function test_BugCondition_DrawReentrancy_ShouldRejectNativeTreasuryCallbackReentry() external {
         facet.configurePoolForDeposits(NATIVE_SETTLEMENT_POOL_ID, address(0), 1);
 
         EqualScaleAlphaReenteringTreasury attacker = new EqualScaleAlphaReenteringTreasury(facet);
@@ -2689,10 +2689,11 @@ contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
         facet.commitSolo(lineId, lenderPositionId);
 
         attacker.activateLine(lineId);
+        vm.expectRevert(abi.encodeWithSelector(NativeTransferFailed.selector, address(attacker), 1 ether));
         attacker.drawWithReentry(lineId, 1 ether, 1 ether);
 
-        require(attacker.didReenter(), "treasury wallet should attempt reentry in the harness");
-        require(facet.line(lineId).outstandingPrincipal == 1 ether, "reentrant native draw should be blocked");
+        require(facet.line(lineId).outstandingPrincipal == 0, "reentrant native draw should fully revert");
+        require(facet.line(lineId).currentPeriodDrawn == 0, "reentrant native draw should not consume draw capacity");
     }
 
     function test_BugCondition_MarkDelinquent_ShouldRevertOnMissedPaymentsOverflow() external {

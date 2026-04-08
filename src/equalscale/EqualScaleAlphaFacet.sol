@@ -12,6 +12,7 @@ import {LibCurrency} from "src/libraries/LibCurrency.sol";
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
 import {LibPoolMembership} from "src/libraries/LibPoolMembership.sol";
 import {LibPositionHelpers} from "src/libraries/LibPositionHelpers.sol";
+import {ReentrancyGuardModifiers} from "src/libraries/LibReentrancyGuard.sol";
 import {InsufficientPoolLiquidity} from "src/libraries/Errors.sol";
 import {Types} from "src/libraries/Types.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
@@ -22,7 +23,7 @@ interface IPositionAgentIdentityRead {
 }
 
 /// @notice Borrower-profile writes for EqualScale Alpha.
-contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors {
+contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors, ReentrancyGuardModifiers {
     uint40 internal constant SOLO_WINDOW_DURATION = 3 days;
     bytes32 internal constant LINE_PROPOSAL_CREATED_TOPIC0 = keccak256(
         "LineProposalCreated(uint256,uint256,bytes32,uint256,uint256,uint256,uint16,uint256,uint256,uint32,uint32,uint40,uint40,uint8,uint256,uint256)"
@@ -277,7 +278,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
         );
     }
 
-    function draw(uint256 lineId, uint256 amount) external {
+    function draw(uint256 lineId, uint256 amount) external nonReentrant {
         if (amount == 0) {
             revert InvalidProposalTerms("amount == 0");
         }
