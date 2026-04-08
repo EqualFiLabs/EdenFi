@@ -470,10 +470,10 @@ contract OptionsFacet is ReentrancyGuardModifiers {
         view
         returns (uint256 strikeAmount)
     {
-        uint256 underlyingScale = 10 ** uint256(LibCurrency.decimals(underlying));
-        uint256 strikeScale = 10 ** uint256(LibCurrency.decimals(strike));
-        uint256 normalizedUnderlying = Math.mulDiv(underlyingAmount, strikePrice, underlyingScale);
-        strikeAmount = Math.mulDiv(normalizedUnderlying, strikeScale, 1e18);
+        uint256 underlyingScale = 10 ** uint256(LibCurrency.decimalsOrRevert(underlying));
+        uint256 strikeScale = 10 ** uint256(LibCurrency.decimalsOrRevert(strike));
+        uint256 wadValue = Math.mulDiv(underlyingAmount, strikePrice, underlyingScale, Math.Rounding.Ceil);
+        strikeAmount = Math.mulDiv(wadValue, strikeScale, 1e18, Math.Rounding.Ceil);
     }
 
     function _validateExerciseWindow(uint256 seriesId, LibOptionsStorage.OptionSeries storage series) internal view {
