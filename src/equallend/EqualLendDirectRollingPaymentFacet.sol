@@ -84,17 +84,17 @@ contract EqualLendDirectRollingPaymentFacet is ReentrancyGuardModifiers {
         uint256 amount,
         uint256 maxPayment
     ) internal returns (PaymentAllocation memory allocation) {
-        uint256 interestDue = snapshot.arrearsDue + snapshot.currentInterestDue;
-        if (!agreement.allowAmortization && amount > interestDue) {
-            revert RollingError_AmortizationDisabled();
-        }
-
         allocation.received = LibCurrency.pullAtLeast(agreement.borrowAsset, msg.sender, amount, maxPayment);
         if (LibCurrency.isNative(agreement.borrowAsset)) {
             LibAppStorage.s().nativeTrackedTotal -= allocation.received;
         }
 
-        uint256 remaining = allocation.received;
+        uint256 allocatable = allocation.received;
+        if (!agreement.allowAmortization && allocatable > amount) {
+            allocatable = amount;
+        }
+
+        uint256 remaining = allocatable;
         allocation.arrearsPaid = remaining < snapshot.arrearsDue ? remaining : snapshot.arrearsDue;
         remaining -= allocation.arrearsPaid;
 
@@ -109,7 +109,7 @@ contract EqualLendDirectRollingPaymentFacet is ReentrancyGuardModifiers {
             remaining -= allocation.principalPaid;
         }
 
-        allocation.refund = remaining;
+        allocation.refund = remaining + (allocation.received - allocatable);
     }
 
     function _applyPaymentAccounting(
