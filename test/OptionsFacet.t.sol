@@ -163,8 +163,8 @@ contract OptionsFacetTest is LaunchFixture {
         require(paid >= expectedCeilingPayment, "strike payment should round up");
     }
 
-    function test_BugCondition_ReclaimOptions_ShouldUnlockStoredResidualCollateral() public {
-        (uint256 positionId, bytes32 positionKey) = _preparePutWriter(alice, 3_000_001, 3_000_001, UNDERLYING_PID);
+    function test_BugCondition_ReclaimCollateralDust_ShouldUnlockStoredResidualCollateral() public {
+        (uint256 positionId, bytes32 positionKey) = _preparePutWriter(alice, 3_000_002, 3_000_002, UNDERLYING_PID);
         LibOptionsStorage.CreateOptionSeriesParams memory params = _putParams(positionId, 3e18, BASE_CONTRACT_SIZE);
         params.strikePrice = FRACTIONAL_STRIKE_PRICE;
 
@@ -181,17 +181,18 @@ contract OptionsFacetTest is LaunchFixture {
         vm.stopPrank();
 
         uint256 storedResidualCollateral = OptionsViewFacet(diamond).getOptionSeries(seriesId).collateralLocked;
-        uint256 principalBefore = testSupport.principalOf(SIX_DEC_PID, positionKey);
+        uint256 lockedBefore = testSupport.lockedCapitalOf(positionKey, SIX_DEC_PID);
 
         vm.warp(block.timestamp + 2 days);
         vm.prank(alice);
         OptionsFacet(diamond).reclaimOptions(seriesId);
 
         LibOptionsStorage.OptionSeries memory series = OptionsViewFacet(diamond).getOptionSeries(seriesId);
-        uint256 principalAfter = testSupport.principalOf(SIX_DEC_PID, positionKey);
+        uint256 lockedAfter = testSupport.lockedCapitalOf(positionKey, SIX_DEC_PID);
 
         assertEq(series.collateralLocked, 0);
-        assertEq(principalAfter - principalBefore, storedResidualCollateral);
+        assertEq(lockedBefore - lockedAfter, storedResidualCollateral);
+        assertEq(lockedAfter, 0);
     }
 
     function test_BugCondition_CreateOptionSeries_ShouldRejectDecimalsFallback() public {

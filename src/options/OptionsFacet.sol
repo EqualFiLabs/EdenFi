@@ -166,15 +166,12 @@ contract OptionsFacet is ReentrancyGuardModifiers {
         uint256 remainingSize = series.remainingSize;
         uint256 collateralUnlocked;
         if (remainingSize > 0) {
-            uint256 underlyingAmount = remainingSize * series.contractSize;
-            collateralUnlocked = series.isCall
-                ? underlyingAmount
-                : _normalizeStrikeAmount(underlyingAmount, series.strikePrice, series.underlyingAsset, series.strikeAsset);
+            collateralUnlocked = series.collateralLocked;
             if (collateralUnlocked == 0) revert Options_InvalidAmount(collateralUnlocked);
 
             uint256 collateralPoolId = series.isCall ? series.underlyingPoolId : series.strikePoolId;
             _unlockCollateral(series.makerPositionKey, collateralPoolId, collateralUnlocked);
-            series.collateralLocked -= collateralUnlocked;
+            series.collateralLocked = 0;
             series.remainingSize = 0;
         }
 
