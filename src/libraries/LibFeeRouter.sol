@@ -228,41 +228,33 @@ library LibFeeRouter {
     function _routeSystemShareToTreasury(Types.PoolData storage pool, uint256 amount, bool pullFromTracked)
         private
     {
-        address treasury = LibAppStorage.treasuryAddress(LibAppStorage.s());
-        if (treasury == address(0) || amount == 0) return;
-        uint256 contractBal = LibCurrency.balanceOfSelf(pool.underlying);
-        if (contractBal < amount) {
-            revert InsufficientPrincipal(amount, contractBal);
-        }
-        if (pullFromTracked) {
-            uint256 tracked = pool.trackedBalance;
-            if (tracked < amount) {
-                revert InsufficientPrincipal(amount, tracked);
-            }
-            pool.trackedBalance = tracked - amount;
-        }
-        // Treasury transfers should tolerate fee-on-transfer tokens; accounting already
-        // debits the full routed amount from tracked balance.
-        LibCurrency.transfer(pool.underlying, treasury, amount);
+        _transferTreasury(pool, amount, pullFromTracked);
     }
 
     function _transferTreasury(Types.PoolData storage pool, uint256 amount, bool pullFromTracked) private {
         address treasury = LibAppStorage.treasuryAddress(LibAppStorage.s());
         if (treasury == address(0) || amount == 0) return;
-        uint256 contractBal = LibCurrency.balanceOfSelf(pool.underlying);
-        if (contractBal < amount) {
-            revert InsufficientPrincipal(amount, contractBal);
+        uint256 balanceBefore = LibCurrency.balanceOfSelf(pool.underlying);
+        if (balanceBefore < amount) {
+            revert InsufficientPrincipal(amount, balanceBefore);
         }
+
+        uint256 trackedBefore;
         if (pullFromTracked) {
-            uint256 tracked = pool.trackedBalance;
-            if (tracked < amount) {
-                revert InsufficientPrincipal(amount, tracked);
+            trackedBefore = pool.trackedBalance;
+            if (trackedBefore < amount) {
+                revert InsufficientPrincipal(amount, trackedBefore);
             }
-            pool.trackedBalance = tracked - amount;
         }
-        // Treasury transfers should tolerate fee-on-transfer tokens; accounting already
-        // debits the full routed amount from tracked balance.
+
         LibCurrency.transfer(pool.underlying, treasury, amount);
+
+        if (pullFromTracked) {
+            // Treasury debits follow actual pool outflow so sender-tax tokens do not
+            // leave trackedBalance overstated relative to backing.
+            uint256 poolOutflow = balanceBefore - LibCurrency.balanceOfSelf(pool.underlying);
+            pool.trackedBalance = trackedBefore - poolOutflow;
+        }
     }
 
     function _accrueActiveCredit(
