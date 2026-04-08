@@ -754,6 +754,43 @@ contract EqualXSoloAmmFacetTest is Test {
         assertEq(harness.activeCreditPrincipalTotalOf(2), market.reserveB);
     }
 
+    function test_Gas_SoloSwap_ExactInHotPath() public {
+        vm.pauseGasMetering();
+
+        uint256 marketId;
+        vm.prank(alice);
+        marketId = harness.createEqualXSoloAmmMarket(
+            alicePositionId,
+            1,
+            2,
+            100e18,
+            100e18,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 5 days),
+            DEFAULT_REBALANCE_TIMELOCK,
+            300,
+            LibEqualXTypes.FeeAsset.TokenIn,
+            LibEqualXTypes.InvariantMode.Volatile
+        );
+
+        vm.warp(block.timestamp + 2 days);
+
+        tokenA.mint(bob, 100e18);
+        vm.prank(bob);
+        tokenA.approve(address(harness), type(uint256).max);
+
+        EqualXSoloAmmFacet.SoloAmmSwapPreview memory preview =
+            harness.previewEqualXSoloAmmSwapExactIn(marketId, address(tokenA), 10e18);
+
+        vm.resumeGasMetering();
+        vm.prank(bob);
+        uint256 amountOut =
+            harness.swapEqualXSoloAmmExactIn(marketId, address(tokenA), 10e18, 10e18, preview.amountOut, bob);
+        vm.pauseGasMetering();
+
+        assertEq(amountOut, preview.amountOut);
+    }
+
     function test_BugCondition_SoloSwap_TrackedBalanceShouldIncreaseLiveWithProtocolFees() public {
         uint256 marketId = _createSoloMarket(uint64(block.timestamp), uint64(block.timestamp + 5 days), DEFAULT_REBALANCE_TIMELOCK);
 

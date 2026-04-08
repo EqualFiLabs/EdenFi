@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Write bug condition exploration tests (BEFORE implementing fixes)
+- [x] 1. Write bug condition exploration tests (BEFORE implementing fixes)
   - **Property 1: Bug Condition** — Maintenance Chargeable-Principal Overcharge, Curve Hardcoded Split, Treasury Accounting Policy Ambiguity, and Reward Reserve Truncation
   - **CRITICAL**: These tests MUST FAIL on unfixed code — failure confirms the bugs exist
   - **DO NOT attempt to fix the tests or the code when they fail**
@@ -22,9 +22,14 @@
   - **EXPECTED OUTCOME**: Tests FAIL (this is correct — it proves the bugs exist)
   - Document counterexamples found to understand root cause
   - Mark task complete when tests are written, run, and failures are documented
+  - Counterexamples observed on unfixed code:
+    - maintenance settlement charged the index-encumbered user on full principal instead of only chargeable principal
+    - curve execution still credited the maker with a hardcoded 70% fee share under a 50/50 expectation
+    - treasury routing debited tracked balance by nominal transfer amount instead of observed sender-side balance delta for exotic tokens
+    - EDEN reward accrual reduced `fundedReserve` even when only a truncated subset, or none, of the reward actually entered `globalRewardIndex`
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.7, 1.8, 1.9, 1.10, 1.11_
 
-- [ ] 2. Write preservation property tests (BEFORE implementing fixes)
+- [x] 2. Write preservation property tests (BEFORE implementing fixes)
   - **Property 2: Preservation** — Maintenance, Curve, FeeRouter, and EDEN Reward Unchanged Behavior
   - **IMPORTANT**: Follow observation-first methodology — observe behavior on UNFIXED code first, then write tests capturing that behavior
   - **REFER TO ETHSKILLS.md** before writing any Solidity
@@ -50,11 +55,16 @@
     - `forge test --match-path test/LibEdenRewardsEngine.t.sol --no-match-test BugCondition`
   - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
   - Mark task complete when tests are written, run, and passing on unfixed code
+  - Baseline observed on unfixed code:
+    - `test/LibMaintenance.t.sol --no-match-test BugCondition` passed `4/4`
+    - `test/LibEqualXCurveEngine.t.sol --no-match-test BugCondition` passed `15/15`
+    - `test/LibFeeRouter.t.sol --no-match-test BugCondition` passed `3/3`
+    - `test/LibEdenRewardsEngine.t.sol --no-match-test BugCondition` passed `31/31`
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, 3.14, 3.15_
 
-- [ ] 3. Fix Finding 1 — Maintenance charged only on chargeable principal
+- [x] 3. Fix Finding 1 — Maintenance charged only on chargeable principal
 
-  - [ ] 3.1 Fix `_applyMaintenanceToIndex` to divide by `chargeableTvl` instead of `totalDeposits`
+  - [x] 3.1 Fix `_applyMaintenanceToIndex` to divide by `chargeableTvl` instead of `totalDeposits`
     - In `src/libraries/LibMaintenance.sol`, function `_applyMaintenanceToIndex`
     - Change function signature to accept `chargeableTvl` as a parameter
     - Replace `oldTotal = p.totalDeposits + amount` with `chargeableTvl` as the divisor
@@ -65,13 +75,13 @@
     - _Preservation: Pools with zero encumbered capital produce identical behavior since chargeableTvl == totalDeposits_
     - _Requirements: 2.1, 2.3, 3.1, 3.3_
 
-  - [ ] 3.2 Fix `previewState` to use `chargeableTvl` as divisor
+  - [x] 3.2 Fix `previewState` to use `chargeableTvl` as divisor
     - In `src/libraries/LibMaintenance.sol`, function `previewState`
     - Replace `oldTotal = totalDepositsAfterAccrual + amountAccrued` with `chargeableTvl` as the divisor
     - Ensure preview matches the fixed `_applyMaintenanceToIndex` behavior
     - _Requirements: 2.1_
 
-  - [ ] 3.3 Apply maintenance only to chargeable principal in `LibFeeIndex.settle`
+  - [x] 3.3 Apply maintenance only to chargeable principal in `LibFeeIndex.settle`
     - In `src/libraries/LibFeeIndex.sol`, function `settle`
     - Import and use `LibEncumbrance.getIndexEncumbered(user, pid)` as the per-user exempt-capital source
     - Compute `chargeablePrincipal = principal > indexEncumbered ? principal - indexEncumbered : 0`
@@ -82,25 +92,29 @@
     - _Preservation: Fee yield computation unchanged; zero-principal settle unchanged_
     - _Requirements: 2.2, 3.4, 3.5_
 
-  - [ ] 3.4 Verify bug condition exploration test for Finding 1 now passes
+  - [x] 3.4 Verify bug condition exploration test for Finding 1 now passes
     - **Property 1: Expected Behavior** — Maintenance Chargeable Principal
     - **IMPORTANT**: Re-run the SAME Finding 1 test from task 1 — do NOT write a new test
     - Run: `forge test --match-path test/LibMaintenance.t.sol --match-test BugCondition`
     - **EXPECTED OUTCOME**: Test PASSES (confirms Finding 1 bug is fixed)
     - _Requirements: 2.1, 2.2, 2.3_
 
-  - [ ] 3.5 Verify preservation tests still pass after Finding 1 fix
+  - [x] 3.5 Verify preservation tests still pass after Finding 1 fix
     - **Property 2: Preservation** — Maintenance and Fee Index Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run:
       - `forge test --match-path test/LibMaintenance.t.sol --no-match-test BugCondition`
       - `forge test --match-path test/LibFeeIndex.t.sol --no-match-test BugCondition` (if separate test file exists)
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Observed results:
+      - `forge test --match-path test/LibMaintenance.t.sol --match-test BugCondition` passed `1/1`
+      - `forge test --match-path test/LibMaintenance.t.sol --no-match-test BugCondition` passed `4/4`
+      - no separate `test/LibFeeIndex.t.sol` exists; fee-index preservation for this track lives in `test/LibMaintenance.t.sol`
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
 
-- [ ] 4. Fix Finding 2 — Curve engine canonical fee split
+- [x] 4. Fix Finding 2 — Curve engine canonical fee split
 
-  - [ ] 4.1 Replace hardcoded 70/30 split with `splitFeeWithRouter` in `_applyQuoteSide`
+  - [x] 4.1 Replace hardcoded 70/30 split with `splitFeeWithRouter` in `_applyQuoteSide`
     - In `src/libraries/LibEqualXCurveEngine.sol`, function `_applyQuoteSide`
     - Replace `uint256 makerFee = (preview.feeAmount * 7000) / 10_000` with a call to `LibEqualXSwapMath.splitFeeWithRouter(preview.feeAmount, makerBps)`
     - Introduce or reuse one canonical EqualX maker-share source consumed by curve execution and the AMM preview/execution paths; do not leave curve with a curve-local inline constant
@@ -111,18 +125,21 @@
     - _Preservation: Curve execution mechanics, volume tracking, commitment updates, position settlement unchanged_
     - _Requirements: 2.4, 2.5, 3.6, 3.7, 3.8_
 
-  - [ ] 4.2 Verify bug condition exploration test for Finding 2 now passes
+  - [x] 4.2 Verify bug condition exploration test for Finding 2 now passes
     - **Property 1: Expected Behavior** — Curve Canonical Fee Split
     - **IMPORTANT**: Re-run the SAME Finding 2 test from task 1 — do NOT write a new test
     - Run: `forge test --match-path test/LibEqualXCurveEngine.t.sol --match-test BugCondition`
     - **EXPECTED OUTCOME**: Test PASSES (confirms Finding 2 bug is fixed)
     - _Requirements: 2.4, 2.5_
 
-  - [ ] 4.3 Verify preservation tests still pass after Finding 2 fix
+  - [x] 4.3 Verify preservation tests still pass after Finding 2 fix
     - **Property 2: Preservation** — Curve Execution Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/LibEqualXCurveEngine.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Observed results:
+      - `forge test --match-path test/LibEqualXCurveEngine.t.sol --match-test BugCondition` passed `1/1`
+      - `forge test --match-path test/LibEqualXCurveEngine.t.sol --no-match-test BugCondition` passed `15/15`
     - _Requirements: 3.6, 3.7, 3.8_
 
 - [ ] 5. Fix Finding 3 — Treasury transfer accounting policy hardening

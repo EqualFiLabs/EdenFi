@@ -477,6 +477,39 @@ contract EqualXCommunityAmmFacetTest is Test {
         assertEq(harness.yieldReserveOf(1), preview.activeCreditFee + preview.feeIndexFee);
     }
 
+    function test_Gas_CommunitySwap_ExactInHotPath() public {
+        vm.pauseGasMetering();
+
+        vm.prank(alice);
+        uint256 marketId = harness.createEqualXCommunityAmmMarket(
+            alicePositionId,
+            1,
+            2,
+            100e18,
+            100e18,
+            uint64(block.timestamp),
+            uint64(block.timestamp + 5 days),
+            300,
+            LibEqualXTypes.FeeAsset.TokenIn,
+            LibEqualXTypes.InvariantMode.Volatile
+        );
+
+        vm.prank(charlie);
+        harness.joinEqualXCommunityAmmMarket(marketId, charliePositionId, 50e18, 50e18);
+
+        vm.warp(block.timestamp + 1 days);
+        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory preview =
+            harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), 10e18);
+
+        vm.resumeGasMetering();
+        vm.prank(bob);
+        uint256 amountOut =
+            harness.swapEqualXCommunityAmmExactIn(marketId, address(tokenA), 10e18, 10e18, preview.amountOut, bob);
+        vm.pauseGasMetering();
+
+        assertEq(amountOut, preview.amountOut);
+    }
+
     function test_BugCondition_CommunityJoin_ShouldMintProportionalSharesAfterReserveGrowth() public {
         vm.prank(alice);
         uint256 marketId = harness.createEqualXCommunityAmmMarket(

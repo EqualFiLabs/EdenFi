@@ -336,6 +336,26 @@ contract EqualXCurveFacetTest is Test {
         assertEq(harness.yieldReserveOf(2), protocolFee - treasuryFee);
     }
 
+    function test_Gas_ExecuteCurveSwap_ExactInHotPath() public {
+        vm.pauseGasMetering();
+
+        vm.prank(alice);
+        uint256 curveId = harness.createEqualXCurve(_defaultDescriptor());
+
+        vm.warp(block.timestamp + 1 days);
+        LibEqualXCurveEngine.CurveExecutionPreview memory preview = harness.previewEqualXCurveQuote(curveId, 10e18);
+        (uint32 generation, bytes32 commitment) = harness.getEqualXCurveCommitment(curveId);
+
+        vm.resumeGasMetering();
+        vm.prank(bob);
+        uint256 amountOut = harness.executeEqualXCurveSwap(
+            curveId, 10e18, preview.totalQuote, preview.amountOut, uint64(block.timestamp + 1 days), bob, generation, commitment
+        );
+        vm.pauseGasMetering();
+
+        assertEq(amountOut, preview.amountOut);
+    }
+
     function test_ExecuteCurveSwap_ExactBoundaryUsageClosesMarket() public {
         vm.prank(alice);
         uint256 curveId = harness.createEqualXCurve(_defaultDescriptor());
