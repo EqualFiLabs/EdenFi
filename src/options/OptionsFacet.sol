@@ -77,6 +77,7 @@ contract OptionsFacet is ReentrancyGuardModifiers {
     event OptionsPausedUpdated(bool paused);
     event EuropeanToleranceUpdated(uint64 toleranceSeconds);
 
+    /// @notice strikePrice must be WAD-scaled (1e18). See CreateOptionSeriesParams.
     function createOptionSeries(LibOptionsStorage.CreateOptionSeriesParams calldata params)
         external
         nonReentrant

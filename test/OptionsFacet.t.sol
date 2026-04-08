@@ -255,6 +255,15 @@ contract OptionsFacetTest is LaunchFixture {
         assertEq(OptionsViewFacet(diamond).previewExercisePayment(seriesId, 1e18), 1);
     }
 
+    function test_WadStrikePriceConvention() public {
+        (uint256 positionId,) = _prepareCallWriter(alice, 10e18, 10e18, SIX_DEC_PID);
+        uint256 seriesId = _createSeries(alice, _callParams(positionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE));
+
+        uint256 previewPayment = OptionsViewFacet(diamond).previewExercisePayment(seriesId, 1e18);
+
+        assertEq(previewPayment, 2e6);
+    }
+
     function test_CreateOptionSeries_UsesRealFundingAndIndexesPosition() public {
         (uint256 positionId, bytes32 positionKey) = _prepareCallWriter(alice, 20e18, 20e18, SIX_DEC_PID);
 

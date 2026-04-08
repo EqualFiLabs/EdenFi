@@ -27,6 +27,7 @@ library LibOptionsStorage {
         uint256 positionId;
         uint256 underlyingPoolId;
         uint256 strikePoolId;
+        /// @param strikePrice WAD-scaled (1e18) strike price. E.g., 50000e18 for $50,000.
         uint256 strikePrice;
         uint64 expiry;
         uint256 totalSize;
