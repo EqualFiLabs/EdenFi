@@ -499,7 +499,12 @@ contract EqualLendDirectFixedAgreementFacet is ReentrancyGuardModifiers {
         uint256 principalAmount,
         bytes32 lenderKey
     ) internal returns (uint256 collateralRequired) {
-        collateralRequired = Math.mulDiv(principalAmount, offer.priceNumerator, offer.priceDenominator);
+        collateralRequired = Math.mulDiv(
+            principalAmount,
+            offer.priceNumerator,
+            offer.priceDenominator,
+            Math.Rounding.Ceil
+        );
         if (collateralRequired == 0) revert DirectError_InvalidRatio();
 
         _validateAcceptanceContext(lenderKey, borrowerKey, offer.lenderPoolId, offer.collateralPoolId);
