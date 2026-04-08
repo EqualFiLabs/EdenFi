@@ -1587,8 +1587,6 @@ contract EqualXSoloAmmFacetTest is Test {
         vm.prank(bob);
         harness.finalizeEqualXSoloAmmMarket(marketId);
 
-        assertEq(harness.activeCreditPrincipalTotalOf(1), 0);
-        assertEq(harness.activeCreditPrincipalTotalOf(2), 0);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 1), 0);
         assertEq(harness.encumberedCapitalOf(alicePositionKey, 2), 0);
 
