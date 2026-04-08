@@ -26,7 +26,10 @@ import {
 
 /// @notice Greenfield covered-options lifecycle built on the current EqualFi substrate.
 contract OptionsFacet is ReentrancyGuardModifiers {
+    uint64 internal constant MAX_EUROPEAN_TOLERANCE = 30 days;
+
     error Options_Paused();
+    error Options_ExcessiveTolerance(uint64 tolerance);
     error Options_InvalidAmount(uint256 amount);
     error Options_InvalidContractSize(uint256 contractSize);
     error Options_InvalidPrice(uint256 strikePrice);
@@ -201,6 +204,9 @@ contract OptionsFacet is ReentrancyGuardModifiers {
     function setEuropeanTolerance(uint64 toleranceSeconds) external {
         LibCurrency.assertZeroMsgValue();
         LibAccess.enforceTimelockOrOwnerIfUnset();
+        if (toleranceSeconds > MAX_EUROPEAN_TOLERANCE) {
+            revert Options_ExcessiveTolerance(toleranceSeconds);
+        }
         LibOptionsStorage.s().europeanToleranceSeconds = toleranceSeconds;
         emit EuropeanToleranceUpdated(toleranceSeconds);
     }

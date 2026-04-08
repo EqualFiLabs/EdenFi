@@ -108,13 +108,15 @@ contract OptionsFacetTest is LaunchFixture {
 
     function test_BugCondition_SetEuropeanTolerance_ShouldRejectToleranceOverflow() public {
         uint64 excessiveTolerance = MAX_EUROPEAN_TOLERANCE + 1;
+        bytes memory data = abi.encodeWithSelector(OptionsFacet.setEuropeanTolerance.selector, excessiveTolerance);
+        bytes32 salt = keccak256(abi.encodePacked("equalfi-test-salt", timelockSaltNonce++));
 
+        timelockController.schedule(diamond, 0, data, bytes32(0), salt, 7 days);
+        vm.warp(block.timestamp + 7 days + 1);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                bytes4(keccak256("Options_ExcessiveTolerance(uint64)")), excessiveTolerance
-            )
+            abi.encodeWithSelector(OptionsFacet.Options_ExcessiveTolerance.selector, excessiveTolerance)
         );
-        _setEuropeanTolerance(excessiveTolerance);
+        timelockController.execute(diamond, 0, data, bytes32(0), salt);
     }
 
     function test_BugCondition_ReclaimOptions_ShouldRejectEuropeanReclaimOverlap() public {
