@@ -77,6 +77,47 @@ library LibFeeRouter {
         }
     }
 
+    function routeSamePoolPreSplit(
+        uint256 pid,
+        uint256 toTreasury,
+        uint256 toActiveCredit,
+        uint256 toFeeIndex,
+        bytes32 source,
+        bool pullFromTracked,
+        uint256 extraBacking
+    ) internal returns (uint256 routedTreasury, uint256 routedActiveCredit, uint256 routedFeeIndex) {
+        if (toTreasury == 0 && toActiveCredit == 0 && toFeeIndex == 0) {
+            return (0, 0, 0);
+        }
+
+        LibAppStorage.AppStorage storage store = LibAppStorage.s();
+        Types.PoolData storage pool = store.pools[pid];
+
+        routedTreasury = toTreasury;
+        routedActiveCredit = toActiveCredit;
+        routedFeeIndex = toFeeIndex;
+
+        if (routedTreasury > 0) {
+            _transferTreasury(pool, routedTreasury, pullFromTracked);
+        }
+
+        if (routedActiveCredit > 0 && !LibActiveCreditIndex.hasMaturedBase(pid)) {
+            routedFeeIndex += routedActiveCredit;
+            routedActiveCredit = 0;
+        }
+
+        uint256 reservedYield = routedActiveCredit + routedFeeIndex;
+        if (reservedYield > 0) {
+            _reserveYield(pool, pid, reservedYield, extraBacking);
+            if (routedActiveCredit > 0) {
+                LibActiveCreditIndex.accrueReservedWithSource(pid, routedActiveCredit, source);
+            }
+            if (routedFeeIndex > 0) {
+                LibFeeIndex.accrueReservedWithSource(pid, routedFeeIndex, source);
+            }
+        }
+    }
+
     /// @notice Route a fee amount with managed pool system share logic.
     /// @dev When pool is unmanaged, this is equivalent to routeSamePool.
     function routeManagedShare(

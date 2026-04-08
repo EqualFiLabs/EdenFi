@@ -738,11 +738,10 @@ contract EqualXSoloAmmFacetTest is Test {
         LibEqualXSoloAmmStorage.SoloAmmMarket memory market = harness.getEqualXSoloAmmMarket(marketId);
         assertEq(amountOut, preview.amountOut);
         assertEq(tokenB.balanceOf(bob), preview.amountOut);
-        assertEq(market.makerFeeAAccrued, preview.makerFee);
-        assertEq(market.treasuryFeeAAccrued, preview.treasuryFee);
-        assertEq(market.activeCreditFeeAAccrued, preview.activeCreditFee);
-        assertEq(market.feeIndexFeeAAccrued, preview.feeIndexFee);
         assertEq(tokenA.balanceOf(treasury), preview.treasuryFee);
+        assertEq(market.makerFeeAAccrued, 0);
+        assertEq(market.treasuryFeeAAccrued, 0);
+        assertEq(market.activeCreditFeeAAccrued + market.feeIndexFeeAAccrued, preview.activeCreditFee + preview.feeIndexFee);
         assertEq(harness.yieldReserveOf(1), preview.activeCreditFee + preview.feeIndexFee);
         assertEq(harness.principalOf(1, alicePositionKey), 500e18);
         assertEq(harness.principalOf(2, alicePositionKey), 500e18);

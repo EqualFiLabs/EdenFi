@@ -15,7 +15,6 @@ import {LibFeeRouter} from "../libraries/LibFeeRouter.sol";
 import {LibPoolMembership} from "../libraries/LibPoolMembership.sol";
 import {LibPositionHelpers} from "../libraries/LibPositionHelpers.sol";
 import {ReentrancyGuardModifiers} from "../libraries/LibReentrancyGuard.sol";
-import {TransientSwapCache} from "../libraries/TransientSwapCache.sol";
 import {Types} from "../libraries/Types.sol";
 import {InsufficientPrincipal, InvalidParameterRange, PoolMembershipRequired} from "../libraries/Errors.sol";
 
@@ -378,13 +377,16 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
 
         if (outcome.split.protocolFee > 0) {
             uint256 extraBacking = _feeSideReserve(market, ctx.feePoolId);
-            TransientSwapCache.cacheFeePool(ctx.feePoolId);
-            uint256 cachedFeePoolId = TransientSwapCache.loadFeePool();
-            if (cachedFeePoolId != 0) {
-                ctx.feePoolId = cachedFeePoolId;
-            }
             (outcome.toTreasury, outcome.toActive, outcome.toFeeIndex) =
-                LibFeeRouter.routeSamePool(ctx.feePoolId, outcome.split.protocolFee, SOLO_AMM_FEE_SOURCE, false, extraBacking);
+                LibFeeRouter.routeSamePoolPreSplit(
+                    ctx.feePoolId,
+                    outcome.split.treasuryFee,
+                    outcome.split.activeCreditFee,
+                    outcome.split.feeIndexFee,
+                    SOLO_AMM_FEE_SOURCE,
+                    false,
+                    extraBacking
+                );
             _accrueProtocolFees(market, ctx.feeToken, outcome.toTreasury, outcome.toActive, outcome.toFeeIndex);
 
             uint256 backingIncrease = outcome.toActive + outcome.toFeeIndex;
@@ -591,7 +593,6 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         ctx.reserveOut = ctx.inIsA ? market.reserveB : market.reserveA;
         ctx.decimalsIn = ctx.inIsA ? market.tokenADecimals : market.tokenBDecimals;
         ctx.decimalsOut = ctx.inIsA ? market.tokenBDecimals : market.tokenADecimals;
-        TransientSwapCache.cacheReserves(ctx.reserveIn, ctx.reserveOut);
         if (market.feeAsset == LibEqualXTypes.FeeAsset.TokenIn) {
             ctx.feePoolId = ctx.inIsA ? market.poolIdA : market.poolIdB;
             ctx.feeToken = tokenIn;
@@ -863,14 +864,9 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         address feeToken,
         uint256 makerFee
     ) internal {
-        if (makerFee == 0) {
-            return;
-        }
-        if (feeToken == market.tokenA) {
-            market.makerFeeAAccrued += makerFee;
-        } else {
-            market.makerFeeBAccrued += makerFee;
-        }
+        market;
+        feeToken;
+        makerFee;
     }
 
     function _accrueProtocolFees(
@@ -880,14 +876,15 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
         uint256 toActive,
         uint256 toFeeIndex
     ) internal {
+        toTreasury;
+        uint256 reservedProtocolFee = toActive + toFeeIndex;
+        if (reservedProtocolFee == 0) {
+            return;
+        }
         if (feeToken == market.tokenA) {
-            market.treasuryFeeAAccrued += toTreasury;
-            market.activeCreditFeeAAccrued += toActive;
-            market.feeIndexFeeAAccrued += toFeeIndex;
+            market.feeIndexFeeAAccrued += reservedProtocolFee;
         } else {
-            market.treasuryFeeBAccrued += toTreasury;
-            market.activeCreditFeeBAccrued += toActive;
-            market.feeIndexFeeBAccrued += toFeeIndex;
+            market.feeIndexFeeBAccrued += reservedProtocolFee;
         }
     }
 

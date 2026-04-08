@@ -205,6 +205,18 @@ library LibActiveCreditIndex {
         LibMaintenance.enforce(pid);
         LibAppStorage.AppStorage storage store = LibAppStorage.s();
         Types.PoolData storage p = store.pools[pid];
+        _accrueReservedWithSource(p, pid, amount, source);
+    }
+
+    function accrueReservedWithSource(uint256 pid, uint256 amount, bytes32 source) internal {
+        if (amount == 0) return;
+        Types.PoolData storage p = LibAppStorage.s().pools[pid];
+        _accrueReservedWithSource(p, pid, amount, source);
+    }
+
+    function _accrueReservedWithSource(Types.PoolData storage p, uint256 pid, uint256 amount, bytes32 source)
+        private
+    {
         _rollMatured(p);
         uint256 activeBase = p.activeCreditMaturedTotal;
         if (activeBase == 0) return;

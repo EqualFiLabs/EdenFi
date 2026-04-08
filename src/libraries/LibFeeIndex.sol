@@ -40,6 +40,24 @@ library LibFeeIndex {
         }
 
         p.yieldReserve += amount;
+        _accrueReservedAmount(p, pid, amount, source, totalDeposits);
+    }
+
+    function accrueReservedWithSource(uint256 pid, uint256 amount, bytes32 source) internal {
+        if (amount == 0) return;
+        Types.PoolData storage p = LibAppStorage.s().pools[pid];
+        uint256 totalDeposits = p.totalDeposits;
+        if (totalDeposits == 0) return;
+        _accrueReservedAmount(p, pid, amount, source, totalDeposits);
+    }
+
+    function _accrueReservedAmount(
+        Types.PoolData storage p,
+        uint256 pid,
+        uint256 amount,
+        bytes32 source,
+        uint256 totalDeposits
+    ) private {
         uint256 scaledAmount = Math.mulDiv(amount, INDEX_SCALE, 1);
         uint256 dividend = scaledAmount + p.feeIndexRemainder;
         uint256 delta = dividend / totalDeposits;
@@ -70,18 +88,7 @@ library LibFeeIndex {
         }
 
         p.yieldReserve += amount;
-        uint256 scaledAmount = Math.mulDiv(amount, INDEX_SCALE, 1);
-        uint256 dividend = scaledAmount + p.feeIndexRemainder;
-        uint256 delta = dividend / totalDeposits;
-        if (delta == 0) {
-            p.feeIndexRemainder = dividend;
-            return;
-        }
-
-        p.feeIndexRemainder = dividend - (delta * totalDeposits);
-        uint256 newIndex = p.feeIndex + delta;
-        p.feeIndex = newIndex;
-        emit FeeIndexAccrued(pid, amount, delta, newIndex, source);
+        _accrueReservedAmount(p, pid, amount, source, totalDeposits);
     }
 
     function settle(uint256 pid, bytes32 user) internal {
