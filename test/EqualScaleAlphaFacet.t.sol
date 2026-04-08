@@ -2030,6 +2030,47 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(line.nextDueAt == cureTimestamp + PAYMENT_INTERVAL_SECS, "runoff cure due mismatch");
     }
 
+    function test_closeLine_finalizesFullyRepaidActiveLine() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.aprBps = 0;
+        params.minimumPaymentPerPeriod = 1;
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+
+        uint256 lineId = _createActivatedLine(params, TARGET_LIMIT, TARGET_LIMIT);
+        uint256 lenderPositionId = facet.lineCommitmentPositionIds(lineId)[0];
+
+        vm.prank(alice);
+        facet.draw(lineId, 200e18);
+
+        _mintAndApprove(alice, 200e18);
+        vm.prank(alice);
+        facet.repayLine(lineId, 200e18);
+
+        vm.expectEmit(true, false, false, true, address(facet));
+        emit CreditLineClosed(lineId, LibEqualScaleAlphaStorage.CreditLineStatus.Active, false);
+
+        vm.prank(alice);
+        facet.closeLine(lineId);
+
+        LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
+        LibEqualScaleAlphaStorage.Commitment memory commitment = facet.commitment(lineId, lenderPositionId);
+
+        require(line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Closed, "line should be closed");
+        require(line.outstandingPrincipal == 0, "principal should stay cleared");
+        require(line.accruedInterest == 0, "interest should stay cleared");
+        require(line.currentCommittedAmount == 0, "committed amount should clear");
+        require(line.activeLimit == 0, "active limit should clear");
+        require(commitment.committedAmount == 0, "commitment amount should clear");
+        require(
+            commitment.status == LibEqualScaleAlphaStorage.CommitmentStatus.Closed,
+            "commitment should finalize as closed"
+        );
+        require(
+            facet.encumberedCapitalOf(positionNft.getPositionKey(lenderPositionId), SETTLEMENT_POOL_ID) == 0,
+            "lender encumbrance should release on close"
+        );
+    }
+
     function test_getBorrowerProfile_mergesStoredMetadataAndLiveIdentityState() external {
         uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
         bytes32 borrowerPositionKey = positionNft.getPositionKey(borrowerPositionId);
@@ -2056,6 +2097,54 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         profileView = facet.getBorrowerProfile(borrowerPositionId);
         require(!profileView.registrationComplete, "identity should stay live");
         require(profileView.treasuryWallet == treasuryWallet, "stored treasury wallet should remain unchanged");
+    }
+
+    function test_getBorrowerLineIds_preservesCanceledProposalHistory() external {
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+
+        vm.startPrank(alice);
+        uint256 canceledLineId = facet.createLineProposal(borrowerPositionId, _defaultProposalParamsNone());
+        uint256 activeLineId = facet.createLineProposal(borrowerPositionId, _defaultProposalParamsNone());
+        vm.stopPrank();
+
+        vm.prank(alice);
+        facet.cancelLineProposal(canceledLineId);
+
+        uint256[] memory borrowerLineIds = facet.getBorrowerLineIds(borrowerPositionId);
+
+        require(borrowerLineIds.length == 2, "raw borrower line history should keep canceled proposals");
+        require(borrowerLineIds[0] == canceledLineId, "first line id mismatch");
+        require(borrowerLineIds[1] == activeLineId, "second line id mismatch");
+        require(
+            facet.line(canceledLineId).status == LibEqualScaleAlphaStorage.CreditLineStatus.Closed,
+            "canceled line should remain closed in history"
+        );
+        require(
+            facet.line(activeLineId).status == LibEqualScaleAlphaStorage.CreditLineStatus.SoloWindow,
+            "active proposal should remain in history"
+        );
+    }
+
+    function test_updateBorrowerProfile_allowsBankrTokenAndMetadataWhileLineIsActive() external {
+        uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
+        uint256 borrowerPositionId = facet.line(lineId).borrowerPositionId;
+        bytes32 borrowerPositionKey = facet.line(lineId).borrowerPositionKey;
+        address newBankrToken = address(0xF00D);
+        bytes32 newMetadataHash = keccak256("active-line-profile-update");
+
+        vm.expectEmit(true, true, false, true, address(facet));
+        emit BorrowerProfileUpdated(borrowerPositionKey, borrowerPositionId, treasuryWallet, newBankrToken, newMetadataHash);
+
+        vm.prank(alice);
+        facet.updateBorrowerProfile(borrowerPositionId, treasuryWallet, newBankrToken, newMetadataHash);
+
+        (, address storedTreasuryWallet, address storedBankrToken, bytes32 storedMetadataHash, bool active) =
+            facet.borrowerProfile(borrowerPositionKey);
+
+        require(storedTreasuryWallet == treasuryWallet, "treasury wallet should stay fixed");
+        require(storedBankrToken == newBankrToken, "bankr token should update");
+        require(storedMetadataHash == newMetadataHash, "metadata should update");
+        require(active, "profile should remain active");
     }
 
     function test_lineAndCommitmentViews_roundTripStoredStateAndLookups() external {
