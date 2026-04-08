@@ -13,6 +13,7 @@ import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentView
 import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockController.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibEncumbrance} from "src/libraries/LibEncumbrance.sol";
+import {LibEqualScaleAlphaShared} from "src/equalscale/LibEqualScaleAlphaShared.sol";
 import {LibEqualScaleAlphaStorage} from "src/libraries/LibEqualScaleAlphaStorage.sol";
 import {LibPositionAgentStorage} from "src/libraries/LibPositionAgentStorage.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
@@ -240,6 +241,11 @@ contract EqualScaleAlphaFacetHarness is
             revert("missedPayments overflow");
         }
         LibEqualScaleAlphaStorage.s().lines[lineId].missedPayments = uint8(missedPayments);
+    }
+
+    // Retained for the synthetic remainder-allocation edge where live charge-off recovery is already capped.
+    function allocateRecoveryForTest(uint256 lineId, uint256 recoveryAmount) external {
+        LibEqualScaleAlphaShared.allocateRecovery(LibEqualScaleAlphaStorage.s(), lineId, recoveryAmount);
     }
 
     function storedChargeOffThresholdSecs() external view returns (uint40) {
@@ -2723,6 +2729,51 @@ contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
         facet.updateBorrowerProfile(
             borrowerPositionId, address(0xD00D), address(0xF00D), keccak256("locked-after-activation")
         );
+    }
+
+    function test_BugCondition_RecoveryStranding_ShouldFullyCreditRecoveryWhenInputExceedsExposure() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.requestedTargetLimit = 21e18;
+        params.minimumViableLine = 1e18;
+        params.minimumPaymentPerPeriod = 1;
+        params.maxDrawPerPeriod = 21e18;
+
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(borrowerPositionId, params);
+
+        vm.warp(block.timestamp + 3 days + 1);
+        facet.transitionToPooledOpen(lineId);
+
+        uint256 lenderPositionOne = _fundSettlementPosition(bob, 1e18);
+        uint256 lenderPositionTwo = _fundSettlementPosition(carol, 10e18);
+        uint256 lenderPositionThree = _fundSettlementPosition(dave, 10e18);
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionOne, 1e18);
+        vm.prank(carol);
+        facet.commitPooled(lineId, lenderPositionTwo, 10e18);
+        vm.prank(dave);
+        facet.commitPooled(lineId, lenderPositionThree, 10e18);
+
+        vm.prank(alice);
+        facet.activateLine(lineId);
+
+        vm.prank(alice);
+        facet.draw(lineId, 21e18);
+
+        // Synthetic by design: the live charge-off path already caps recovery to total exposed principal,
+        // so this harness call isolates the historical remaining-recovery bug when input exceeds exposure.
+        facet.allocateRecoveryForTest(lineId, 100e18);
+
+        LibEqualScaleAlphaStorage.Commitment memory first = facet.commitment(lineId, lenderPositionOne);
+        LibEqualScaleAlphaStorage.Commitment memory second = facet.commitment(lineId, lenderPositionTwo);
+        LibEqualScaleAlphaStorage.Commitment memory third = facet.commitment(lineId, lenderPositionThree);
+
+        require(first.recoveryReceived + second.recoveryReceived + third.recoveryReceived == 21e18, "recovery stranded");
+        require(first.principalExposed == 0, "first exposure should clear");
+        require(second.principalExposed == 0, "second exposure should clear");
+        require(third.principalExposed == 0, "third exposure should clear");
     }
 
     function test_BugCondition_RepayLine_ShouldNotAlwaysAssignDustToLastCommitment() external {

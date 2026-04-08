@@ -348,7 +348,7 @@ library LibEqualScaleAlphaShared {
         }
 
         uint256 remainingRecovery = recoveryAmount > totalExposed ? totalExposed : recoveryAmount;
-        uint256 seenActiveCommitments;
+        uint256 remainingExposed = totalExposed;
         for (uint256 i = 0; i < len; i++) {
             LibEqualScaleAlphaStorage.Commitment storage commitment =
                 store.lineCommitments[lineId][lenderPositionIds[i]];
@@ -356,21 +356,21 @@ library LibEqualScaleAlphaShared {
                 continue;
             }
 
-            seenActiveCommitments++;
-            uint256 recoveryShare = remainingRecovery;
-            if (seenActiveCommitments != activeCommitmentCount) {
-                recoveryShare = Math.mulDiv(recoveryAmount, commitment.principalExposed, totalExposed);
-                if (recoveryShare > remainingRecovery) {
-                    recoveryShare = remainingRecovery;
-                }
-                remainingRecovery -= recoveryShare;
+            uint256 exposureBefore = commitment.principalExposed;
+            uint256 recoveryShare;
+            if (remainingExposed == exposureBefore) {
+                recoveryShare = remainingRecovery;
+            } else {
+                recoveryShare = Math.mulDiv(remainingRecovery, exposureBefore, remainingExposed);
             }
 
-            if (recoveryShare > commitment.principalExposed) {
-                recoveryShare = commitment.principalExposed;
+            if (recoveryShare > exposureBefore) {
+                recoveryShare = exposureBefore;
             }
             commitment.recoveryReceived += recoveryShare;
             commitment.principalExposed -= recoveryShare;
+            remainingRecovery -= recoveryShare;
+            remainingExposed -= exposureBefore;
         }
     }
 
