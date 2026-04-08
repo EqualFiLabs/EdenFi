@@ -346,6 +346,49 @@ contract EqualLendDirectFixedAgreementFacetTest is Test {
         assertEq(borrowToken.balanceOf(bob), _borrowerNetFor(40 ether, 0, 14 days), "borrower proceeds");
     }
 
+    function test_acceptFixedBorrowerOffer_smallLoanRoundsUpAcrossFeeFlow() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 1, 2_000_000, borrowToken);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 2, 2_000_000, collateralToken);
+        bytes32 lenderKey = positionNft.getPositionKey(lenderPositionId);
+
+        uint256 principal = 1_000_000;
+        uint16 aprBps = 1;
+        uint64 duration = 1 days;
+        uint256 expectedRollingStyleInterest = _interestOnly(principal, aprBps, duration);
+        uint256 expectedBorrowerNet = _borrowerNetFor(principal, aprBps, duration);
+
+        vm.prank(bob);
+        uint256 offerId = harness.postFixedBorrowerOffer(
+            EqualLendDirectFixedOfferFacet.FixedBorrowerOfferParams({
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principal: principal,
+                collateralLocked: 1_250_000,
+                aprBps: aprBps,
+                durationSeconds: duration,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
+
+        vm.prank(alice);
+        uint256 agreementId = harness.acceptFixedBorrowerOffer(offerId, lenderPositionId, expectedBorrowerNet);
+
+        (LibEqualLendDirectStorage.FixedAgreement memory agreement,) = harness.getFixedAgreement(agreementId);
+        (, , uint256 lenderYield, uint256 treasuryAmount, uint256 feeIndexAmount) = _expectedFeeSplit(principal, aprBps, duration);
+
+        assertEq(expectedRollingStyleInterest, 1, "setup should exercise the ceil-rounding floor case");
+        assertEq(agreement.userInterest, expectedRollingStyleInterest, "fixed agreement should use ceil-rounded interest");
+        assertEq(borrowToken.balanceOf(bob), expectedBorrowerNet, "borrower net proceeds");
+        assertEq(borrowToken.balanceOf(treasury), treasuryAmount, "treasury fee split");
+        assertEq(harness.accruedYieldOf(1, lenderKey), lenderYield, "lender accrued yield");
+        assertEq(harness.yieldReserveOf(1), lenderYield + feeIndexAmount, "yield reserve backing");
+    }
+
     function test_acceptLenderRatioTrancheOffer_partialFillCancelReleasesOnlyUnfilledCapacity() external {
         uint256 lenderPositionId = _mintAndDeposit(alice, 1, 200 ether, borrowToken);
         uint256 borrowerPositionId = _mintAndDeposit(bob, 2, 400 ether, collateralToken);
@@ -508,6 +551,48 @@ contract EqualLendDirectFixedAgreementFacetTest is Test {
         assertEq(debtPrincipal, 40 ether, "same-asset active credit debt principal");
         assertEq(debtIndexSnapshot, 0, "same-asset active credit index snapshot");
         assertEq(sameAssetToken.balanceOf(bob), _borrowerNetFor(40 ether, 900, 14 days), "same-asset borrower proceeds");
+    }
+
+    function test_acceptLenderRatioTrancheOffer_roundsCollateralUpThroughAccountingFlow() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 1, 200 ether, borrowToken);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 2, 200 ether, collateralToken);
+        bytes32 borrowerKey = positionNft.getPositionKey(borrowerPositionId);
+
+        vm.prank(alice);
+        uint256 offerId = harness.postLenderRatioTrancheOffer(
+            EqualLendDirectFixedOfferFacet.LenderRatioTrancheOfferParams({
+                lenderPositionId: lenderPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principalCap: 60 ether,
+                priceNumerator: 2,
+                priceDenominator: 3,
+                minPrincipalPerFill: 10 ether,
+                aprBps: 900,
+                durationSeconds: 14 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
+
+        uint256 principalFill = 10 ether;
+        uint256 expectedCollateral = Math.mulDiv(principalFill, 2, 3, Math.Rounding.Ceil);
+        uint256 flooredCollateral = Math.mulDiv(principalFill, 2, 3);
+
+        vm.prank(bob);
+        uint256 agreementId =
+            harness.acceptLenderRatioTrancheOffer(offerId, borrowerPositionId, principalFill, _borrowerNetFor(principalFill, 900, 14 days));
+
+        (LibEqualLendDirectStorage.FixedAgreement memory agreement,) = harness.getFixedAgreement(agreementId);
+        (uint256 borrowerLocked,,) = harness.encumbranceOf(borrowerKey, 2);
+
+        assertGt(expectedCollateral, flooredCollateral, "setup should require a ceil-rounded collateral unit");
+        assertEq(agreement.collateralLocked, expectedCollateral, "agreement collateral should round up");
+        assertEq(borrowerLocked, expectedCollateral, "borrower encumbrance should match ceil-rounded collateral");
+        assertEq(borrowToken.balanceOf(bob), _borrowerNetFor(principalFill, 900, 14 days), "borrower proceeds");
     }
 
     function test_acceptBorrowerRatioTrancheOffer_partialFillCancelReleasesOnlyUnfilledCollateral() external {

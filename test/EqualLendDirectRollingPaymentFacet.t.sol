@@ -20,6 +20,7 @@ import {Types} from "src/libraries/Types.sol";
 import {
     RollingError_AmortizationDisabled,
     RollingError_InterestExceedsMax,
+    RollingError_PaymentCapReached,
     RollingError_RecoveryNotEligible
 } from "src/libraries/Errors.sol";
 import {NotNFTOwner} from "src/libraries/Errors.sol";
@@ -464,6 +465,80 @@ contract EqualLendDirectRollingPaymentFacetTest is Test {
         assertEq(harness.lenderAgreementIds(lenderKey).length, 0, "lender agreement ids after full rolling repay");
     }
 
+    function test_rollingLifecycle_fullRepayRespectsInterestGuardsEndToEnd() external {
+        (uint256 agreementId, bytes32 lenderKey, bytes32 borrowerKey, uint64 acceptTs) =
+            _setupSameAssetAgreement(false, true);
+
+        vm.warp(acceptTs + 10 days);
+
+        uint256 firstInterestDue = _currentInterestDue(agreementId);
+        sameAssetToken.mint(bob, firstInterestDue);
+        vm.startPrank(bob);
+        sameAssetToken.approve(address(harness), type(uint256).max);
+        harness.makeRollingPayment(agreementId, firstInterestDue, firstInterestDue, firstInterestDue);
+        vm.stopPrank();
+
+        (LibEqualLendDirectStorage.RollingAgreement memory afterPayment,) = harness.getRollingAgreement(agreementId);
+        assertEq(afterPayment.paymentCount, 1, "scheduled payment did not settle");
+        assertEq(afterPayment.arrears, 0, "first payment should leave no arrears");
+
+        vm.warp(block.timestamp + 3 days);
+        (uint256 closeoutInterest, uint256 closeoutTotal) = _closeoutTotals(agreementId);
+
+        sameAssetToken.mint(bob, closeoutTotal);
+        vm.startPrank(bob);
+        harness.repayRollingInFull(agreementId, closeoutTotal, closeoutInterest);
+        vm.stopPrank();
+
+        _assertCloseoutState(
+            agreementId,
+            lenderKey,
+            borrowerKey,
+            100 ether + firstInterestDue + closeoutInterest,
+            address(sameAssetToken)
+        );
+    }
+
+    function test_rollingLifecycle_catchUpPaymentClearsHistoricalArrearsWithoutImmediateRecovery() external {
+        (uint256 agreementId,,, uint64 acceptTs) = _setupCrossAssetAgreement(false, true);
+
+        vm.warp(acceptTs + 17 days);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);
+        RollingAccrualExpectation memory accrual = _previewAccrual(agreement, block.timestamp);
+        uint256 historicalArrears = accrual.arrearsDue;
+        uint256 totalInterestDue = accrual.arrearsDue + accrual.currentInterestDue;
+
+        assertGt(historicalArrears, 0, "historical arrears should exist");
+        assertGt(accrual.currentInterestDue, 0, "current interest should exist");
+
+        borrowToken.mint(bob, historicalArrears);
+        vm.startPrank(bob);
+        borrowToken.approve(address(harness), type(uint256).max);
+        harness.makeRollingPayment(agreementId, historicalArrears, historicalArrears, totalInterestDue);
+        vm.stopPrank();
+
+        (LibEqualLendDirectStorage.RollingAgreement memory afterCatchUp,) = harness.getRollingAgreement(agreementId);
+        assertEq(afterCatchUp.nextDue, acceptTs + 21 days, "next due should advance after arrears cure");
+        assertEq(afterCatchUp.paymentCount, 2, "catch-up payment should advance passed checkpoints");
+        assertEq(afterCatchUp.arrears, accrual.currentInterestDue, "remaining current-period interest should fold into arrears");
+
+        vm.prank(alice);
+        vm.expectRevert(RollingError_RecoveryNotEligible.selector);
+        harness.recoverRolling(agreementId);
+
+        uint256 currentPaymentDue = _currentInterestDue(agreementId);
+        borrowToken.mint(bob, currentPaymentDue);
+        vm.startPrank(bob);
+        harness.makeRollingPayment(agreementId, currentPaymentDue, currentPaymentDue, currentPaymentDue);
+        vm.stopPrank();
+
+        (LibEqualLendDirectStorage.RollingAgreement memory afterCurrentPayment,) = harness.getRollingAgreement(agreementId);
+        assertEq(afterCurrentPayment.arrears, 0, "current-period cleanup payment should clear arrears");
+        assertEq(afterCurrentPayment.paymentCount, 2, "same-checkpoint cleanup should not increment payment count");
+        assertEq(afterCurrentPayment.nextDue, acceptTs + 21 days, "next due should remain on the advanced checkpoint");
+    }
+
     function test_exerciseRolling_clearsStateAndRefundsUnusedCollateral() external {
         (uint256 agreementId, bytes32 lenderKey, bytes32 borrowerKey, uint64 acceptTs) = _setupSameAssetAgreement(true, true);
 
@@ -557,6 +632,73 @@ contract EqualLendDirectRollingPaymentFacetTest is Test {
         assertEq(harness.lenderAgreementCount(lenderKey), 0, "lender agreement index");
         assertEq(harness.rollingBorrowerAgreementCount(borrowerKey), 0, "rolling borrower agreement index");
         assertEq(harness.rollingLenderAgreementCount(lenderKey), 0, "rolling lender agreement index");
+    }
+
+    function test_rollingLifecycle_paymentCapStillAllowsTerminalFullRepay() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 3, 100 ether, sameAssetToken);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 3, 150 ether, sameAssetToken);
+        bytes32 lenderKey = positionNft.getPositionKey(lenderPositionId);
+        bytes32 borrowerKey = positionNft.getPositionKey(borrowerPositionId);
+
+        vm.prank(bob);
+        uint256 offerId = harness.postRollingBorrowerOffer(
+            EqualLendDirectRollingOfferFacet.RollingBorrowerOfferParams({
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: 3,
+                collateralPoolId: 3,
+                borrowAsset: address(sameAssetToken),
+                collateralAsset: address(sameAssetToken),
+                principal: 40 ether,
+                collateralLocked: 80 ether,
+                paymentIntervalSeconds: 7 days,
+                rollingApyBps: 850,
+                gracePeriodSeconds: 2 days,
+                maxPaymentCount: 2,
+                upfrontPremium: 0,
+                allowAmortization: false,
+                allowEarlyRepay: true,
+                allowEarlyExercise: true
+            })
+        );
+
+        uint64 acceptTs = uint64(block.timestamp);
+        vm.prank(alice);
+        uint256 agreementId = harness.acceptRollingBorrowerOffer(offerId, lenderPositionId, 0, 40 ether);
+
+        uint256 totalInterestPaid;
+        for (uint256 i = 0; i < 2; ++i) {
+            vm.warp(acceptTs + ((i + 1) * 7 days) + 1 days);
+            uint256 paymentDue = _currentInterestDue(agreementId);
+            totalInterestPaid += paymentDue;
+            sameAssetToken.mint(bob, paymentDue);
+            vm.startPrank(bob);
+            sameAssetToken.approve(address(harness), type(uint256).max);
+            harness.makeRollingPayment(agreementId, paymentDue, paymentDue, paymentDue);
+            vm.stopPrank();
+        }
+
+        vm.warp(acceptTs + 22 days);
+        uint256 extraPaymentDue = _currentInterestDue(agreementId);
+        sameAssetToken.mint(bob, extraPaymentDue);
+        vm.startPrank(bob);
+        sameAssetToken.approve(address(harness), type(uint256).max);
+        vm.expectRevert(RollingError_PaymentCapReached.selector);
+        harness.makeRollingPayment(agreementId, extraPaymentDue, extraPaymentDue, extraPaymentDue);
+        vm.stopPrank();
+
+        (uint256 closeoutInterest, uint256 closeoutTotal) = _closeoutTotals(agreementId);
+        sameAssetToken.mint(bob, closeoutTotal);
+        vm.startPrank(bob);
+        harness.repayRollingInFull(agreementId, closeoutTotal, closeoutInterest);
+        vm.stopPrank();
+
+        _assertCloseoutState(
+            agreementId,
+            lenderKey,
+            borrowerKey,
+            100 ether + totalInterestPaid + closeoutInterest,
+            address(sameAssetToken)
+        );
     }
 
     function _setupCrossAssetAgreement(bool allowAmortization, bool allowEarlyRepay)
@@ -727,7 +869,8 @@ contract EqualLendDirectRollingPaymentFacetTest is Test {
 
         uint256 availableForDebt = expected.collateralSeized;
         if (applyPenalty) {
-            expected.penaltyPaid = (totalDebt * 500) / 10_000;
+            uint256 penaltyBase = expected.collateralSeized < totalDebt ? expected.collateralSeized : totalDebt;
+            expected.penaltyPaid = (penaltyBase * 500) / 10_000;
             if (expected.penaltyPaid > expected.collateralSeized) {
                 expected.penaltyPaid = expected.collateralSeized;
             }

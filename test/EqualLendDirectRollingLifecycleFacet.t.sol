@@ -42,6 +42,54 @@ contract EqualLendDirectRollingLifecycleBugConditionTest is EqualLendDirectRolli
 }
 
 contract EqualLendDirectRollingLifecyclePreservationTest is EqualLendDirectRollingPaymentFacetTest {
+    function test_recoverRolling_farPastDueUsesRealizedValuePenaltyBase() external {
+        (uint256 agreementId, bytes32 lenderKey, bytes32 borrowerKey, uint64 acceptTs) =
+            _setupCrossAssetAgreement(false, true);
+
+        vm.warp(acceptTs + (400 * 365 days));
+
+        (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);
+        RollingAccrualExpectation memory accrual = _previewAccrual(agreement, block.timestamp);
+        uint256 totalDebt = agreement.outstandingPrincipal + accrual.arrearsDue + accrual.currentInterestDue;
+        TerminalExpectation memory expected = _previewTerminalExpectation(agreement, 150 ether, block.timestamp, true);
+        uint256 treasuryBefore = collateralToken.balanceOf(treasury);
+
+        assertGt(totalDebt, expected.collateralSeized, "setup should push total debt above seized collateral");
+
+        vm.recordLogs();
+        vm.prank(alice);
+        harness.recoverRolling(agreementId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 eventSig =
+            keccak256("RollingAgreementRecovered(uint256,address,uint256,uint256,uint256,uint256,uint256,uint256,uint256)");
+        uint256 penaltyPaid;
+        bool found;
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].topics.length != 3 || logs[i].topics[0] != eventSig) {
+                continue;
+            }
+            (penaltyPaid,,,,,,) = abi.decode(logs[i].data, (uint256, uint256, uint256, uint256, uint256, uint256, uint256));
+            found = true;
+            break;
+        }
+
+        assertTrue(found, "expected RollingAgreementRecovered event");
+        assertEq(penaltyPaid, expected.penaltyPaid, "penalty should use realized-value base");
+        assertEq(harness.principalOf(2, lenderKey), expected.lenderShare, "lender recovery share");
+        assertEq(
+            harness.principalOf(2, borrowerKey),
+            150 ether - expected.debtValueApplied - expected.penaltyPaid,
+            "borrower refund balance"
+        );
+        assertEq(
+            collateralToken.balanceOf(treasury) - treasuryBefore,
+            expected.treasuryShare + expected.penaltyPaid,
+            "treasury share plus penalty"
+        );
+        assertEq(harness.yieldReserveOf(2), expected.feeIndexShare, "fee-index reserve");
+    }
+
     function test_repayRollingInFull_revertsWhenEarlyRepayDisabledBeforePaymentCap() external {
         (uint256 agreementId,,, ) = _setupCrossAssetAgreement(false, false);
 

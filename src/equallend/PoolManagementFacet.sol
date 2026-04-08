@@ -282,7 +282,7 @@ contract PoolManagementFacet {
     }
 
     function setAumFee(uint256 pid, uint16 aumFeeBps) external {
-        LibAccess.enforceTimelockOrOwnerIfUnset();
+        LibAccess.enforceOwnerOrTimelock();
 
         Types.PoolData storage p = LibAppStorage.s().pools[pid];
         if (!p.initialized) revert PoolNotInitialized(pid);
