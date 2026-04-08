@@ -112,6 +112,9 @@ library LibFeeIndex {
                 if (maintenanceFee >= principal) {
                     principal = 0;
                     p.userPrincipal[user] = 0;
+                    if (p.userCount > 0) {
+                        p.userCount -= 1;
+                    }
                 } else {
                     principal -= maintenanceFee;
                     p.userPrincipal[user] = principal;
