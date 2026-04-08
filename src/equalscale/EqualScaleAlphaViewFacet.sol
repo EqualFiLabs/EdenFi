@@ -108,6 +108,30 @@ contract EqualScaleAlphaViewFacet {
         return LibEqualScaleAlphaStorage.s().borrowerLineIds[borrowerPositionKey];
     }
 
+    function getActiveBorrowerLineIds(uint256 borrowerPositionId) external view returns (uint256[] memory) {
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
+        bytes32 borrowerPositionKey = _positionNftContract().getPositionKey(borrowerPositionId);
+        uint256[] storage allIds = store.borrowerLineIds[borrowerPositionKey];
+        uint256 len = allIds.length;
+
+        uint256 liveCount;
+        for (uint256 i = 0; i < len; i++) {
+            if (store.lines[allIds[i]].status != LibEqualScaleAlphaStorage.CreditLineStatus.Closed) {
+                liveCount++;
+            }
+        }
+
+        uint256[] memory result = new uint256[](liveCount);
+        uint256 idx;
+        for (uint256 i = 0; i < len; i++) {
+            if (store.lines[allIds[i]].status != LibEqualScaleAlphaStorage.CreditLineStatus.Closed) {
+                result[idx++] = allIds[i];
+            }
+        }
+
+        return result;
+    }
+
     function getLineCommitments(uint256 lineId)
         external
         view

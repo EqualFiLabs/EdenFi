@@ -2129,6 +2129,62 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         );
     }
 
+    function test_FilteredBorrowerView_returnsOnlyLiveLineIds() external {
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+
+        vm.startPrank(alice);
+        uint256 canceledLineId = facet.createLineProposal(borrowerPositionId, _defaultProposalParamsNone());
+        uint256 liveLineId = facet.createLineProposal(borrowerPositionId, _defaultProposalParamsNone());
+        uint256 closedLineId = facet.createLineProposal(borrowerPositionId, _defaultProposalParamsNone());
+        vm.stopPrank();
+
+        vm.prank(alice);
+        facet.cancelLineProposal(canceledLineId);
+
+        vm.warp(block.timestamp + 3 days + 1);
+        facet.transitionToPooledOpen(closedLineId);
+
+        uint256 lenderPositionId = _fundSettlementPosition(bob, TARGET_LIMIT);
+        vm.prank(bob);
+        facet.commitPooled(closedLineId, lenderPositionId, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.activateLine(closedLineId);
+
+        vm.prank(alice);
+        facet.draw(closedLineId, 100e18);
+
+        _mintAndApprove(alice, 100e18);
+        vm.prank(alice);
+        facet.repayLine(closedLineId, 100e18);
+
+        vm.prank(alice);
+        facet.closeLine(closedLineId);
+
+        uint256[] memory rawLineIds = facet.getBorrowerLineIds(borrowerPositionId);
+        uint256[] memory activeLineIds = facet.getActiveBorrowerLineIds(borrowerPositionId);
+
+        require(rawLineIds.length == 3, "raw borrower view should include all historical lines");
+        require(rawLineIds[0] == canceledLineId, "raw first line mismatch");
+        require(rawLineIds[1] == liveLineId, "raw second line mismatch");
+        require(rawLineIds[2] == closedLineId, "raw third line mismatch");
+
+        require(activeLineIds.length == 1, "filtered borrower view should only include live lines");
+        require(activeLineIds[0] == liveLineId, "filtered borrower view should exclude closed and canceled lines");
+        require(
+            facet.line(canceledLineId).status == LibEqualScaleAlphaStorage.CreditLineStatus.Closed,
+            "canceled proposal should remain closed"
+        );
+        require(
+            facet.line(closedLineId).status == LibEqualScaleAlphaStorage.CreditLineStatus.Closed,
+            "fully repaid line should be closed"
+        );
+        require(
+            facet.line(liveLineId).status == LibEqualScaleAlphaStorage.CreditLineStatus.SoloWindow,
+            "live proposal should remain visible in filtered view"
+        );
+    }
+
     function test_updateBorrowerProfile_allowsBankrTokenAndMetadataWhileLineIsActive() external {
         uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
         uint256 borrowerPositionId = facet.line(lineId).borrowerPositionId;
