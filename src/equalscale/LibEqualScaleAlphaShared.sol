@@ -76,7 +76,7 @@ library LibEqualScaleAlphaShared {
 
         uint256 remainingInterest = interestComponent;
         uint256 remainingPrincipal = principalComponent;
-        uint256 seenActiveCommitments;
+        uint256 remainingExposed = totalExposed;
         for (uint256 i = 0; i < len; i++) {
             LibEqualScaleAlphaStorage.Commitment storage commitment =
                 store.lineCommitments[lineId][lenderPositionIds[i]];
@@ -84,19 +84,27 @@ library LibEqualScaleAlphaShared {
                 continue;
             }
 
-            seenActiveCommitments++;
-            uint256 interestShare = remainingInterest;
-            uint256 principalShare = remainingPrincipal;
-            if (seenActiveCommitments != activeCommitmentCount) {
-                interestShare = Math.mulDiv(interestComponent, commitment.principalExposed, totalExposed);
-                principalShare = Math.mulDiv(principalComponent, commitment.principalExposed, totalExposed);
-                remainingInterest -= interestShare;
-                remainingPrincipal -= principalShare;
+            uint256 exposureBefore = commitment.principalExposed;
+            uint256 interestShare;
+            uint256 principalShare;
+            if (remainingExposed == exposureBefore) {
+                interestShare = remainingInterest;
+                principalShare = remainingPrincipal;
+            } else {
+                interestShare = Math.mulDiv(remainingInterest, exposureBefore, remainingExposed);
+                principalShare = Math.mulDiv(remainingPrincipal, exposureBefore, remainingExposed);
+            }
+
+            if (principalShare > exposureBefore) {
+                principalShare = exposureBefore;
             }
 
             commitment.interestReceived += interestShare;
             commitment.principalRepaid += principalShare;
             commitment.principalExposed -= principalShare;
+            remainingInterest -= interestShare;
+            remainingPrincipal -= principalShare;
+            remainingExposed -= exposureBefore;
         }
     }
 
@@ -400,7 +408,7 @@ library LibEqualScaleAlphaShared {
         }
 
         uint256 remainingWriteDown = writeDownAmount > totalExposed ? totalExposed : writeDownAmount;
-        uint256 seenActiveCommitments;
+        uint256 remainingExposed = totalExposed;
         for (uint256 i = 0; i < len; i++) {
             LibEqualScaleAlphaStorage.Commitment storage commitment =
                 store.lineCommitments[lineId][lenderPositionIds[i]];
@@ -408,22 +416,75 @@ library LibEqualScaleAlphaShared {
                 continue;
             }
 
-            seenActiveCommitments++;
-            uint256 writeDownShare = remainingWriteDown;
-            if (seenActiveCommitments != activeCommitmentCount) {
-                writeDownShare = Math.mulDiv(writeDownAmount, commitment.principalExposed, totalExposed);
-                if (writeDownShare > remainingWriteDown) {
-                    writeDownShare = remainingWriteDown;
-                }
-                remainingWriteDown -= writeDownShare;
+            uint256 exposureBefore = commitment.principalExposed;
+            uint256 writeDownShare;
+            if (remainingExposed == exposureBefore) {
+                writeDownShare = remainingWriteDown;
+            } else {
+                writeDownShare = Math.mulDiv(remainingWriteDown, exposureBefore, remainingExposed);
             }
 
-            if (writeDownShare > commitment.principalExposed) {
-                writeDownShare = commitment.principalExposed;
+            if (writeDownShare > exposureBefore) {
+                writeDownShare = exposureBefore;
             }
             commitment.lossWrittenDown += writeDownShare;
             commitment.principalExposed -= writeDownShare;
+            remainingWriteDown -= writeDownShare;
+            remainingExposed -= exposureBefore;
         }
+    }
+
+    function allocateDrawExposure(
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store,
+        uint256 lineId,
+        uint256 amount
+    ) internal returns (bool hasActiveCommitments) {
+        uint256[] storage lenderPositionIds = store.lineCommitmentPositionIds[lineId];
+        uint256 totalCommitted;
+        uint256 activeCommitmentCount;
+        uint256 len = lenderPositionIds.length;
+
+        for (uint256 i = 0; i < len; i++) {
+            LibEqualScaleAlphaStorage.Commitment storage commitment =
+                store.lineCommitments[lineId][lenderPositionIds[i]];
+            if (countsForFutureCoverage(commitment.status) && commitment.committedAmount != 0) {
+                totalCommitted += commitment.committedAmount;
+                activeCommitmentCount++;
+            }
+        }
+
+        if (totalCommitted == 0 || activeCommitmentCount == 0) {
+            return false;
+        }
+
+        uint256 remainingAmount = amount;
+        uint256 remainingCommitted = totalCommitted;
+        for (uint256 i = 0; i < len; i++) {
+            LibEqualScaleAlphaStorage.Commitment storage commitment =
+                store.lineCommitments[lineId][lenderPositionIds[i]];
+            if (!countsForFutureCoverage(commitment.status) || commitment.committedAmount == 0) {
+                continue;
+            }
+
+            uint256 committedBefore = commitment.committedAmount;
+            uint256 exposureShare;
+            if (remainingCommitted == committedBefore) {
+                exposureShare = remainingAmount;
+            } else {
+                exposureShare = Math.mulDiv(remainingAmount, committedBefore, remainingCommitted);
+            }
+
+            commitment.principalExposed += exposureShare;
+            remainingAmount -= exposureShare;
+            remainingCommitted -= committedBefore;
+        }
+
+        return true;
+    }
+
+    function countsForFutureCoverage(LibEqualScaleAlphaStorage.CommitmentStatus status) internal pure returns (bool) {
+        return status == LibEqualScaleAlphaStorage.CommitmentStatus.Active
+            || status == LibEqualScaleAlphaStorage.CommitmentStatus.Rolled;
     }
 
     function allocateInterestLoss(

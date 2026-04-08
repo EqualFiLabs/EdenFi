@@ -2782,13 +2782,13 @@ contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
         require(third.principalExposed == 0, "third exposure should clear");
     }
 
-    function test_BugCondition_RepayLine_ShouldNotAlwaysAssignDustToLastCommitment() external {
+    function test_BugCondition_RemainderFairness_ShouldNotAlwaysAssignDustToLastCommitment() external {
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
         params.aprBps = 0;
-        params.requestedTargetLimit = 3e18;
-        params.minimumViableLine = 1e18;
+        params.requestedTargetLimit = 5;
+        params.minimumViableLine = 1;
         params.minimumPaymentPerPeriod = 1;
-        params.maxDrawPerPeriod = 3e18;
+        params.maxDrawPerPeriod = 5;
 
         uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
         vm.prank(alice);
@@ -2797,32 +2797,30 @@ contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
         vm.warp(block.timestamp + 3 days + 1);
         facet.transitionToPooledOpen(lineId);
 
-        uint256 lenderPositionOne = _fundSettlementPosition(bob, 1e18);
-        uint256 lenderPositionTwo = _fundSettlementPosition(carol, 1e18);
-        uint256 lenderPositionThree = _fundSettlementPosition(dave, 1e18);
+        uint256 lenderPositionOne = _fundSettlementPosition(bob, 2);
+        uint256 lenderPositionTwo = _fundSettlementPosition(carol, 2);
+        uint256 lenderPositionThree = _fundSettlementPosition(dave, 1);
 
         vm.prank(bob);
-        facet.commitPooled(lineId, lenderPositionOne, 1e18);
+        facet.commitPooled(lineId, lenderPositionOne, 2);
         vm.prank(carol);
-        facet.commitPooled(lineId, lenderPositionTwo, 1e18);
+        facet.commitPooled(lineId, lenderPositionTwo, 2);
         vm.prank(dave);
-        facet.commitPooled(lineId, lenderPositionThree, 1e18);
+        facet.commitPooled(lineId, lenderPositionThree, 1);
 
         vm.prank(alice);
         facet.activateLine(lineId);
 
         vm.prank(alice);
-        facet.draw(lineId, 3e18);
+        facet.draw(lineId, 5);
 
-        _mintAndApprove(alice, 1e18);
+        _mintAndApprove(alice, 2);
         vm.prank(alice);
-        facet.repayLine(lineId, 1e18);
+        facet.repayLine(lineId, 2);
 
+        LibEqualScaleAlphaStorage.Commitment memory second = facet.commitment(lineId, lenderPositionTwo);
         LibEqualScaleAlphaStorage.Commitment memory third = facet.commitment(lineId, lenderPositionThree);
-        uint256 expectedFloorShare = uint256(1e18) / 3;
-        require(
-            third.principalRepaid == expectedFloorShare,
-            "repayment dust should not deterministically favor the last lender"
-        );
+        require(second.principalRepaid == 1, "middle lender should receive a remainder share under fair allocation");
+        require(third.principalRepaid == 1, "last lender should not receive the entire repayment remainder");
     }
 }

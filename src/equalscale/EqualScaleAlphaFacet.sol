@@ -655,41 +655,8 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors,
         uint256 lineId,
         uint256 amount
     ) internal {
-        uint256[] storage lenderPositionIds = store.lineCommitmentPositionIds[lineId];
-        uint256 totalCommitted;
-        uint256 activeCommitmentCount;
-        uint256 len = lenderPositionIds.length;
-
-        for (uint256 i = 0; i < len; i++) {
-            LibEqualScaleAlphaStorage.Commitment storage commitment =
-                store.lineCommitments[lineId][lenderPositionIds[i]];
-            if (_countsForFutureCoverage(commitment.status) && commitment.committedAmount != 0) {
-                totalCommitted += commitment.committedAmount;
-                activeCommitmentCount++;
-            }
-        }
-
-        if (totalCommitted == 0 || activeCommitmentCount == 0) {
+        if (!LibEqualScaleAlphaShared.allocateDrawExposure(store, lineId, amount)) {
             revert InvalidProposalTerms("line has no active commitments");
-        }
-
-        uint256 remaining = amount;
-        uint256 seenActiveCommitments;
-        for (uint256 i = 0; i < len; i++) {
-            LibEqualScaleAlphaStorage.Commitment storage commitment =
-                store.lineCommitments[lineId][lenderPositionIds[i]];
-            if (!_countsForFutureCoverage(commitment.status) || commitment.committedAmount == 0) {
-                continue;
-            }
-
-            seenActiveCommitments++;
-            uint256 exposureShare = remaining;
-            if (seenActiveCommitments != activeCommitmentCount) {
-                exposureShare = Math.mulDiv(amount, commitment.committedAmount, totalCommitted);
-                remaining -= exposureShare;
-            }
-
-            commitment.principalExposed += exposureShare;
         }
     }
 
@@ -743,10 +710,5 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors,
 
     function _positionNft() internal view returns (PositionNFT positionNftContract) {
         return LibEqualScaleAlphaShared.positionNft();
-    }
-
-    function _countsForFutureCoverage(LibEqualScaleAlphaStorage.CommitmentStatus status) internal pure returns (bool) {
-        return status == LibEqualScaleAlphaStorage.CommitmentStatus.Active
-            || status == LibEqualScaleAlphaStorage.CommitmentStatus.Rolled;
     }
 }
