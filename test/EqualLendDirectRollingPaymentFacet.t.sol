@@ -419,6 +419,28 @@ contract EqualLendDirectRollingPaymentFacetTest is Test {
         assertEq(afterAgreement.paymentCount, 1, "transferred borrower payment did not settle");
     }
 
+    function test_acceptRollingLenderOffer_preservesAgreementStorageAndCollateralLocking() external {
+        (uint256 agreementId, bytes32 lenderKey, bytes32 borrowerKey, uint64 acceptTs) =
+            _setupCrossAssetAgreement(false, true);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory agreement, LibEqualLendDirectStorage.AgreementKind kind) =
+            harness.getRollingAgreement(agreementId);
+        assertEq(uint256(kind), uint256(LibEqualLendDirectStorage.AgreementKind.Rolling), "agreement kind");
+        assertEq(uint256(agreement.status), uint256(LibEqualLendDirectStorage.AgreementStatus.Active), "agreement status");
+        assertEq(agreement.outstandingPrincipal, 60 ether, "outstanding principal");
+        assertEq(agreement.collateralLocked, 90 ether, "collateral locked");
+        assertEq(agreement.nextDue, acceptTs + 7 days, "next due");
+        assertEq(agreement.paymentCount, 0, "payment count");
+
+        (uint256 borrowerLocked,,) = harness.encumbranceOf(borrowerKey, 2);
+        (, uint256 lenderEncumbered, uint256 lenderEscrow) = harness.encumbranceOf(lenderKey, 1);
+        assertEq(borrowerLocked, 90 ether, "borrower collateral lock");
+        assertEq(lenderEncumbered, 60 ether, "lender live exposure");
+        assertEq(lenderEscrow, 0, "offer escrow should be cleared");
+        assertEq(harness.principalOf(1, lenderKey), 40 ether, "lender principal after funding");
+        assertEq(harness.borrowedPrincipalOf(borrowerKey, 1), 60 ether, "borrowed principal ledger");
+    }
+
     function test_repayRollingInFull_clearsRollingAgreementAndUnlocksCollateral() external {
         (uint256 agreementId, bytes32 lenderKey, bytes32 borrowerKey, uint64 acceptTs) = _setupSameAssetAgreement(true, true);
 

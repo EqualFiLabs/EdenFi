@@ -316,6 +316,36 @@ contract EqualLendDirectFixedAgreementFacetTest is Test {
         harness.acceptFixedBorrowerOffer(offerId, lenderPositionId, 1);
     }
 
+    function test_acceptFixedBorrowerOffer_zeroAprPreservesZeroInterest() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 1, 100 ether, borrowToken);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 2, 150 ether, collateralToken);
+
+        vm.prank(bob);
+        uint256 offerId = harness.postFixedBorrowerOffer(
+            EqualLendDirectFixedOfferFacet.FixedBorrowerOfferParams({
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principal: 40 ether,
+                collateralLocked: 80 ether,
+                aprBps: 0,
+                durationSeconds: 14 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
+
+        vm.prank(alice);
+        uint256 agreementId = harness.acceptFixedBorrowerOffer(offerId, lenderPositionId, _borrowerNetFor(40 ether, 0, 14 days));
+
+        (LibEqualLendDirectStorage.FixedAgreement memory agreement,) = harness.getFixedAgreement(agreementId);
+        assertEq(agreement.userInterest, 0, "zero apr should keep zero interest");
+        assertEq(borrowToken.balanceOf(bob), _borrowerNetFor(40 ether, 0, 14 days), "borrower proceeds");
+    }
+
     function test_acceptLenderRatioTrancheOffer_partialFillCancelReleasesOnlyUnfilledCapacity() external {
         uint256 lenderPositionId = _mintAndDeposit(alice, 1, 200 ether, borrowToken);
         uint256 borrowerPositionId = _mintAndDeposit(bob, 2, 400 ether, collateralToken);

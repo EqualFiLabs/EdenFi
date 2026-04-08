@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Vm} from "forge-std/Vm.sol";
 import {EqualLendDirectRollingPaymentFacetTest} from "test/EqualLendDirectRollingPaymentFacet.t.sol";
+import {DirectError_EarlyRepayNotAllowed} from "src/libraries/Errors.sol";
 import {LibEqualLendDirectStorage} from "src/libraries/LibEqualLendDirectStorage.sol";
 
 contract EqualLendDirectRollingLifecycleBugConditionTest is EqualLendDirectRollingPaymentFacetTest {
@@ -37,5 +38,67 @@ contract EqualLendDirectRollingLifecycleBugConditionTest is EqualLendDirectRolli
 
         assertTrue(found, "expected RollingAgreementRecovered event");
         assertLe(penaltyPaid, expectedPenaltyCap, "penalty should be capped by seized debt value");
+    }
+}
+
+contract EqualLendDirectRollingLifecyclePreservationTest is EqualLendDirectRollingPaymentFacetTest {
+    function test_repayRollingInFull_revertsWhenEarlyRepayDisabledBeforePaymentCap() external {
+        (uint256 agreementId,,, ) = _setupCrossAssetAgreement(false, false);
+
+        vm.prank(bob);
+        vm.expectRevert(DirectError_EarlyRepayNotAllowed.selector);
+        harness.repayRollingInFull(agreementId, 1 ether, 0);
+    }
+
+    function test_recoverRolling_preservesDefaultSplitRouting() external {
+        (uint256 agreementId, bytes32 lenderKey, bytes32 borrowerKey, uint64 acceptTs) = _setupCrossAssetAgreement(false, true);
+
+        vm.warp(acceptTs + 8 days + 1);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);
+        TerminalExpectation memory expected = _previewTerminalExpectation(agreement, 150 ether, block.timestamp, true);
+        uint256 treasuryBefore = collateralToken.balanceOf(treasury);
+
+        vm.prank(alice);
+        harness.recoverRolling(agreementId);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory afterAgreement,) = harness.getRollingAgreement(agreementId);
+        assertEq(uint256(afterAgreement.status), uint256(LibEqualLendDirectStorage.AgreementStatus.Defaulted), "status");
+        assertEq(harness.principalOf(2, lenderKey), expected.lenderShare, "lender collateral principal");
+        assertEq(
+            harness.principalOf(2, borrowerKey),
+            150 ether - expected.debtValueApplied - expected.penaltyPaid,
+            "borrower refund balance"
+        );
+        assertEq(
+            collateralToken.balanceOf(treasury) - treasuryBefore,
+            expected.treasuryShare + expected.penaltyPaid,
+            "treasury recovery"
+        );
+        assertEq(harness.yieldReserveOf(2), expected.feeIndexShare, "fee-index reserve");
+    }
+
+    function test_exerciseRolling_preservesNoPenaltyPath() external {
+        (uint256 agreementId, bytes32 lenderKey, bytes32 borrowerKey, uint64 acceptTs) = _setupSameAssetAgreement(true, true);
+
+        vm.warp(acceptTs + 10 days);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);
+        TerminalExpectation memory expected = _previewTerminalExpectation(agreement, 150 ether, block.timestamp, false);
+        uint256 treasuryBefore = sameAssetToken.balanceOf(treasury);
+
+        vm.prank(bob);
+        harness.exerciseRolling(agreementId);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory afterAgreement,) = harness.getRollingAgreement(agreementId);
+        assertEq(uint256(afterAgreement.status), uint256(LibEqualLendDirectStorage.AgreementStatus.Exercised), "status");
+        assertEq(sameAssetToken.balanceOf(treasury) - treasuryBefore, expected.treasuryShare, "treasury share");
+        assertEq(harness.principalOf(3, lenderKey), 60 ether + expected.lenderShare, "lender recovered principal");
+        assertEq(
+            harness.principalOf(3, borrowerKey),
+            150 ether - expected.debtValueApplied,
+            "borrower refunded principal"
+        );
+        assertEq(harness.yieldReserveOf(3), expected.feeIndexShare, "fee-index reserve");
     }
 }
