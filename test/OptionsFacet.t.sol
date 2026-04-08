@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {ERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {OptionTokenAdminFacet} from "src/options/OptionTokenAdminFacet.sol";
 import {OptionsFacet} from "src/options/OptionsFacet.sol";
@@ -40,6 +41,18 @@ contract MockERC20Option is ERC20 {
     }
 }
 
+contract MockRevertingDecimalsOption is ERC20 {
+    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function decimals() public pure override returns (uint8) {
+        revert("decimals disabled");
+    }
+}
+
 contract OptionsSameAssetHarness is OptionTokenAdminFacet, OptionsFacet {
     function setOwner(address owner_) external {
         LibDiamond.setContractOwner(owner_);
@@ -63,11 +76,18 @@ contract OptionsFacetTest is LaunchFixture {
     uint256 internal constant ALT_PID = 2;
     uint256 internal constant FOT_PID = 3;
     uint256 internal constant SIX_DEC_PID = 4;
+    uint256 internal constant CAPPED_STRIKE_PID = 5;
+    uint256 internal constant REVERT_DEC_PID = 6;
     uint256 internal constant STRIKE_PRICE = 2e18;
     uint256 internal constant BASE_CONTRACT_SIZE = 1;
+    uint256 internal constant FRACTIONAL_STRIKE_PRICE = 1_000_000_500_000_000_000;
+    uint256 internal constant ZEROING_STRIKE_PRICE = 100_000_000_000;
+    uint64 internal constant MAX_EUROPEAN_TOLERANCE = 30 days;
 
     OptionToken internal optionToken;
     MockERC20Option internal sixDecStrike;
+    MockERC20Option internal cappedStrike;
+    MockRevertingDecimalsOption internal revertingDecimals;
     address internal operator;
 
     function setUp() public override {
@@ -77,9 +97,157 @@ contract OptionsFacetTest is LaunchFixture {
 
         sixDecStrike = new MockERC20Option("Strike Six", "SIX", 6);
         _initPoolWithActionFees(SIX_DEC_PID, address(sixDecStrike), _sixDecPoolConfig(), _actionFees());
+        cappedStrike = new MockERC20Option("Capped Strike Six", "CSIX", 6);
+        _initPoolWithActionFees(CAPPED_STRIKE_PID, address(cappedStrike), _cappedSixDecPoolConfig(11e6), _actionFees());
+        revertingDecimals = new MockRevertingDecimalsOption("Broken Decimals", "BROKE");
+        _initPoolWithActionFees(REVERT_DEC_PID, address(revertingDecimals), _poolConfig(), _actionFees());
 
         optionToken = OptionToken(OptionTokenViewFacet(diamond).getOptionToken());
         operator = _addr("operator");
+    }
+
+    function test_BugCondition_SetEuropeanTolerance_ShouldRejectToleranceOverflow() public {
+        uint64 excessiveTolerance = MAX_EUROPEAN_TOLERANCE + 1;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                bytes4(keccak256("Options_ExcessiveTolerance(uint64)")), excessiveTolerance
+            )
+        );
+        _setEuropeanTolerance(excessiveTolerance);
+    }
+
+    function test_BugCondition_ReclaimOptions_ShouldRejectEuropeanReclaimOverlap() public {
+        (uint256 positionId,) = _prepareCallWriter(alice, 10e18, 10e18, SIX_DEC_PID);
+        _setEuropeanTolerance(100);
+
+        LibOptionsStorage.CreateOptionSeriesParams memory params =
+            _callParams(positionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE);
+        params.isAmerican = false;
+        uint64 expiry = uint64(block.timestamp + 1 days);
+        params.expiry = expiry;
+
+        uint256 seriesId = _createSeries(alice, params);
+
+        vm.warp(expiry + 50);
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(bytes4(keccak256("Options_ExerciseWindowStillOpen(uint256)")), seriesId)
+        );
+        OptionsFacet(diamond).reclaimOptions(seriesId);
+    }
+
+    function test_BugCondition_ExerciseOptions_ShouldUseCeilingStrikeRounding() public {
+        (uint256 positionId,) = _prepareCallWriter(alice, 10e18, 10e18, SIX_DEC_PID);
+        LibOptionsStorage.CreateOptionSeriesParams memory params =
+            _callParams(positionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE);
+        params.strikePrice = FRACTIONAL_STRIKE_PRICE;
+
+        uint256 seriesId = _createSeries(alice, params);
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, seriesId, 1e18, "");
+
+        uint256 expectedCeilingPayment = _previewCeilingStrikeAmount(
+            1e18, FRACTIONAL_STRIKE_PRICE, address(eve), address(sixDecStrike)
+        );
+        sixDecStrike.mint(bob, expectedCeilingPayment);
+
+        vm.startPrank(bob);
+        IERC20(address(sixDecStrike)).approve(diamond, expectedCeilingPayment);
+        uint256 paid = OptionsFacet(diamond).exerciseOptions(seriesId, 1e18, bob, expectedCeilingPayment, 1e18);
+        vm.stopPrank();
+
+        require(paid >= expectedCeilingPayment, "strike payment should round up");
+    }
+
+    function test_BugCondition_ReclaimOptions_ShouldUnlockStoredResidualCollateral() public {
+        (uint256 positionId, bytes32 positionKey) = _preparePutWriter(alice, 3_000_001, 3_000_001, UNDERLYING_PID);
+        LibOptionsStorage.CreateOptionSeriesParams memory params = _putParams(positionId, 3e18, BASE_CONTRACT_SIZE);
+        params.strikePrice = FRACTIONAL_STRIKE_PRICE;
+
+        uint256 seriesId = _createSeries(alice, params);
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, seriesId, 2e18, "");
+
+        eve.mint(bob, 2e18);
+        vm.startPrank(bob);
+        eve.approve(diamond, 2e18);
+        OptionsFacet(diamond).exerciseOptions(seriesId, 1e18, bob, 1e18, 1_000_000);
+        OptionsFacet(diamond).exerciseOptions(seriesId, 1e18, bob, 1e18, 1_000_000);
+        vm.stopPrank();
+
+        uint256 storedResidualCollateral = OptionsViewFacet(diamond).getOptionSeries(seriesId).collateralLocked;
+        uint256 principalBefore = testSupport.principalOf(SIX_DEC_PID, positionKey);
+
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(alice);
+        OptionsFacet(diamond).reclaimOptions(seriesId);
+
+        LibOptionsStorage.OptionSeries memory series = OptionsViewFacet(diamond).getOptionSeries(seriesId);
+        uint256 principalAfter = testSupport.principalOf(SIX_DEC_PID, positionKey);
+
+        assertEq(series.collateralLocked, 0);
+        assertEq(principalAfter - principalBefore, storedResidualCollateral);
+    }
+
+    function test_BugCondition_CreateOptionSeries_ShouldRejectDecimalsFallback() public {
+        (uint256 positionId,) = _fundHomePosition(alice, REVERT_DEC_PID, address(revertingDecimals), 10e18, 10e18);
+        _joinPool(alice, positionId, UNDERLYING_PID);
+        LibOptionsStorage.CreateOptionSeriesParams memory params = LibOptionsStorage.CreateOptionSeriesParams({
+            positionId: positionId,
+            underlyingPoolId: UNDERLYING_PID,
+            strikePoolId: REVERT_DEC_PID,
+            strikePrice: STRIKE_PRICE,
+            expiry: uint64(block.timestamp + 1 days),
+            totalSize: 1e18,
+            contractSize: BASE_CONTRACT_SIZE,
+            isCall: false,
+            isAmerican: true
+        });
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibCurrency.LibCurrency_DecimalsQueryFailed.selector, address(revertingDecimals))
+        );
+        OptionsFacet(diamond).createOptionSeries(params);
+    }
+
+    function test_BugCondition_ExerciseOptions_ShouldBypassDepositCapDuringExerciseSettlement() public {
+        (uint256 positionId, bytes32 positionKey) = _prepareCallWriter(alice, 10e18, 10e18, CAPPED_STRIKE_PID);
+
+        cappedStrike.mint(alice, 10e6);
+        vm.startPrank(alice);
+        IERC20(address(cappedStrike)).approve(diamond, 10e6);
+        PositionManagementFacet(diamond).depositToPosition(positionId, CAPPED_STRIKE_PID, 10e6, 10e6);
+        vm.stopPrank();
+
+        uint256 seriesId = _createSeries(alice, _callParams(positionId, CAPPED_STRIKE_PID, 1e18, BASE_CONTRACT_SIZE));
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, seriesId, 1e18, "");
+
+        uint256 payment = OptionsViewFacet(diamond).previewExercisePayment(seriesId, 1e18);
+        cappedStrike.mint(bob, payment);
+        vm.startPrank(bob);
+        IERC20(address(cappedStrike)).approve(diamond, payment);
+        uint256 paid = OptionsFacet(diamond).exerciseOptions(seriesId, 1e18, bob, payment, 1e18);
+        vm.stopPrank();
+
+        assertEq(paid, payment);
+        assertEq(testSupport.principalOf(CAPPED_STRIKE_PID, positionKey), 12e6);
+    }
+
+    function test_BugCondition_CreateOptionSeries_ShouldRejectZeroStrikeCallSeries() public {
+        (uint256 positionId,) = _prepareCallWriter(alice, 10e18, 10e18, SIX_DEC_PID);
+        LibOptionsStorage.CreateOptionSeriesParams memory params =
+            _callParams(positionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE);
+        params.strikePrice = ZEROING_STRIKE_PRICE;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(OptionsFacet.Options_InvalidPrice.selector, ZEROING_STRIKE_PRICE));
+        OptionsFacet(diamond).createOptionSeries(params);
     }
 
     function test_CreateOptionSeries_UsesRealFundingAndIndexesPosition() public {
@@ -604,5 +772,23 @@ contract OptionsFacetTest is LaunchFixture {
         cfg.minDepositAmount = 1e6;
         cfg.minLoanAmount = 1e6;
         cfg.minTopupAmount = 1e6;
+    }
+
+    function _cappedSixDecPoolConfig(uint256 depositCap) internal pure returns (Types.PoolConfig memory cfg) {
+        cfg = _sixDecPoolConfig();
+        cfg.isCapped = true;
+        cfg.depositCap = depositCap;
+    }
+
+    function _previewCeilingStrikeAmount(
+        uint256 underlyingAmount,
+        uint256 strikePrice,
+        address underlying,
+        address strike
+    ) internal view returns (uint256 strikeAmount) {
+        uint256 underlyingScale = 10 ** uint256(LibCurrency.decimalsOrRevert(underlying));
+        uint256 strikeScale = 10 ** uint256(LibCurrency.decimalsOrRevert(strike));
+        uint256 wadValue = Math.mulDiv(underlyingAmount, strikePrice, underlyingScale, Math.Rounding.Ceil);
+        strikeAmount = Math.mulDiv(wadValue, strikeScale, 1e18, Math.Rounding.Ceil);
     }
 }
