@@ -98,6 +98,10 @@ library LibEqualXSwapMath {
         return (split.makerFee, split.treasuryFee, split.activeCreditFee, split.feeIndexFee, split.protocolFee);
     }
 
+    function equalXMakerShareBps() internal view returns (uint16) {
+        return LibAppStorage.activeCreditSplitBps(LibAppStorage.s());
+    }
+
     function applyProtocolFee(
         LibEqualXTypes.FeeAsset feeAsset,
         uint256 reserveIn,

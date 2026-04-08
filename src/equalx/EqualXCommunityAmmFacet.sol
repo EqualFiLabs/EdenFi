@@ -23,7 +23,6 @@ import {InsufficientPrincipal, InvalidParameterRange, PoolMembershipRequired} fr
 /// @notice Greenfield community AMM execution surface for EqualX.
 contract EqualXCommunityAmmFacet is ReentrancyGuardModifiers {
     bytes32 internal constant COMMUNITY_AMM_FEE_SOURCE = keccak256("EQUALX_COMMUNITY_AMM_FEE");
-    uint16 internal constant COMMUNITY_AMM_MAKER_SHARE_BPS = 7000;
 
     error EqualXCommunityAmm_InvalidMarket(uint256 marketId);
     error EqualXCommunityAmm_InvalidPoolPair(uint256 poolIdA, uint256 poolIdB);
@@ -424,7 +423,7 @@ contract EqualXCommunityAmmFacet is ReentrancyGuardModifiers {
         );
         if (preview.feeAmount > 0) {
             LibEqualXSwapMath.FeeSplit memory split =
-                LibEqualXSwapMath.splitFeeWithRouter(preview.feeAmount, COMMUNITY_AMM_MAKER_SHARE_BPS);
+                LibEqualXSwapMath.splitFeeWithRouter(preview.feeAmount, LibEqualXSwapMath.equalXMakerShareBps());
             preview.makerFee = split.makerFee;
             preview.treasuryFee = split.treasuryFee;
             preview.activeCreditFee = split.activeCreditFee;
@@ -478,7 +477,7 @@ contract EqualXCommunityAmmFacet is ReentrancyGuardModifiers {
         amountOut = outputToRecipient;
 
         LibEqualXSwapMath.FeeSplit memory split =
-            LibEqualXSwapMath.splitFeeWithRouter(feeAmount, COMMUNITY_AMM_MAKER_SHARE_BPS);
+            LibEqualXSwapMath.splitFeeWithRouter(feeAmount, LibEqualXSwapMath.equalXMakerShareBps());
         ctx.newReserveIn = ctx.reserveIn + ctx.actualIn;
         ctx.newReserveOut = ctx.reserveOut - outputToRecipient;
         if (split.treasuryFee > 0) {

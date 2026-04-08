@@ -22,7 +22,6 @@ import {InsufficientPrincipal, InvalidParameterRange, PoolMembershipRequired} fr
 /// @notice Greenfield solo AMM execution surface for EqualX.
 contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
     bytes32 internal constant SOLO_AMM_FEE_SOURCE = keccak256("EQUALX_SOLO_AMM_FEE");
-    uint16 internal constant SOLO_AMM_MAKER_SHARE_BPS = 7000;
     uint256 internal constant SOLO_AMM_REBALANCE_MAX_DELTA_DIVISOR = 10;
 
     error EqualXSoloAmm_InvalidMarket(uint256 marketId);
@@ -324,7 +323,7 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
 
         if (preview.feeAmount > 0) {
             LibEqualXSwapMath.FeeSplit memory split =
-                LibEqualXSwapMath.splitFeeWithRouter(preview.feeAmount, SOLO_AMM_MAKER_SHARE_BPS);
+                LibEqualXSwapMath.splitFeeWithRouter(preview.feeAmount, LibEqualXSwapMath.equalXMakerShareBps());
             preview.makerFee = split.makerFee;
             preview.treasuryFee = split.treasuryFee;
             preview.activeCreditFee = split.activeCreditFee;
@@ -616,7 +615,7 @@ contract EqualXSoloAmmFacet is ReentrancyGuardModifiers {
 
         outcome.amountOut = outputToRecipient;
         outcome.feeAmount = feeAmount;
-        outcome.split = LibEqualXSwapMath.splitFeeWithRouter(feeAmount, SOLO_AMM_MAKER_SHARE_BPS);
+        outcome.split = LibEqualXSwapMath.splitFeeWithRouter(feeAmount, LibEqualXSwapMath.equalXMakerShareBps());
         ctx.newReserveIn = ctx.reserveIn + ctx.actualIn;
         ctx.newReserveOut = ctx.reserveOut - outputToRecipient;
         if (outcome.split.treasuryFee > 0) {

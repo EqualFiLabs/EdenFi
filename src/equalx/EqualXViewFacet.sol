@@ -305,7 +305,8 @@ contract EqualXViewFacet {
         );
 
         if (preview.feeAmount > 0) {
-            LibEqualXSwapMath.FeeSplit memory split = LibEqualXSwapMath.splitFeeWithRouter(preview.feeAmount, 7000);
+            LibEqualXSwapMath.FeeSplit memory split =
+                LibEqualXSwapMath.splitFeeWithRouter(preview.feeAmount, LibEqualXSwapMath.equalXMakerShareBps());
             preview.makerFee = split.makerFee;
             preview.treasuryFee = split.treasuryFee;
             preview.activeCreditFee = split.activeCreditFee;
@@ -349,7 +350,8 @@ contract EqualXViewFacet {
         );
 
         if (preview.feeAmount > 0) {
-            LibEqualXSwapMath.FeeSplit memory split = LibEqualXSwapMath.splitFeeWithRouter(preview.feeAmount, 7000);
+            LibEqualXSwapMath.FeeSplit memory split =
+                LibEqualXSwapMath.splitFeeWithRouter(preview.feeAmount, LibEqualXSwapMath.equalXMakerShareBps());
             preview.makerFee = split.makerFee;
             preview.treasuryFee = split.treasuryFee;
             preview.activeCreditFee = split.activeCreditFee;

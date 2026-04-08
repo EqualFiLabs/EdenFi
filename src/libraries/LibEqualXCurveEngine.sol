@@ -8,6 +8,7 @@ import {LibAppStorage} from "./LibAppStorage.sol";
 import {LibCurrency} from "./LibCurrency.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibEqualXCurveStorage} from "./LibEqualXCurveStorage.sol";
+import {LibEqualXSwapMath} from "./LibEqualXSwapMath.sol";
 import {LibEqualXDiscoveryStorage} from "./LibEqualXDiscoveryStorage.sol";
 import {LibEqualXTypes} from "./LibEqualXTypes.sol";
 import {LibFeeIndex} from "./LibFeeIndex.sol";
@@ -530,16 +531,16 @@ library LibEqualXCurveEngine {
         Types.PoolData storage quotePool = LibPositionHelpers.pool(preview.quotePoolId);
         quotePool.trackedBalance += preview.totalQuote;
 
-        uint256 makerFee = (preview.feeAmount * 7000) / 10_000;
-        uint256 protocolFee = preview.feeAmount - makerFee;
-        uint256 makerIncrease = amountIn + makerFee;
+        LibEqualXSwapMath.FeeSplit memory split =
+            LibEqualXSwapMath.splitFeeWithRouter(preview.feeAmount, LibEqualXSwapMath.equalXMakerShareBps());
+        uint256 makerIncrease = amountIn + split.makerFee;
         quotePool.userPrincipal[makerPositionKey] += makerIncrease;
         quotePool.totalDeposits += makerIncrease;
         quotePool.userFeeIndex[makerPositionKey] = quotePool.feeIndex;
         quotePool.userMaintenanceIndex[makerPositionKey] = quotePool.maintenanceIndex;
 
-        if (protocolFee > 0) {
-            LibFeeRouter.routeSamePool(preview.quotePoolId, protocolFee, CURVE_FEE_SOURCE, true, 0);
+        if (split.protocolFee > 0) {
+            LibFeeRouter.routeSamePool(preview.quotePoolId, split.protocolFee, CURVE_FEE_SOURCE, true, 0);
         }
     }
 
