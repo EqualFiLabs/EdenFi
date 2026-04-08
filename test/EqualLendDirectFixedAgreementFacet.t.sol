@@ -682,7 +682,12 @@ contract EqualLendDirectFixedAgreementFacetTest is Test {
     {
         uint256 effectiveDuration = duration < MIN_INTEREST_DURATION ? MIN_INTEREST_DURATION : duration;
         platformFee = Math.mulDiv(principal, PLATFORM_FEE_BPS, BPS_DENOMINATOR);
-        interestAmount = Math.mulDiv(principal, uint256(aprBps) * effectiveDuration, YEAR * BPS_DENOMINATOR);
+            interestAmount = Math.mulDiv(
+                principal,
+                uint256(aprBps) * effectiveDuration,
+                YEAR * BPS_DENOMINATOR,
+                Math.Rounding.Ceil
+            );
 
         uint256 lenderInterestShare = Math.mulDiv(interestAmount, INTEREST_LENDER_BPS, BPS_DENOMINATOR);
         uint256 lenderPlatformShare = Math.mulDiv(platformFee, PLATFORM_FEE_LENDER_BPS, BPS_DENOMINATOR);

@@ -793,7 +793,12 @@ contract EqualLendDirectFixedAgreementFacet is ReentrancyGuardModifiers {
         quote.platformFee = Math.mulDiv(principal, cfg.platformFeeBps, BPS_DENOMINATOR);
         uint256 effectiveDuration = durationSeconds < cfg.minInterestDuration ? cfg.minInterestDuration : durationSeconds;
         if (aprBps != 0 && principal != 0 && effectiveDuration != 0) {
-            quote.interestAmount = Math.mulDiv(principal, uint256(aprBps) * effectiveDuration, YEAR * BPS_DENOMINATOR);
+            quote.interestAmount = Math.mulDiv(
+                principal,
+                uint256(aprBps) * effectiveDuration,
+                YEAR * BPS_DENOMINATOR,
+                Math.Rounding.Ceil
+            );
         }
         quote.totalFee = quote.interestAmount + quote.platformFee;
         uint256 dueTimestampCalc = block.timestamp + durationSeconds;

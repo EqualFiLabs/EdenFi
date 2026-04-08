@@ -205,7 +205,8 @@ contract EqualLendDirectRollingLifecycleFacet is ReentrancyGuardModifiers {
 
         uint256 availableForDebt = settlement.collateralSeized;
         if (applyPenalty && settlement.collateralSeized != 0) {
-            settlement.penaltyPaid = (totalDebt * store.rollingConfig.defaultPenaltyBps)
+            uint256 penaltyBase = settlement.collateralSeized < totalDebt ? settlement.collateralSeized : totalDebt;
+            settlement.penaltyPaid = (penaltyBase * store.rollingConfig.defaultPenaltyBps)
                 / LibEqualLendDirectStorage.BPS_DENOMINATOR;
             if (settlement.penaltyPaid > settlement.collateralSeized) {
                 settlement.penaltyPaid = settlement.collateralSeized;
