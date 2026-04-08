@@ -18,7 +18,9 @@ import {
     LibAppStorage
 } from "src/libraries/LibAppStorage.sol";
 import {LibDiamond} from "src/libraries/LibDiamond.sol";
+import {LibEqualLendDirectAccounting} from "src/libraries/LibEqualLendDirectAccounting.sol";
 import {LibEqualLendDirectStorage} from "src/libraries/LibEqualLendDirectStorage.sol";
+import {LibFeeIndex} from "src/libraries/LibFeeIndex.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {Types} from "src/libraries/Types.sol";
 import {MaxUserCountExceeded} from "src/libraries/Errors.sol";
@@ -48,6 +50,10 @@ contract UserCountDirectLifecycleHarness is
 
     function setTreasury(address treasury_) external {
         LibAppStorage.s().treasury = treasury_;
+    }
+
+    function setFoundationReceiver(address receiver_) external {
+        LibAppStorage.s().foundationReceiver = receiver_;
     }
 
     function setFeeSplits(uint256 treasuryBps, uint256 activeCreditBps) external {
@@ -95,6 +101,18 @@ contract UserCountDirectLifecycleHarness is
     function userCountOf(uint256 pid) external view returns (uint256) {
         return LibAppStorage.s().pools[pid].userCount;
     }
+
+    function settleFeeIndex(uint256 pid, bytes32 positionKey) external {
+        LibFeeIndex.settle(pid, positionKey);
+    }
+
+    function restoreLenderCapital(bytes32 lenderPositionKey, uint256 lenderPoolId, uint256 amount) external {
+        LibEqualLendDirectAccounting.restoreLenderCapital(lenderPositionKey, lenderPoolId, amount);
+    }
+
+    function departLenderCapital(bytes32 lenderPositionKey, uint256 lenderPoolId, uint256 amount) external {
+        LibEqualLendDirectAccounting.departLenderCapital(lenderPositionKey, lenderPoolId, amount);
+    }
 }
 
 contract UserCountRollingLifecycleHarness is
@@ -115,6 +133,10 @@ contract UserCountRollingLifecycleHarness is
 
     function setTreasury(address treasury_) external {
         LibAppStorage.s().treasury = treasury_;
+    }
+
+    function setFoundationReceiver(address receiver_) external {
+        LibAppStorage.s().foundationReceiver = receiver_;
     }
 
     function setFeeSplits(uint256 treasuryBps, uint256 activeCreditBps) external {
@@ -190,6 +212,303 @@ contract UserCountRollingLifecycleHarness is
 
     function userCountOf(uint256 pid) external view returns (uint256) {
         return LibAppStorage.s().pools[pid].userCount;
+    }
+}
+
+contract LibUserCountReconciliationIntegrationTest is Test {
+    UserCountDirectLifecycleHarness internal harness;
+    PositionNFT internal positionNft;
+    MockERC20UserCount internal sameAssetToken;
+
+    address internal alice = makeAddr("alice");
+    address internal bob = makeAddr("bob");
+    address internal carol = makeAddr("carol");
+    address internal dave = makeAddr("dave");
+    address internal eve = makeAddr("eve");
+    address internal treasury = makeAddr("treasury");
+    uint256 internal constant POOL_ID = 5;
+
+    function setUp() public {
+        harness = new UserCountDirectLifecycleHarness();
+        harness.setOwner(address(this));
+        harness.setTimelock(address(this));
+        harness.setTreasury(treasury);
+        harness.setFoundationReceiver(treasury);
+        harness.setFeeSplits(1_000, 0);
+        harness.setDirectConfig(100, 6_000, 2_500, 8_000, 1 days);
+
+        positionNft = new PositionNFT();
+        positionNft.setMinter(address(harness));
+        positionNft.setDiamond(address(harness));
+        harness.setPositionNFT(address(positionNft));
+
+        sameAssetToken = new MockERC20UserCount("Same Asset", "SAM");
+    }
+
+    function test_Integration_MaintenanceThenRestore_KeepsUserCountSymmetric() external {
+        _initPool(POOL_ID, address(sameAssetToken), 3, 100);
+
+        uint256 alicePositionId = _mintAndDeposit(alice, POOL_ID, 10 ether);
+        bytes32 aliceKey = positionNft.getPositionKey(alicePositionId);
+        assertEq(harness.userCountOf(POOL_ID), 1, "deposit should increment user count");
+
+        vm.warp(block.timestamp + 36_500 days);
+        harness.settleFeeIndex(POOL_ID, aliceKey);
+
+        assertEq(harness.principalOf(POOL_ID, aliceKey), 0, "maintenance should zero principal");
+        assertEq(harness.userCountOf(POOL_ID), 0, "maintenance should decrement user count");
+
+        harness.restoreLenderCapital(aliceKey, POOL_ID, 10 ether);
+
+        assertEq(harness.principalOf(POOL_ID, aliceKey), 10 ether, "restore should restore principal");
+        assertEq(harness.userCountOf(POOL_ID), 1, "restore should restore original user count");
+    }
+
+    function test_Integration_MultiUserCapacity_MaintenanceOpensSingleSlot() external {
+        _initPool(POOL_ID, address(sameAssetToken), 3, 100);
+
+        uint256 alicePositionId = _mintAndDeposit(alice, POOL_ID, 10 ether);
+        uint256 bobPositionId = _mintAndDeposit(bob, POOL_ID, 10 ether);
+        _mintAndDeposit(carol, POOL_ID, 10 ether);
+
+        assertEq(harness.userCountOf(POOL_ID), 3, "pool should start full");
+
+        vm.warp(block.timestamp + 36_500 days);
+        harness.settleFeeIndex(POOL_ID, positionNft.getPositionKey(alicePositionId));
+
+        assertEq(harness.principalOf(POOL_ID, positionNft.getPositionKey(alicePositionId)), 0);
+        assertEq(harness.userCountOf(POOL_ID), 2, "maintenance should free exactly one slot");
+
+        _mintAndDeposit(dave, POOL_ID, 10 ether);
+        assertEq(harness.userCountOf(POOL_ID), 3, "replacement depositor should refill capacity");
+
+        uint256 evePositionId = _mintPosition(eve, POOL_ID);
+        _approve(eve, 1 ether);
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(MaxUserCountExceeded.selector, 3));
+        harness.depositToPosition(evePositionId, POOL_ID, 1 ether, 1 ether);
+
+        assertEq(harness.principalOf(POOL_ID, positionNft.getPositionKey(bobPositionId)), 10 ether);
+    }
+
+    function test_Integration_DefaultSettlementAtCapacity_DirectRecoveryStillReverts() external {
+        _initPool(POOL_ID, address(sameAssetToken), 2, 100);
+
+        uint256 lenderPositionId = _mintAndDeposit(alice, POOL_ID, 60 ether);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, POOL_ID, 150 ether);
+        bytes32 lenderKey = positionNft.getPositionKey(lenderPositionId);
+
+        vm.prank(bob);
+        uint256 offerId = harness.postFixedBorrowerOffer(
+            EqualLendDirectFixedOfferFacet.FixedBorrowerOfferParams({
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: POOL_ID,
+                collateralPoolId: POOL_ID,
+                borrowAsset: address(sameAssetToken),
+                collateralAsset: address(sameAssetToken),
+                principal: 60 ether,
+                collateralLocked: 100 ether,
+                aprBps: 700,
+                durationSeconds: 10 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
+
+        vm.prank(alice);
+        uint256 agreementId = harness.acceptFixedBorrowerOffer(offerId, lenderPositionId, _borrowerNetFor(60 ether, 700, 10 days));
+
+        assertEq(harness.principalOf(POOL_ID, lenderKey), 0, "origination should fully depart lender");
+        assertEq(harness.userCountOf(POOL_ID), 1, "borrower should be sole active user after origination");
+
+        _mintAndDeposit(carol, POOL_ID, 1 ether);
+        assertEq(harness.userCountOf(POOL_ID), 2, "replacement lender should refill capacity");
+
+        vm.warp(block.timestamp + 11 days);
+        vm.prank(dave);
+        vm.expectRevert(abi.encodeWithSelector(MaxUserCountExceeded.selector, 2));
+        harness.recover(agreementId);
+    }
+
+    function test_Integration_DepartRestoreAndMaintenanceZeroing_RemainSymmetric() external {
+        _initPool(POOL_ID, address(sameAssetToken), 2, 100);
+
+        uint256 alicePositionId = _mintAndDeposit(alice, POOL_ID, 10 ether);
+        bytes32 aliceKey = positionNft.getPositionKey(alicePositionId);
+
+        harness.departLenderCapital(aliceKey, POOL_ID, 10 ether);
+        assertEq(harness.userCountOf(POOL_ID), 0, "full depart should decrement user count");
+
+        harness.restoreLenderCapital(aliceKey, POOL_ID, 10 ether);
+        assertEq(harness.userCountOf(POOL_ID), 1, "restore should increment user count back");
+
+        vm.warp(block.timestamp + 36_500 days);
+        harness.settleFeeIndex(POOL_ID, aliceKey);
+        assertEq(harness.principalOf(POOL_ID, aliceKey), 0, "maintenance should zero principal after restore");
+        assertEq(harness.userCountOf(POOL_ID), 0, "maintenance zeroing should decrement user count");
+
+        harness.restoreLenderCapital(aliceKey, POOL_ID, 10 ether);
+        assertEq(harness.principalOf(POOL_ID, aliceKey), 10 ether, "second restore should recover principal");
+        assertEq(harness.userCountOf(POOL_ID), 1, "second restore should recover user count");
+    }
+
+    function _mintAndDeposit(address user, uint256 homePoolId, uint256 amount) internal returns (uint256 positionId) {
+        positionId = _mintPosition(user, homePoolId);
+        _approve(user, amount);
+
+        vm.prank(user);
+        harness.depositToPosition(positionId, homePoolId, amount, amount);
+    }
+
+    function _mintPosition(address user, uint256 homePoolId) internal returns (uint256 positionId) {
+        vm.prank(user);
+        positionId = harness.mintPosition(homePoolId);
+    }
+
+    function _approve(address user, uint256 amount) internal {
+        sameAssetToken.mint(user, amount);
+        vm.prank(user);
+        sameAssetToken.approve(address(harness), amount);
+    }
+
+    function _initPool(uint256 pid, address underlying, uint256 maxUserCount, uint256 maintenanceRateBps) internal {
+        harness.initPoolWithActionFees(pid, underlying, _poolConfig(maxUserCount, maintenanceRateBps), _actionFees());
+    }
+
+    function _poolConfig(uint256 maxUserCount, uint256 maintenanceRateBps)
+        internal
+        pure
+        returns (Types.PoolConfig memory cfg)
+    {
+        cfg.rollingApyBps = 500;
+        cfg.depositorLTVBps = 8_000;
+        cfg.maintenanceRateBps = uint16(maintenanceRateBps);
+        cfg.flashLoanFeeBps = 30;
+        cfg.minDepositAmount = 1;
+        cfg.minLoanAmount = 1;
+        cfg.minTopupAmount = 1;
+        cfg.aumFeeMinBps = 0;
+        cfg.aumFeeMaxBps = 1_000;
+        cfg.maxUserCount = maxUserCount;
+    }
+
+    function _actionFees() internal pure returns (Types.ActionFeeSet memory actionFees) {
+        return actionFees;
+    }
+
+    function _borrowerNetFor(uint256 principal, uint16 aprBps, uint64 duration) internal pure returns (uint256) {
+        uint256 platformFee = (principal * 100) / 10_000;
+        uint256 effectiveDuration = duration < 1 days ? 1 days : duration;
+        uint256 interestAmount = (principal * uint256(aprBps) * effectiveDuration) / (365 days * 10_000);
+        return principal - platformFee - interestAmount;
+    }
+}
+
+contract LibUserCountReconciliationRollingIntegrationTest is Test {
+    UserCountRollingLifecycleHarness internal harness;
+    PositionNFT internal positionNft;
+    MockERC20UserCount internal sameAssetToken;
+
+    address internal alice = makeAddr("alice");
+    address internal bob = makeAddr("bob");
+    address internal carol = makeAddr("carol");
+    address internal dave = makeAddr("dave");
+    address internal treasury = makeAddr("treasury");
+    uint256 internal constant POOL_ID = 7;
+
+    function setUp() public {
+        harness = new UserCountRollingLifecycleHarness();
+        harness.setOwner(address(this));
+        harness.setTimelock(address(this));
+        harness.setTreasury(treasury);
+        harness.setFoundationReceiver(treasury);
+        harness.setFeeSplits(1_000, 0);
+        harness.setDirectConfig(100, 10_000, 10_000, 8_000, 1 days);
+        harness.setRollingConfig(1 days, 24, 2_500, 300, 2_000, 500, 1);
+
+        positionNft = new PositionNFT();
+        positionNft.setMinter(address(harness));
+        positionNft.setDiamond(address(harness));
+        harness.setPositionNFT(address(positionNft));
+
+        sameAssetToken = new MockERC20UserCount("Same Asset", "SAM");
+        _initPool(POOL_ID, address(sameAssetToken), 2);
+    }
+
+    function test_Integration_DefaultSettlementAtCapacity_RollingRecoveryStillReverts() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, POOL_ID, 40 ether);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, POOL_ID, 150 ether);
+        bytes32 lenderKey = positionNft.getPositionKey(lenderPositionId);
+
+        vm.prank(bob);
+        uint256 offerId = harness.postRollingBorrowerOffer(
+            EqualLendDirectRollingOfferFacet.RollingBorrowerOfferParams({
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: POOL_ID,
+                collateralPoolId: POOL_ID,
+                borrowAsset: address(sameAssetToken),
+                collateralAsset: address(sameAssetToken),
+                principal: 40 ether,
+                collateralLocked: 80 ether,
+                paymentIntervalSeconds: 7 days,
+                rollingApyBps: 850,
+                gracePeriodSeconds: 2 days,
+                maxPaymentCount: 10,
+                upfrontPremium: 0,
+                allowAmortization: true,
+                allowEarlyRepay: true,
+                allowEarlyExercise: true
+            })
+        );
+
+        vm.prank(alice);
+        uint256 agreementId = harness.acceptRollingBorrowerOffer(offerId, lenderPositionId, 0, 40 ether);
+
+        assertEq(harness.principalOf(POOL_ID, lenderKey), 0, "origination should fully depart lender");
+        assertEq(harness.userCountOf(POOL_ID), 1, "borrower should be sole active user after origination");
+
+        _mintAndDeposit(carol, POOL_ID, 1 ether);
+        assertEq(harness.userCountOf(POOL_ID), 2, "replacement lender should refill capacity");
+
+        vm.warp(block.timestamp + 10 days);
+        vm.prank(dave);
+        vm.expectRevert(abi.encodeWithSelector(MaxUserCountExceeded.selector, 2));
+        harness.recoverRolling(agreementId);
+    }
+
+    function _mintAndDeposit(address user, uint256 homePoolId, uint256 amount) internal returns (uint256 positionId) {
+        sameAssetToken.mint(user, amount);
+
+        vm.prank(user);
+        sameAssetToken.approve(address(harness), amount);
+
+        vm.prank(user);
+        positionId = harness.mintPosition(homePoolId);
+
+        vm.prank(user);
+        harness.depositToPosition(positionId, homePoolId, amount, amount);
+    }
+
+    function _initPool(uint256 pid, address underlying, uint256 maxUserCount) internal {
+        harness.initPoolWithActionFees(pid, underlying, _poolConfig(maxUserCount), _actionFees());
+    }
+
+    function _poolConfig(uint256 maxUserCount) internal pure returns (Types.PoolConfig memory cfg) {
+        cfg.rollingApyBps = 500;
+        cfg.depositorLTVBps = 8_000;
+        cfg.maintenanceRateBps = 100;
+        cfg.flashLoanFeeBps = 30;
+        cfg.minDepositAmount = 1;
+        cfg.minLoanAmount = 1;
+        cfg.minTopupAmount = 1;
+        cfg.aumFeeMinBps = 0;
+        cfg.aumFeeMaxBps = 1_000;
+        cfg.maxUserCount = maxUserCount;
+    }
+
+    function _actionFees() internal pure returns (Types.ActionFeeSet memory actionFees) {
+        return actionFees;
     }
 }
 
