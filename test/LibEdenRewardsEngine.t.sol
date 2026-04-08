@@ -42,11 +42,11 @@ contract LibEdenRewardsEngineBugConditionTest is EdenRewardsFacetTest {
     }
 
     function test_BugCondition_RewardReserve_ShouldNotBurnReserveWhenIndexDeltaTruncatesToZero() public {
-        uint256 alicePositionId = _fundEvePosition(alice, 4e18);
+        uint256 alicePositionId = _fundEvePosition(alice, 4e27);
         uint256 indexId = _createRewardIndex("Tiny Reward Index", "TRI");
 
         vm.prank(alice);
-        EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, indexId, 2e18);
+        EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, indexId, 2e27);
 
         uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), manager, 1, 0, 0, true);
 
@@ -61,6 +61,7 @@ contract LibEdenRewardsEngineBugConditionTest is EdenRewardsFacetTest {
         (, LibEdenRewardsStorage.RewardProgramState memory afterState) = EdenRewardsFacet(diamond).getRewardProgram(programId);
 
         assertEq(afterState.fundedReserve, beforeState.fundedReserve);
+        assertEq(afterState.globalRewardIndex, beforeState.globalRewardIndex);
     }
 }
 

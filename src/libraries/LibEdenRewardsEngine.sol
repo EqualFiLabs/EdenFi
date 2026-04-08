@@ -128,13 +128,32 @@ library LibEdenRewardsEngine {
             ? netFromGross(allocatedGross, config.outboundTransferBps)
             : maxNetRewards;
         if (allocatedNet > 0) {
-            state.fundedReserve -= allocatedGross;
-            state.globalRewardIndex += Math.mulDiv(
-                allocatedNet, LibEdenRewardsStorage.REWARD_INDEX_SCALE, state.eligibleSupply
-            );
+            state = _applyIndexedAccrual(state, allocatedNet, config.outboundTransferBps);
         }
 
         state.lastRewardUpdate = effectiveNow;
+        return state;
+    }
+
+    function _applyIndexedAccrual(
+        LibEdenRewardsStorage.RewardProgramState memory state,
+        uint256 allocatedNet,
+        uint16 outboundTransferBps
+    ) private pure returns (LibEdenRewardsStorage.RewardProgramState memory) {
+        uint256 scaledNetDividend =
+            Math.mulDiv(allocatedNet, LibEdenRewardsStorage.REWARD_INDEX_SCALE, 1) + state.rewardIndexRemainder;
+        uint256 delta = scaledNetDividend / state.eligibleSupply;
+        if (delta == 0) {
+            state.rewardIndexRemainder = scaledNetDividend;
+            return state;
+        }
+
+        uint256 indexedScaledNet = delta * state.eligibleSupply;
+        uint256 indexedNet = indexedScaledNet / LibEdenRewardsStorage.REWARD_INDEX_SCALE;
+
+        state.globalRewardIndex += delta;
+        state.rewardIndexRemainder = scaledNetDividend - indexedScaledNet;
+        state.fundedReserve -= grossUpNetAmount(indexedNet, outboundTransferBps);
         return state;
     }
 
