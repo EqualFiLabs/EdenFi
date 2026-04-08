@@ -2720,12 +2720,17 @@ contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
         facet.enterRefinancing(lineId);
     }
 
-    function test_BugCondition_UpdateBorrowerProfile_ShouldLockTreasuryWalletAfterActivation() external {
+    function test_BugCondition_TreasuryLock_ShouldRejectTreasuryWalletChangeAfterActivation() external {
         uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
         uint256 borrowerPositionId = facet.line(lineId).borrowerPositionId;
+        bytes32 borrowerPositionKey = facet.line(lineId).borrowerPositionKey;
 
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IEqualScaleAlphaErrors.TreasuryWalletLockedDuringLiveLines.selector, borrowerPositionKey
+            )
+        );
         facet.updateBorrowerProfile(
             borrowerPositionId, address(0xD00D), address(0xF00D), keccak256("locked-after-activation")
         );

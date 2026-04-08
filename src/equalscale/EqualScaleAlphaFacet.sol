@@ -80,11 +80,21 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors 
     {
         _requireProfileAddresses(treasuryWallet, bankrToken);
 
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
         bytes32 borrowerPositionKey = LibEqualScaleAlphaShared.requireBorrowerPositionOwner(positionId);
-        LibEqualScaleAlphaStorage.BorrowerProfile storage profile =
-            LibEqualScaleAlphaStorage.s().borrowerProfiles[borrowerPositionKey];
+        LibEqualScaleAlphaStorage.BorrowerProfile storage profile = store.borrowerProfiles[borrowerPositionKey];
         if (!profile.active) {
             revert BorrowerProfileNotActive(borrowerPositionKey);
+        }
+
+        if (profile.treasuryWallet != treasuryWallet) {
+            uint256[] storage lineIds = store.borrowerLineIds[borrowerPositionKey];
+            uint256 len = lineIds.length;
+            for (uint256 i = 0; i < len; i++) {
+                if (store.lines[lineIds[i]].status != LibEqualScaleAlphaStorage.CreditLineStatus.Closed) {
+                    revert TreasuryWalletLockedDuringLiveLines(borrowerPositionKey);
+                }
+            }
         }
 
         profile.treasuryWallet = treasuryWallet;

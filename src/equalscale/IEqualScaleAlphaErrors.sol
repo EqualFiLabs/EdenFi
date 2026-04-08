@@ -9,6 +9,7 @@ interface IEqualScaleAlphaErrors {
     error BorrowerIdentityNotRegistered(uint256 borrowerPositionId);
     error BorrowerProfileAlreadyActive(bytes32 borrowerPositionKey);
     error BorrowerProfileNotActive(bytes32 borrowerPositionKey);
+    error TreasuryWalletLockedDuringLiveLines(bytes32 borrowerPositionKey);
     error InvalidTreasuryWallet();
     error InvalidBankrToken();
     error InvalidProposalTerms(string reason);
