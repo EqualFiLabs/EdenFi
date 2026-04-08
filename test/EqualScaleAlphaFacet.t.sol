@@ -29,6 +29,62 @@ contract EqualScaleAlphaMockERC20 is ERC20 {
     }
 }
 
+contract EqualScaleAlphaReenteringTreasury {
+    EqualScaleAlphaFacetHarness internal immutable facet;
+
+    bool internal armed;
+    bool internal reentered;
+    uint256 internal targetLineId;
+    uint256 internal reentryAmount;
+
+    constructor(EqualScaleAlphaFacetHarness facet_) {
+        facet = facet_;
+    }
+
+    receive() external payable {
+        if (armed && !reentered) {
+            reentered = true;
+            facet.draw(targetLineId, reentryAmount);
+        }
+    }
+
+    function registerBorrowerProfile(
+        uint256 positionId,
+        address treasuryWallet,
+        address bankrToken,
+        bytes32 metadataHash
+    ) external {
+        facet.registerBorrowerProfile(positionId, treasuryWallet, bankrToken, metadataHash);
+    }
+
+    function createLineProposal(uint256 borrowerPositionId, EqualScaleAlphaFacet.LineProposalParams calldata params)
+        external
+        returns (uint256 lineId)
+    {
+        return facet.createLineProposal(borrowerPositionId, params);
+    }
+
+    function activateLine(uint256 lineId) external {
+        facet.activateLine(lineId);
+    }
+
+    function drawWithReentry(uint256 lineId, uint256 amount, uint256 nextAmount) external {
+        targetLineId = lineId;
+        reentryAmount = nextAmount;
+        armed = true;
+        facet.draw(lineId, amount);
+        armed = false;
+    }
+
+    function didReenter() external view returns (bool) {
+        return reentered;
+    }
+
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return this.onERC721Received.selector;
+    }
+}
+
 contract EqualScaleAlphaFacetHarness is
     EqualScaleAlphaFacet,
     EqualScaleAlphaAdminFacet,
@@ -177,6 +233,13 @@ contract EqualScaleAlphaFacetHarness is
             revert("chargeOffThresholdSecs overflow");
         }
         LibEqualScaleAlphaStorage.s().chargeOffThresholdSecs = uint40(chargeOffThresholdSecs);
+    }
+
+    function setLineMissedPayments(uint256 lineId, uint256 missedPayments) external {
+        if (missedPayments > type(uint8).max) {
+            revert("missedPayments overflow");
+        }
+        LibEqualScaleAlphaStorage.s().lines[lineId].missedPayments = uint8(missedPayments);
     }
 
     function storedChargeOffThresholdSecs() external view returns (uint40) {
@@ -2358,5 +2421,263 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
             borrowerCollateralPoolId: COLLATERAL_POOL_ID,
             borrowerCollateralAmount: COLLATERAL_AMOUNT
         });
+    }
+}
+
+contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
+    uint256 internal constant NATIVE_SETTLEMENT_POOL_ID = 71;
+
+    function test_BugCondition_ChargeOffLine_ShouldClearBorrowerDebtAndAciPrincipal() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.aprBps = 0;
+        params.minimumPaymentPerPeriod = 1;
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+
+        uint256 lineId = _createActivatedLine(params, TARGET_LIMIT, TARGET_LIMIT);
+        bytes32 borrowerPositionKey = facet.line(lineId).borrowerPositionKey;
+
+        vm.prank(alice);
+        facet.draw(lineId, 300e18);
+
+        vm.warp(uint256(facet.line(lineId).nextDueAt) + GRACE_PERIOD_SECS + 1);
+        facet.markDelinquent(lineId);
+
+        facet.setChargeOffThresholdForTest(1 days);
+        vm.warp(block.timestamp + 1 days);
+        facet.chargeOffLine(lineId);
+
+        require(
+            facet.sameAssetDebt(SETTLEMENT_POOL_ID, borrowerPositionKey) == 0,
+            "charge-off should clear borrower same-asset debt"
+        );
+        require(
+            facet.poolActiveCreditPrincipalTotal(SETTLEMENT_POOL_ID) == 0,
+            "charge-off should reduce active credit principal total"
+        );
+    }
+
+    function test_BugCondition_RepayLine_ShouldNotAdvanceDueCheckpointTwiceInSameBlock() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+        uint256 lineId = _createActivatedLine(params, TARGET_LIMIT, TARGET_LIMIT);
+        uint40 originalNextDueAt = facet.line(lineId).nextDueAt;
+
+        vm.prank(alice);
+        facet.draw(lineId, 200e18);
+
+        vm.warp(uint256(originalNextDueAt) + GRACE_PERIOD_SECS + 1);
+        _mintAndApprove(alice, 100e18);
+
+        vm.startPrank(alice);
+        facet.repayLine(lineId, 50e18);
+        uint40 nextDueAfterFirstPayment = facet.line(lineId).nextDueAt;
+        facet.repayLine(lineId, 50e18);
+        vm.stopPrank();
+
+        require(
+            nextDueAfterFirstPayment == originalNextDueAt + PAYMENT_INTERVAL_SECS,
+            "first payment should advance exactly one checkpoint"
+        );
+        require(
+            facet.line(lineId).nextDueAt <= originalNextDueAt + PAYMENT_INTERVAL_SECS,
+            "same-block second payment should not advance another checkpoint"
+        );
+    }
+
+    function test_BugCondition_RepayLine_ShouldCapDueCheckpointAtTermEnd() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.aprBps = 0;
+        params.minimumPaymentPerPeriod = 1;
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+        params.facilityTermSecs = 35 days;
+
+        uint256 lineId = _createActivatedLine(params, TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.draw(lineId, 10e18);
+
+        uint40 termEndAt = facet.line(lineId).termEndAt;
+        vm.warp(uint256(termEndAt) - 1);
+
+        _mintAndApprove(alice, 1);
+        vm.prank(alice);
+        facet.repayLine(lineId, 1);
+
+        require(facet.line(lineId).nextDueAt <= termEndAt, "next due should not overshoot term end");
+    }
+
+    function test_BugCondition_ChargeOffLine_ShouldRecordInterestLossInsteadOfDiscardingIt() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+        facet.setChargeOffThresholdForTest(1 days);
+
+        (uint256 lineId, uint256 lenderPositionOne, uint256 lenderPositionTwo) =
+            _createPooledActivatedLine(params, 600e18, 400e18);
+
+        vm.prank(alice);
+        facet.draw(lineId, 500e18);
+
+        vm.warp(uint256(facet.line(lineId).nextDueAt) + GRACE_PERIOD_SECS + 1);
+        facet.markDelinquent(lineId);
+        vm.warp(block.timestamp + 1 days);
+
+        (uint256 accruedInterest,,) = facet.previewLineInterest(lineId);
+        facet.chargeOffLine(lineId);
+
+        LibEqualScaleAlphaStorage.Commitment memory first = facet.commitment(lineId, lenderPositionOne);
+        LibEqualScaleAlphaStorage.Commitment memory second = facet.commitment(lineId, lenderPositionTwo);
+        uint256 recordedLoss = first.lossWrittenDown + second.lossWrittenDown;
+
+        require(
+            recordedLoss == 500e18 + accruedInterest,
+            "charge-off should recognize accrued interest loss alongside principal"
+        );
+    }
+
+    function test_BugCondition_RunoffCure_ShouldNotRestartBelowMinimumViableLine() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.aprBps = 0;
+        params.minimumPaymentPerPeriod = 1;
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+
+        (uint256 lineId, uint256 lenderPositionOne,) = _createPooledActivatedLine(params, 700e18, 300e18);
+
+        vm.prank(alice);
+        facet.draw(lineId, 500e18);
+
+        vm.warp(facet.line(lineId).termEndAt);
+        facet.enterRefinancing(lineId);
+
+        vm.prank(bob);
+        facet.exitCommitment(lineId, lenderPositionOne);
+
+        vm.warp(facet.line(lineId).refinanceEndAt);
+        facet.resolveRefinancing(lineId);
+
+        _mintAndApprove(alice, 200e18);
+        vm.prank(alice);
+        facet.repayLine(lineId, 200e18);
+
+        require(
+            facet.line(lineId).status == LibEqualScaleAlphaStorage.CreditLineStatus.Runoff,
+            "runoff cure should not restart below minimum viable line"
+        );
+    }
+
+    function test_BugCondition_Draw_ShouldBlockNativeTreasuryReentrancy() external {
+        facet.configurePoolForDeposits(NATIVE_SETTLEMENT_POOL_ID, address(0), 1);
+
+        EqualScaleAlphaReenteringTreasury attacker = new EqualScaleAlphaReenteringTreasury(facet);
+        uint256 borrowerPositionId = positionNft.mint(address(attacker), 7);
+        address tba = facet.getTBAAddress(borrowerPositionId);
+
+        facet.setPositionAgentRegistration(borrowerPositionId, 99, REGISTRATION_MODE_CANONICAL_OWNED, address(0));
+        identityRegistry.setOwner(99, tba);
+
+        attacker.registerBorrowerProfile(
+            borrowerPositionId, address(attacker), bankrToken, keccak256("native-reentry-profile")
+        );
+
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.settlementPoolId = NATIVE_SETTLEMENT_POOL_ID;
+        params.requestedTargetLimit = 2 ether;
+        params.minimumViableLine = 1 ether;
+        params.minimumPaymentPerPeriod = 1;
+        params.maxDrawPerPeriod = 2 ether;
+
+        uint256 lineId = attacker.createLineProposal(borrowerPositionId, params);
+        uint256 lenderPositionId = positionNft.mint(bob, NATIVE_SETTLEMENT_POOL_ID);
+        vm.deal(bob, 2 ether);
+        vm.prank(bob);
+        facet.depositToPosition{value: 2 ether}(lenderPositionId, NATIVE_SETTLEMENT_POOL_ID, 2 ether, 2 ether);
+
+        vm.prank(bob);
+        facet.commitSolo(lineId, lenderPositionId);
+
+        attacker.activateLine(lineId);
+        attacker.drawWithReentry(lineId, 1 ether, 1 ether);
+
+        require(attacker.didReenter(), "treasury wallet should attempt reentry in the harness");
+        require(facet.line(lineId).outstandingPrincipal == 1 ether, "reentrant native draw should be blocked");
+    }
+
+    function test_BugCondition_MarkDelinquent_ShouldRevertOnMissedPaymentsOverflow() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+        uint256 lineId = _createActivatedLine(params, TARGET_LIMIT, TARGET_LIMIT);
+
+        vm.prank(alice);
+        facet.draw(lineId, 100e18);
+
+        facet.setLineMissedPayments(lineId, type(uint8).max);
+        vm.warp(uint256(facet.line(lineId).nextDueAt) + GRACE_PERIOD_SECS + 1);
+
+        vm.expectRevert();
+        facet.markDelinquent(lineId);
+    }
+
+    function test_BugCondition_EnterRefinancing_ShouldRejectFrozenLines() external {
+        uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
+
+        _timelockCall(abi.encodeWithSelector(EqualScaleAlphaAdminFacet.freezeLine.selector, lineId, OPS_FREEZE_REASON));
+        vm.warp(facet.line(lineId).termEndAt);
+
+        vm.expectRevert();
+        facet.enterRefinancing(lineId);
+    }
+
+    function test_BugCondition_UpdateBorrowerProfile_ShouldLockTreasuryWalletAfterActivation() external {
+        uint256 lineId = _createActivatedLine(_defaultProposalParamsNone(), TARGET_LIMIT, TARGET_LIMIT);
+        uint256 borrowerPositionId = facet.line(lineId).borrowerPositionId;
+
+        vm.prank(alice);
+        vm.expectRevert();
+        facet.updateBorrowerProfile(
+            borrowerPositionId, address(0xD00D), address(0xF00D), keccak256("locked-after-activation")
+        );
+    }
+
+    function test_BugCondition_RepayLine_ShouldNotAlwaysAssignDustToLastCommitment() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.aprBps = 0;
+        params.requestedTargetLimit = 3e18;
+        params.minimumViableLine = 1e18;
+        params.minimumPaymentPerPeriod = 1;
+        params.maxDrawPerPeriod = 3e18;
+
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(borrowerPositionId, params);
+
+        vm.warp(block.timestamp + 3 days + 1);
+        facet.transitionToPooledOpen(lineId);
+
+        uint256 lenderPositionOne = _fundSettlementPosition(bob, 1e18);
+        uint256 lenderPositionTwo = _fundSettlementPosition(carol, 1e18);
+        uint256 lenderPositionThree = _fundSettlementPosition(dave, 1e18);
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionOne, 1e18);
+        vm.prank(carol);
+        facet.commitPooled(lineId, lenderPositionTwo, 1e18);
+        vm.prank(dave);
+        facet.commitPooled(lineId, lenderPositionThree, 1e18);
+
+        vm.prank(alice);
+        facet.activateLine(lineId);
+
+        vm.prank(alice);
+        facet.draw(lineId, 3e18);
+
+        _mintAndApprove(alice, 1e18);
+        vm.prank(alice);
+        facet.repayLine(lineId, 1e18);
+
+        LibEqualScaleAlphaStorage.Commitment memory third = facet.commitment(lineId, lenderPositionThree);
+        uint256 expectedFloorShare = uint256(1e18) / 3;
+        require(
+            third.principalRepaid == expectedFloorShare,
+            "repayment dust should not deterministically favor the last lender"
+        );
     }
 }
