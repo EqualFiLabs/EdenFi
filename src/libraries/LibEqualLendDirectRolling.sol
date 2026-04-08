@@ -77,7 +77,7 @@ library LibEqualLendDirectRolling {
         }
         agreement.lastAccrualTimestamp = uint64(asOf);
 
-        if (agreement.arrears == 0 && snapshot.dueCountDelta != 0) {
+        if (remainingArrears == 0 && snapshot.dueCountDelta != 0) {
             uint256 nextDueCalc = uint256(snapshot.latestPassedDue) + agreement.paymentIntervalSeconds;
             if (nextDueCalc > type(uint64).max) {
                 revert DirectError_InvalidTimestamp();
