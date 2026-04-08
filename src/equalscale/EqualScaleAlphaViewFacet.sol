@@ -77,6 +77,7 @@ contract EqualScaleAlphaViewFacet {
         uint256 totalInterestReceived;
         uint256 totalRecoveryReceived;
         uint256 totalLossWrittenDown;
+        uint256 totalInterestLossAllocated;
         uint256 commitmentCount;
         bool hasRecognizedLoss;
     }
@@ -259,8 +260,9 @@ contract EqualScaleAlphaViewFacet {
             summary.totalInterestReceived += commitment.interestReceived;
             summary.totalRecoveryReceived += commitment.recoveryReceived;
             summary.totalLossWrittenDown += commitment.lossWrittenDown;
+            summary.totalInterestLossAllocated += commitment.interestLossAllocated;
         }
-        summary.hasRecognizedLoss = summary.totalLossWrittenDown != 0;
+        summary.hasRecognizedLoss = summary.totalLossWrittenDown != 0 || summary.totalInterestLossAllocated != 0;
     }
 
     function _fillLiveIdentity(BorrowerProfileView memory view_, uint256 positionId) internal view {

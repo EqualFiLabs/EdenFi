@@ -92,6 +92,7 @@ library LibEqualScaleAlphaStorage {
         uint256 interestReceived;
         uint256 recoveryReceived;
         uint256 lossWrittenDown;
+        uint256 interestLossAllocated;
         CommitmentStatus status;
     }
 

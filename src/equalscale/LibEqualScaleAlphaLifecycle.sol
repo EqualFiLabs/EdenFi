@@ -222,6 +222,7 @@ library LibEqualScaleAlphaLifecycle {
         }
 
         LibEqualScaleAlphaShared.accrueInterest(line);
+        uint256 accruedInterestAtChargeOff = line.accruedInterest;
 
         uint256 totalExposedPrincipal = LibEqualScaleAlphaShared.totalExposedPrincipal(store, lineId);
         uint256 recoveryApplied = LibEqualScaleAlphaShared.recoverBorrowerCollateral(line, totalExposedPrincipal);
@@ -232,6 +233,10 @@ library LibEqualScaleAlphaLifecycle {
         uint256 principalWrittenDown = LibEqualScaleAlphaShared.totalExposedPrincipal(store, lineId);
         if (principalWrittenDown != 0) {
             LibEqualScaleAlphaShared.allocateWriteDown(store, lineId, principalWrittenDown);
+        }
+        if (accruedInterestAtChargeOff != 0) {
+            LibEqualScaleAlphaShared.allocateInterestLoss(store, lineId, accruedInterestAtChargeOff);
+            emit IEqualScaleAlphaEvents.CreditLineInterestLossRecorded(lineId, accruedInterestAtChargeOff);
         }
 
         if (line.outstandingPrincipal != 0) {

@@ -421,6 +421,60 @@ library LibEqualScaleAlphaShared {
         }
     }
 
+    function allocateInterestLoss(
+        LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store,
+        uint256 lineId,
+        uint256 interestLossAmount
+    ) internal {
+        if (interestLossAmount == 0) {
+            return;
+        }
+
+        uint256[] storage lenderPositionIds = store.lineCommitmentPositionIds[lineId];
+        uint256 totalLossBasis;
+        uint256 activeCommitmentCount;
+        uint256 len = lenderPositionIds.length;
+
+        for (uint256 i = 0; i < len; i++) {
+            LibEqualScaleAlphaStorage.Commitment storage commitment =
+                store.lineCommitments[lineId][lenderPositionIds[i]];
+            uint256 lossBasis = commitment.principalExposed + commitment.recoveryReceived + commitment.lossWrittenDown;
+            if (lossBasis == 0) {
+                continue;
+            }
+
+            totalLossBasis += lossBasis;
+            activeCommitmentCount++;
+        }
+
+        if (totalLossBasis == 0 || activeCommitmentCount == 0) {
+            return;
+        }
+
+        uint256 remainingInterestLoss = interestLossAmount;
+        uint256 seenActiveCommitments;
+        for (uint256 i = 0; i < len; i++) {
+            LibEqualScaleAlphaStorage.Commitment storage commitment =
+                store.lineCommitments[lineId][lenderPositionIds[i]];
+            uint256 lossBasis = commitment.principalExposed + commitment.recoveryReceived + commitment.lossWrittenDown;
+            if (lossBasis == 0) {
+                continue;
+            }
+
+            seenActiveCommitments++;
+            uint256 interestLossShare = remainingInterestLoss;
+            if (seenActiveCommitments != activeCommitmentCount) {
+                interestLossShare = Math.mulDiv(interestLossAmount, lossBasis, totalLossBasis);
+                if (interestLossShare > remainingInterestLoss) {
+                    interestLossShare = remainingInterestLoss;
+                }
+                remainingInterestLoss -= interestLossShare;
+            }
+
+            commitment.interestLossAllocated += interestLossShare;
+        }
+    }
+
     function totalExposedPrincipal(LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store, uint256 lineId)
         internal
         view

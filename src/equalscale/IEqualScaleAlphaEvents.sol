@@ -138,6 +138,7 @@ interface IEqualScaleAlphaEvents {
     );
 
     event CreditLineChargedOff(uint256 indexed lineId, uint256 recoveryApplied, uint256 principalWrittenDown);
+    event CreditLineInterestLossRecorded(uint256 indexed lineId, uint256 interestLossAllocated);
 
     event CreditLineClosed(
         uint256 indexed lineId, LibEqualScaleAlphaStorage.CreditLineStatus previousStatus, bool closedWithLoss

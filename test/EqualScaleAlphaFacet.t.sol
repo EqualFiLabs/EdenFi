@@ -2595,7 +2595,7 @@ contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
         require(facet.line(lineId).nextDueAt <= termEndAt, "next due should not overshoot term end");
     }
 
-    function test_BugCondition_ChargeOffLine_ShouldRecordInterestLossInsteadOfDiscardingIt() external {
+    function test_BugCondition_InterestLoss_ShouldRecordChargeOffInterestLossInsteadOfDiscardingIt() external {
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
         params.maxDrawPerPeriod = TARGET_LIMIT;
         facet.setChargeOffThresholdForTest(1 days);
@@ -2615,12 +2615,13 @@ contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
 
         LibEqualScaleAlphaStorage.Commitment memory first = facet.commitment(lineId, lenderPositionOne);
         LibEqualScaleAlphaStorage.Commitment memory second = facet.commitment(lineId, lenderPositionTwo);
-        uint256 recordedLoss = first.lossWrittenDown + second.lossWrittenDown;
+        uint256 recordedInterestLoss = first.interestLossAllocated + second.interestLossAllocated;
 
         require(
-            recordedLoss == 500e18 + accruedInterest,
-            "charge-off should recognize accrued interest loss alongside principal"
+            recordedInterestLoss == accruedInterest,
+            "charge-off should record accrued interest as lender-side interest loss"
         );
+        require(first.lossWrittenDown + second.lossWrittenDown == 500e18, "principal write-down should stay separate");
     }
 
     function test_BugCondition_RunoffCure_ShouldNotRestartBelowMinimumViableLine() external {
