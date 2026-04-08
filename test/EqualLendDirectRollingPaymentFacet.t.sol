@@ -28,6 +28,21 @@ contract MockERC20RollingPayments is ERC20 {
     }
 }
 
+contract MockERC20OverDeliverRollingPayments is MockERC20RollingPayments {
+    uint256 internal immutable bonus;
+
+    constructor(string memory name_, string memory symbol_, uint256 bonus_) MockERC20RollingPayments(name_, symbol_) {
+        bonus = bonus_;
+    }
+
+    function transferFrom(address from, address to, uint256 value) public override returns (bool) {
+        uint256 delivered = value + bonus;
+        _spendAllowance(from, _msgSender(), delivered);
+        _transfer(from, to, delivered);
+        return true;
+    }
+}
+
 contract EqualLendDirectRollingPaymentHarness is
     PoolManagementFacet,
     PositionManagementFacet,
@@ -757,5 +772,153 @@ contract EqualLendDirectRollingPaymentFacetTest is Test {
         assertEq(harness.lenderAgreementCount(lenderKey), 0, "lender agreement index");
         assertEq(harness.rollingBorrowerAgreementCount(borrowerKey), 0, "rolling borrower agreement index");
         assertEq(harness.rollingLenderAgreementCount(lenderKey), 0, "rolling lender agreement index");
+    }
+}
+
+contract EqualLendDirectRollingPaymentBugConditionTest is EqualLendDirectRollingPaymentFacetTest {
+    function test_BugCondition_MakeRollingPayment_MinReceivedGuardIsIgnored() external {
+        (uint256 agreementId,,, uint64 acceptTs) = _setupCrossAssetAgreement(false, true);
+
+        vm.warp(acceptTs + 10 days);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);
+        RollingAccrualExpectation memory accrual = _previewAccrual(agreement, block.timestamp);
+        uint256 totalInterestDue = accrual.arrearsDue + accrual.currentInterestDue;
+
+        borrowToken.mint(bob, totalInterestDue);
+        vm.startPrank(bob);
+        borrowToken.approve(address(harness), totalInterestDue);
+        harness.makeRollingPayment(agreementId, totalInterestDue, totalInterestDue, totalInterestDue - 1);
+        vm.stopPrank();
+
+        (LibEqualLendDirectStorage.RollingAgreement memory afterAgreement,) = harness.getRollingAgreement(agreementId);
+        assertEq(afterAgreement.paymentCount, 1, "payment should succeed even with ignored minReceived");
+    }
+
+    function test_BugCondition_MakeRollingPayment_ArrearsOnlyPaymentShouldAdvanceNextDue() external {
+        (uint256 agreementId,,, uint64 acceptTs) = _setupCrossAssetAgreement(false, true);
+
+        vm.warp(acceptTs + 17 days);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);
+        RollingAccrualExpectation memory accrual = _previewAccrual(agreement, block.timestamp);
+        uint256 historicalArrears = accrual.arrearsDue;
+        assertGt(historicalArrears, 0, "historical arrears should exist");
+        assertGt(accrual.currentInterestDue, 0, "current interest should exist");
+
+        borrowToken.mint(bob, historicalArrears);
+        vm.startPrank(bob);
+        borrowToken.approve(address(harness), historicalArrears);
+        harness.makeRollingPayment(agreementId, historicalArrears, historicalArrears, 0);
+        vm.stopPrank();
+
+        (LibEqualLendDirectStorage.RollingAgreement memory afterAgreement,) = harness.getRollingAgreement(agreementId);
+        assertEq(afterAgreement.nextDue, acceptTs + 21 days, "next due should advance to the next checkpoint");
+        assertEq(afterAgreement.paymentCount, 2, "payment count should advance by passed checkpoints");
+    }
+
+    function test_BugCondition_MakeRollingPayment_ShouldAllowOverDeliveryWithoutAmortizationRevert() external {
+        MockERC20OverDeliverRollingPayments overDeliverToken =
+            new MockERC20OverDeliverRollingPayments("Over Deliver Borrow", "ODB", 1);
+        _initPool(4, address(overDeliverToken));
+
+        overDeliverToken.mint(alice, 100 ether + 1);
+        vm.prank(alice);
+        overDeliverToken.approve(address(harness), type(uint256).max);
+        vm.prank(alice);
+        uint256 lenderPositionId = harness.mintPosition(4);
+        vm.prank(alice);
+        harness.depositToPosition(lenderPositionId, 4, 100 ether, 100 ether);
+
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 2, 150 ether, collateralToken);
+
+        vm.prank(alice);
+        uint256 offerId = harness.postRollingLenderOffer(
+            EqualLendDirectRollingOfferFacet.RollingLenderOfferParams({
+                lenderPositionId: lenderPositionId,
+                lenderPoolId: 4,
+                collateralPoolId: 2,
+                borrowAsset: address(overDeliverToken),
+                collateralAsset: address(collateralToken),
+                principal: 60 ether,
+                collateralLocked: 90 ether,
+                paymentIntervalSeconds: 7 days,
+                rollingApyBps: 900,
+                gracePeriodSeconds: 1 days,
+                maxPaymentCount: 12,
+                upfrontPremium: 0,
+                allowAmortization: false,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false
+            })
+        );
+
+        uint64 acceptTs = uint64(block.timestamp);
+        vm.prank(bob);
+        uint256 agreementId = harness.acceptRollingLenderOffer(offerId, borrowerPositionId, 0, 60 ether);
+
+        vm.warp(acceptTs + 10 days);
+
+        (LibEqualLendDirectStorage.RollingAgreement memory agreement,) = harness.getRollingAgreement(agreementId);
+        RollingAccrualExpectation memory accrual = _previewAccrual(agreement, block.timestamp);
+        uint256 totalInterestDue = accrual.arrearsDue + accrual.currentInterestDue;
+
+        overDeliverToken.mint(bob, totalInterestDue + 1);
+        vm.startPrank(bob);
+        overDeliverToken.approve(address(harness), type(uint256).max);
+        harness.makeRollingPayment(agreementId, totalInterestDue, totalInterestDue, 0);
+        vm.stopPrank();
+
+        (LibEqualLendDirectStorage.RollingAgreement memory afterAgreement,) = harness.getRollingAgreement(agreementId);
+        assertEq(afterAgreement.paymentCount, 1, "over-delivery should still count as a valid payment");
+    }
+
+    function test_BugCondition_MakeRollingPayment_ShouldRevertPastMaxPaymentCount() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 3, 100 ether, sameAssetToken);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 3, 150 ether, sameAssetToken);
+
+        vm.prank(bob);
+        uint256 offerId = harness.postRollingBorrowerOffer(
+            EqualLendDirectRollingOfferFacet.RollingBorrowerOfferParams({
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: 3,
+                collateralPoolId: 3,
+                borrowAsset: address(sameAssetToken),
+                collateralAsset: address(sameAssetToken),
+                principal: 40 ether,
+                collateralLocked: 80 ether,
+                paymentIntervalSeconds: 7 days,
+                rollingApyBps: 850,
+                gracePeriodSeconds: 2 days,
+                maxPaymentCount: 2,
+                upfrontPremium: 0,
+                allowAmortization: false,
+                allowEarlyRepay: true,
+                allowEarlyExercise: true
+            })
+        );
+
+        uint64 acceptTs = uint64(block.timestamp);
+        vm.prank(alice);
+        uint256 agreementId = harness.acceptRollingBorrowerOffer(offerId, lenderPositionId, 0, 40 ether);
+
+        for (uint256 i = 0; i < 2; ++i) {
+            vm.warp(acceptTs + ((i + 1) * 7 days) + 1 days);
+            uint256 paymentDue = _currentInterestDue(agreementId);
+            sameAssetToken.mint(bob, paymentDue);
+            vm.startPrank(bob);
+            sameAssetToken.approve(address(harness), type(uint256).max);
+            harness.makeRollingPayment(agreementId, paymentDue, paymentDue, 0);
+            vm.stopPrank();
+        }
+
+        vm.warp(acceptTs + 22 days);
+        uint256 extraPaymentDue = _currentInterestDue(agreementId);
+        sameAssetToken.mint(bob, extraPaymentDue);
+        vm.startPrank(bob);
+        sameAssetToken.approve(address(harness), type(uint256).max);
+        vm.expectRevert();
+        harness.makeRollingPayment(agreementId, extraPaymentDue, extraPaymentDue, 0);
+        vm.stopPrank();
     }
 }

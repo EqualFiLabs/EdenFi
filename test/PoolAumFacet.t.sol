@@ -173,3 +173,17 @@ contract PoolAumFacetTest is LaunchFixture {
         revert("expected indexed event not found");
     }
 }
+
+contract PoolAumFacetBugConditionTest is LaunchFixture {
+    function setUp() public override {
+        super.setUp();
+        _bootstrapCorePools();
+    }
+
+    function test_BugCondition_SetAumFee_ShouldAllowOwnerWhenTimelockIsConfigured() public {
+        PoolManagementFacet(diamond).setAumFee(1, 25);
+
+        PoolManagementFacet.PoolConfigView memory config = PoolManagementFacet(diamond).getPoolConfigView(1);
+        assertEq(uint256(config.currentAumFeeBps), 25);
+    }
+}

@@ -892,3 +892,67 @@ contract EqualLendDirectFixedAgreementFacetTest is Test {
         return actionFees;
     }
 }
+
+contract EqualLendDirectFixedAgreementBugConditionTest is EqualLendDirectFixedAgreementFacetTest {
+    function test_BugCondition_AcceptFixedBorrowerOffer_ShouldRoundInterestUpToAtLeastOneUnit() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 1, 2_000_000, borrowToken);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 2, 2_000_000, collateralToken);
+
+        vm.prank(bob);
+        uint256 offerId = harness.postFixedBorrowerOffer(
+            EqualLendDirectFixedOfferFacet.FixedBorrowerOfferParams({
+                borrowerPositionId: borrowerPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principal: 1_000_000,
+                collateralLocked: 1_250_000,
+                aprBps: 1,
+                durationSeconds: 1 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
+
+        vm.prank(alice);
+        uint256 agreementId = harness.acceptFixedBorrowerOffer(offerId, lenderPositionId, _borrowerNetFor(1_000_000, 1, 1 days));
+
+        (LibEqualLendDirectStorage.FixedAgreement memory agreement,) = harness.getFixedAgreement(agreementId);
+        assertGe(agreement.userInterest, 1, "fixed interest should round up to at least one unit");
+    }
+
+    function test_BugCondition_AcceptLenderRatioTrancheOffer_ShouldCeilCollateralRequirement() external {
+        uint256 lenderPositionId = _mintAndDeposit(alice, 1, 200 ether, borrowToken);
+        uint256 borrowerPositionId = _mintAndDeposit(bob, 2, 200 ether, collateralToken);
+
+        vm.prank(alice);
+        uint256 offerId = harness.postLenderRatioTrancheOffer(
+            EqualLendDirectFixedOfferFacet.LenderRatioTrancheOfferParams({
+                lenderPositionId: lenderPositionId,
+                lenderPoolId: 1,
+                collateralPoolId: 2,
+                borrowAsset: address(borrowToken),
+                collateralAsset: address(collateralToken),
+                principalCap: 60 ether,
+                priceNumerator: 2,
+                priceDenominator: 3,
+                minPrincipalPerFill: 10 ether,
+                aprBps: 900,
+                durationSeconds: 14 days,
+                allowEarlyRepay: true,
+                allowEarlyExercise: false,
+                allowLenderCall: false
+            })
+        );
+
+        vm.prank(bob);
+        uint256 agreementId =
+            harness.acceptLenderRatioTrancheOffer(offerId, borrowerPositionId, 10 ether, _borrowerNetFor(10 ether, 900, 14 days));
+
+        (LibEqualLendDirectStorage.FixedAgreement memory agreement,) = harness.getFixedAgreement(agreementId);
+        uint256 expectedCollateral = Math.mulDiv(10 ether, 2, 3, Math.Rounding.Ceil);
+        assertGe(agreement.collateralLocked, expectedCollateral, "ratio fill should ceil collateral requirement");
+    }
+}
