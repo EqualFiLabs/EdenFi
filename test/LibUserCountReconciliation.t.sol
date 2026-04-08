@@ -469,3 +469,207 @@ contract LibUserCountReconciliationRollingBugConditionTest is Test {
         return actionFees;
     }
 }
+
+contract LibUserCountReconciliationAccountingPreservationTest is Test {
+    EqualLendDirectAccountingHarness internal harness;
+
+    bytes32 internal constant USER = keccak256("user");
+    bytes32 internal constant USER_TWO = keccak256("user-two");
+    uint256 internal constant POOL_ID = 91;
+    address internal constant ASSET = address(0xB0B);
+
+    function setUp() public {
+        harness = new EqualLendDirectAccountingHarness();
+    }
+
+    function test_Preservation_RestoreLenderCapital_WithExistingPrincipalShouldKeepUserCountStable() external {
+        harness.setPool(POOL_ID, ASSET, 100 ether, 100 ether, 1);
+        harness.setUserPrincipal(POOL_ID, USER, 100 ether);
+
+        harness.restoreLenderCapital(USER, POOL_ID, 25 ether);
+
+        (uint256 principalAfter, uint256 depositsAfter, uint256 trackedAfter, uint256 userCountAfter, , , ,) =
+            harness.poolState(POOL_ID, USER, 0);
+
+        assertEq(principalAfter, 125 ether);
+        assertEq(depositsAfter, 125 ether);
+        assertEq(trackedAfter, 125 ether);
+        assertEq(userCountAfter, 1);
+    }
+
+    function test_Preservation_DepartLenderCapital_PartialDepartureShouldKeepUserCountStable() external {
+        harness.setPool(POOL_ID, ASSET, 100 ether, 100 ether, 1);
+        harness.setUserPrincipal(POOL_ID, USER, 100 ether);
+
+        harness.departLenderCapital(USER, POOL_ID, 25 ether);
+
+        (uint256 principalAfter, uint256 depositsAfter, uint256 trackedAfter, uint256 userCountAfter, , , ,) =
+            harness.poolState(POOL_ID, USER, 0);
+
+        assertEq(principalAfter, 75 ether);
+        assertEq(depositsAfter, 75 ether);
+        assertEq(trackedAfter, 75 ether);
+        assertEq(userCountAfter, 1);
+    }
+
+    function test_Preservation_DepartThenRestore_FullRoundTripShouldBeSymmetric() external {
+        harness.setPool(POOL_ID, ASSET, 100 ether, 100 ether, 1);
+        harness.setUserPrincipal(POOL_ID, USER, 100 ether);
+
+        harness.departLenderCapital(USER, POOL_ID, 100 ether);
+        (, , , uint256 userCountAfterDepart, , , ,) = harness.poolState(POOL_ID, USER, 0);
+        assertEq(userCountAfterDepart, 0);
+
+        harness.restoreLenderCapital(USER, POOL_ID, 100 ether);
+        (uint256 principalAfter, uint256 depositsAfter, uint256 trackedAfter, uint256 userCountAfterRestore, , , ,) =
+            harness.poolState(POOL_ID, USER, 0);
+
+        assertEq(principalAfter, 100 ether);
+        assertEq(depositsAfter, 100 ether);
+        assertEq(trackedAfter, 100 ether);
+        assertEq(userCountAfterRestore, 1);
+    }
+
+    function test_Preservation_FeeIndexSettle_NonZeroingMaintenanceShouldKeepUserCountStable() external {
+        harness.setPool(POOL_ID, ASSET, 10 ether, 10 ether, 1);
+        harness.setUserPrincipal(POOL_ID, USER, 10 ether);
+        harness.setMaintenanceIndex(POOL_ID, 5e17);
+        harness.setUserMaintenanceIndex(POOL_ID, USER, 0);
+        harness.setUserFeeIndex(POOL_ID, USER, 0);
+
+        harness.settleFeeIndex(POOL_ID, USER);
+
+        (uint256 principalAfter, , , uint256 userCountAfter, , , ,) = harness.poolState(POOL_ID, USER, 0);
+        assertEq(principalAfter, 5 ether);
+        assertEq(userCountAfter, 1);
+    }
+
+    function test_Preservation_FeeIndexSettle_ZeroPrincipalShouldOnlySnapIndexes() external {
+        harness.setPool(POOL_ID, ASSET, 0, 0, 0);
+        harness.setUserPrincipal(POOL_ID, USER_TWO, 0);
+        harness.setMaintenanceIndex(POOL_ID, 9e17);
+        harness.setUserMaintenanceIndex(POOL_ID, USER_TWO, 0);
+        harness.setUserFeeIndex(POOL_ID, USER_TWO, 0);
+
+        harness.settleFeeIndex(POOL_ID, USER_TWO);
+
+        (uint256 principalAfter, , , uint256 userCountAfter, , , ,) = harness.poolState(POOL_ID, USER_TWO, 0);
+        assertEq(principalAfter, 0);
+        assertEq(userCountAfter, 0);
+        assertEq(harness.userMaintenanceIndexOf(POOL_ID, USER_TWO), 9e17);
+        assertEq(harness.userFeeIndexOf(POOL_ID, USER_TWO), 0);
+    }
+}
+
+contract LibUserCountReconciliationLifecyclePreservationTest is Test {
+    UserCountDirectLifecycleHarness internal harness;
+    PositionNFT internal positionNft;
+    MockERC20UserCount internal sameAssetToken;
+
+    address internal alice = makeAddr("alice");
+    address internal bob = makeAddr("bob");
+    address internal carol = makeAddr("carol");
+    address internal treasury = makeAddr("treasury");
+
+    function setUp() public {
+        harness = new UserCountDirectLifecycleHarness();
+        harness.setOwner(address(this));
+        harness.setTimelock(address(this));
+        harness.setTreasury(treasury);
+        harness.setFeeSplits(1_000, 0);
+        harness.setDirectConfig(100, 6_000, 2_500, 8_000, 1 days);
+
+        positionNft = new PositionNFT();
+        positionNft.setMinter(address(harness));
+        positionNft.setDiamond(address(harness));
+        harness.setPositionNFT(address(positionNft));
+
+        sameAssetToken = new MockERC20UserCount("Same Asset", "SAM");
+        _initPool(3, address(sameAssetToken), 2);
+    }
+
+    function test_Preservation_DepositFirstUserShouldIncrementAndEnforceCapacity() external {
+        uint256 alicePositionId = _mintPosition(alice, 3);
+        _approve(alice, 10 ether);
+
+        vm.prank(alice);
+        harness.depositToPosition(alicePositionId, 3, 10 ether, 10 ether);
+        assertEq(harness.userCountOf(3), 1);
+
+        uint256 bobPositionId = _mintPosition(bob, 3);
+        _approve(bob, 10 ether);
+        vm.prank(bob);
+        harness.depositToPosition(bobPositionId, 3, 10 ether, 10 ether);
+        assertEq(harness.userCountOf(3), 2);
+
+        uint256 carolPositionId = _mintPosition(carol, 3);
+        _approve(carol, 1 ether);
+        vm.prank(carol);
+        vm.expectRevert(abi.encodeWithSelector(MaxUserCountExceeded.selector, 2));
+        harness.depositToPosition(carolPositionId, 3, 1 ether, 1 ether);
+    }
+
+    function test_Preservation_FullWithdrawalShouldDecrementUserCountOnce() external {
+        uint256 alicePositionId = _mintAndDeposit(alice, 3, 10 ether);
+        bytes32 aliceKey = positionNft.getPositionKey(alicePositionId);
+        assertEq(harness.userCountOf(3), 1);
+
+        vm.prank(alice);
+        harness.withdrawFromPosition(alicePositionId, 3, 10 ether, 10 ether);
+
+        assertEq(harness.userCountOf(3), 0);
+        assertEq(harness.principalOf(3, aliceKey), 0);
+    }
+
+    function test_Preservation_PartialWithdrawalShouldKeepUserCountStable() external {
+        uint256 alicePositionId = _mintAndDeposit(alice, 3, 10 ether);
+        bytes32 aliceKey = positionNft.getPositionKey(alicePositionId);
+        assertEq(harness.userCountOf(3), 1);
+
+        vm.prank(alice);
+        harness.withdrawFromPosition(alicePositionId, 3, 4 ether, 4 ether);
+
+        assertEq(harness.userCountOf(3), 1);
+        assertEq(harness.principalOf(3, aliceKey), 6 ether);
+    }
+
+    function _mintAndDeposit(address user, uint256 homePoolId, uint256 amount) internal returns (uint256 positionId) {
+        positionId = _mintPosition(user, homePoolId);
+        _approve(user, amount);
+
+        vm.prank(user);
+        harness.depositToPosition(positionId, homePoolId, amount, amount);
+    }
+
+    function _mintPosition(address user, uint256 homePoolId) internal returns (uint256 positionId) {
+        vm.prank(user);
+        positionId = harness.mintPosition(homePoolId);
+    }
+
+    function _approve(address user, uint256 amount) internal {
+        sameAssetToken.mint(user, amount);
+        vm.prank(user);
+        sameAssetToken.approve(address(harness), amount);
+    }
+
+    function _initPool(uint256 pid, address underlying, uint256 maxUserCount) internal {
+        harness.initPoolWithActionFees(pid, underlying, _poolConfig(maxUserCount), _actionFees());
+    }
+
+    function _poolConfig(uint256 maxUserCount) internal pure returns (Types.PoolConfig memory cfg) {
+        cfg.rollingApyBps = 500;
+        cfg.depositorLTVBps = 8_000;
+        cfg.maintenanceRateBps = 100;
+        cfg.flashLoanFeeBps = 30;
+        cfg.minDepositAmount = 1;
+        cfg.minLoanAmount = 1;
+        cfg.minTopupAmount = 1;
+        cfg.aumFeeMinBps = 0;
+        cfg.aumFeeMaxBps = 1_000;
+        cfg.maxUserCount = maxUserCount;
+    }
+
+    function _actionFees() internal pure returns (Types.ActionFeeSet memory actionFees) {
+        return actionFees;
+    }
+}

@@ -45,6 +45,14 @@ contract EqualLendDirectAccountingHarness {
         LibAppStorage.s().pools[pid].userFeeIndex[positionKey] = feeIndex;
     }
 
+    function userFeeIndexOf(uint256 pid, bytes32 positionKey) external view returns (uint256) {
+        return LibAppStorage.s().pools[pid].userFeeIndex[positionKey];
+    }
+
+    function userMaintenanceIndexOf(uint256 pid, bytes32 positionKey) external view returns (uint256) {
+        return LibAppStorage.s().pools[pid].userMaintenanceIndex[positionKey];
+    }
+
     function setFoundationReceiver(address receiver) external {
         LibAppStorage.s().foundationReceiver = receiver;
     }
