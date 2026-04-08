@@ -234,6 +234,14 @@ library LibEqualScaleAlphaLifecycle {
             LibEqualScaleAlphaShared.allocateWriteDown(store, lineId, principalWrittenDown);
         }
 
+        if (line.outstandingPrincipal != 0) {
+            Types.PoolData storage settlementPool = LibAppStorage.s().pools[line.settlementPoolId];
+            LibEqualScaleAlphaShared.settleSettlementPosition(line.settlementPoolId, line.borrowerPositionKey);
+            LibEqualScaleAlphaShared.reduceBorrowerDebt(
+                settlementPool, line.settlementPoolId, line.borrowerPositionKey, line.outstandingPrincipal
+            );
+        }
+
         line.status = LibEqualScaleAlphaStorage.CreditLineStatus.ChargedOff;
         emit IEqualScaleAlphaEvents.CreditLineChargedOff(lineId, recoveryApplied, principalWrittenDown);
 

@@ -2516,7 +2516,7 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
     uint256 internal constant NATIVE_SETTLEMENT_POOL_ID = 71;
 
-    function test_BugCondition_ChargeOffLine_ShouldClearBorrowerDebtAndAciPrincipal() external {
+    function test_BugCondition_ChargeOffDebt_ShouldClearBorrowerDebtAndAciPrincipal() external {
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
         params.aprBps = 0;
         params.minimumPaymentPerPeriod = 1;
