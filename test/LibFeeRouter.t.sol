@@ -6,7 +6,9 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 
+import {ManagedFeeRoutingTest} from "test/ManagedFeeRouting.t.sol";
 import {LaunchFixture} from "test/utils/LaunchFixture.t.sol";
+import {ProtocolTestSupportFacet} from "test/utils/ProtocolTestSupport.sol";
 
 contract MockSenderDeltaToken is ERC20 {
     uint256 internal constant BPS = 10_000;
@@ -108,5 +110,35 @@ contract LibFeeRouterBugConditionTest is LaunchFixture {
         positionId = _mintPosition(owner, pid);
         vm.prank(alice);
         PoolManagementFacet(diamond).addToWhitelist(pid, positionId);
+    }
+}
+
+contract LibFeeRouterPreservationTest is ManagedFeeRoutingTest {
+    bytes32 internal constant PRESERVATION_SOURCE = keccak256("fee-router-preservation");
+
+    function test_Preservation_FeeRouterSplitAndTreasuryNominalDebit_ShouldRemainUnchangedForStandardToken() public {
+        uint256 positionId = _mintPosition(alice, 2);
+
+        alt.mint(alice, 110e18);
+        vm.startPrank(alice);
+        alt.approve(diamond, type(uint256).max);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 2, 100e18, 100e18);
+        alt.transfer(diamond, 10e18);
+        vm.stopPrank();
+
+        uint256 treasuryBefore = alt.balanceOf(treasury);
+        ProtocolTestSupportFacet.PoolView memory beforePool = testSupport.getPoolView(2);
+
+        (uint256 toTreasury, uint256 toActiveCredit, uint256 toFeeIndex) =
+            testSupport.routeManagedShareExternal(2, 10e18, PRESERVATION_SOURCE, true, 10e18);
+
+        ProtocolTestSupportFacet.PoolView memory afterPool = testSupport.getPoolView(2);
+
+        assertEq(toTreasury, 1e18);
+        assertEq(toActiveCredit, 0);
+        assertEq(toFeeIndex, 9e18);
+        assertEq(alt.balanceOf(treasury), treasuryBefore + 1e18);
+        assertEq(beforePool.trackedBalance - afterPool.trackedBalance, 1e18);
+        assertEq(afterPool.yieldReserve, beforePool.yieldReserve + 9e18);
     }
 }

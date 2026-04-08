@@ -63,3 +63,59 @@ contract LibEdenRewardsEngineBugConditionTest is EdenRewardsFacetTest {
         assertEq(afterState.fundedReserve, beforeState.fundedReserve);
     }
 }
+
+contract LibEdenRewardsEnginePreservationTest is EdenRewardsFacetTest {
+    function test_Preservation_EdenRewardUtilities_GrossNetMathShouldRemainConsistent() public pure {
+        uint256 gross = 1_000e18;
+        uint16 bps = 500;
+
+        uint256 net = LibEdenRewardsEngine.netFromGross(gross, bps);
+        uint256 grossedUp = LibEdenRewardsEngine.grossUpNetAmount(net, bps);
+
+        assertEq(net, 950e18);
+        assertEq(LibEdenRewardsEngine.netFromGross(grossedUp, bps), net);
+        assertEq(LibEdenRewardsEngine.netFromGross(100e18, 0), 100e18);
+        assertEq(LibEdenRewardsEngine.grossUpNetAmount(100e18, 0), 100e18);
+    }
+
+    function test_Preservation_EdenRewardAccrual_ZeroSupplyOrReserveShouldShortCircuit() public {
+        uint256 indexId = _createRewardIndex("Short Circuit Index", "SCI");
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), manager, 10e18, 0, 0, true);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory beforeState) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(beforeState.eligibleSupply, 0);
+        assertEq(beforeState.fundedReserve, 0);
+
+        vm.warp(block.timestamp + 10);
+        EdenRewardsFacet(diamond).accrueRewardProgram(programId);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory afterState) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(afterState.globalRewardIndex, beforeState.globalRewardIndex);
+        assertEq(afterState.fundedReserve, beforeState.fundedReserve);
+        assertEq(afterState.lastRewardUpdate, block.timestamp);
+    }
+
+    function test_Preservation_EdenRewardAccrual_ZeroTransferFeeShouldBehaveAsGrossEqualsNet() public {
+        uint256 alicePositionId = _fundEvePosition(alice, 20e18);
+        uint256 indexId = _createRewardIndex("Zero Fee Index", "ZFI");
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(alicePositionId, indexId, 10e18);
+
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), manager, 10e18, 0, 0, true);
+        alt.mint(address(this), 1_000e18);
+        _fundRewardProgram(address(this), programId, alt, 1_000e18);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory beforeState) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+
+        vm.warp(block.timestamp + 10);
+        EdenRewardsFacet(diamond).accrueRewardProgram(programId);
+
+        (, LibEdenRewardsStorage.RewardProgramState memory afterState) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        EdenRewardsFacet.RewardProgramPositionView memory preview =
+            EdenRewardsFacet(diamond).previewRewardProgramPosition(programId, alicePositionId);
+
+        assertEq(afterState.fundedReserve, beforeState.fundedReserve - 100e18);
+        assertEq(preview.claimableRewards, 100e18);
+    }
+}
