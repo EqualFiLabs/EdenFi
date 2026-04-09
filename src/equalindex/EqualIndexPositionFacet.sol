@@ -127,9 +127,8 @@ contract EqualIndexPositionFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         uint256 totalSupply = idx.totalUnits;
         if (units > totalSupply) revert InvalidUnits();
 
-        LibAppStorage.AppStorage storage store = LibAppStorage.s();
         uint256 indexPoolId = s().indexToPoolId[indexId];
-        Types.PoolData storage indexPool = store.pools[indexPoolId];
+        Types.PoolData storage indexPool = LibAppStorage.s().pools[indexPoolId];
         if (!indexPool.initialized) revert PoolNotInitialized(indexPoolId);
 
         LibPoolMembership._ensurePoolMembership(positionKey, indexPoolId, true);
@@ -139,12 +138,15 @@ contract EqualIndexPositionFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
             revert InsufficientIndexTokens(units, positionIndexBalance);
         }
 
-        uint256 len = idx.assets.length;
+        uint256 available = LibPositionHelpers.availablePrincipal(indexPool, positionKey, indexPoolId);
+        if (units > available) {
+            revert InsufficientUnencumberedPrincipal(units, available);
+        }
+
         PositionBurnState memory state;
-        state.assetsOut = new uint256[](len);
-        state.feeAmounts = new uint256[](len);
-        uint16 poolFeeShareBps = _poolFeeShareBps();
-        _preparePositionBurn(indexId, idx, units, totalSupply, positionKey, poolFeeShareBps, state);
+        state.assetsOut = new uint256[](idx.assets.length);
+        state.feeAmounts = new uint256[](idx.assets.length);
+        _preparePositionBurn(indexId, idx, units, totalSupply, positionKey, _poolFeeShareBps(), state);
 
         idx.totalUnits = totalSupply - units;
         IndexToken(idx.token).burnIndexUnits(address(this), units);
