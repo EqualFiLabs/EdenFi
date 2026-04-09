@@ -213,10 +213,10 @@
 
   - [x] 6.4 Add downstream EqualX encumbrance-with-yield integration test
     - Primary downstream owner: `test/EqualXSoloAmmFacet.t.sol` under `.kiro/specs/equalx-findings-1-5-remediation`
-    - Create Solo AMM market → swap (triggers encumbrance change) → verify yield is settled before snapshot overwrite → finalize → verify clean ACI state
+    - Create Solo AMM market → rebalance or finalize (boundary sync triggers encumbrance change) → verify yield is settled before snapshot overwrite → verify clean ACI state
     - Reuse the existing EqualX downstream lifecycle suite if it already covers this flow; do not duplicate equivalent ownership in `test/LibActiveCreditIndex.t.sol`
     - Add a narrow library-side smoke test only if a substrate-only edge remains unreachable from the real EqualX flow
-    - This proves the EqualX finding 2 downstream fix works correctly with the substrate yield settlement fix
+    - This proves the EqualX boundary-sync downstream behavior works correctly with the substrate yield settlement fix
     - Run: `forge test --match-path test/EqualXSoloAmmFacet.t.sol`
     - Observed result:
       - Reused existing downstream owner test `test_Integration_SoloLifecycle_SwapClaimLiveFinalizeAndClaimRemainingYield`

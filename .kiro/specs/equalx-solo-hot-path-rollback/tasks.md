@@ -1,0 +1,108 @@
+# Implementation Plan
+
+- [x] 1. Write redesign bug-condition and gas-baseline tests (BEFORE implementing rollback)
+  - Test file: `test/EqualXSoloAmmFacet.t.sol`
+  - Use real deposits, real market creation, real swaps, real claims, real rebalances, and real finalization
+  - **Bug condition — active swap should not mutate ACI**: Create a Solo market, record `activeCreditPrincipalTotal` and maker `enc.encumberedCapital`, execute a swap that moves reserves, assert encumbrance changed but `activeCreditPrincipalTotal` did not. On current code this will FAIL because `_applyReserveDelta` still changes ACI.
+  - **Bug condition — rebalance should be the ACI sync boundary**: Create a Solo market, execute one or more swaps to drift reserves, then execute a rebalance. Assert ACI moves from the old baseline to the rebalance target rather than from the drifted live reserve. On current code this will FAIL because rebalance assumes ACI already followed swap drift.
+  - **Bug condition — finalize should unwind baseline-synced ACI, not live reserve ACI**: Create a Solo market, execute swaps without rebalancing, finalize, and assert close-time ACI unwind matches the synced baseline amount while live encumbrance unlock matches live reserve. On current code this will FAIL because `_closeMarket` unwinds ACI using live reserve.
+  - **Gas baseline**: Run the existing swap-only benchmark and record the current Solo exact-in hot-path gas. Document the current benchmark versus the `~200k` product target.
+  - Run targeted tests on current code:
+    - `forge test --match-path test/EqualXSoloAmmFacet.t.sol --match-test 'BugCondition|Gas'`
+  - **EXPECTED OUTCOME**:
+    - behavior regressions FAIL on current code
+    - gas benchmark documents the current baseline (currently about `443k`)
+  - Observed outcome on current code:
+    - `test_BugCondition_Redesign_SoloSwap_ShouldNotMutateAciWhileMarketIsActive` FAILED because pool A ACI increased to `109.991e18` instead of staying at the `100e18` synced baseline during the swap
+    - `test_BugCondition_Redesign_SoloRebalance_ShouldBeTheAciSyncBoundary` FAILED because pool A rebalance ACI delta was `-4.991e18` instead of the expected baseline-based `+5e18`
+    - `test_BugCondition_Redesign_SoloFinalize_ShouldUnwindBaselineSyncedAciNotLiveReserveAci` FAILED because pool A finalize ACI unwind was `-109.991e18` instead of the expected baseline unwind `-100e18`
+    - `test_Gas_SoloSwap_ExactInHotPath` PASSED with `443,885` gas, leaving a gap of `243,885` above the `200k` target
+
+- [x] 2. Write preservation tests for behavior that must stay live
+  - Test file: `test/EqualXSoloAmmFacet.t.sol`
+  - **Live claim preservation**: Execute a Solo swap with routed protocol fees, claim yield before finalize, verify claimability still works
+  - **Live encumbrance preservation**: Execute a Solo swap, verify maker withdrawal blocking still reflects live reserve via `enc.encumberedCapital`
+  - **Swap math preservation**: Verify preview/output, fee splits, maker fee accrual, treasury routing, and recipient payout are unchanged
+  - **Rebalance lifecycle preservation**: Verify scheduling bounds, timelock, cooldown, cancellation, and permissionless execution are unchanged
+  - **Finalize preservation**: Verify close-time principal reconciliation still compares live reserve net of fees against `baselineReserve`
+  - Run:
+    - `forge test --match-path test/EqualXSoloAmmFacet.t.sol --no-match-test 'BugCondition|Gas'`
+  - **EXPECTED OUTCOME**: Tests PASS on current code except for assertions intentionally tied to the old live-ACI-on-swap model, which should be rewritten to the new preservation target
+  - Observed outcome on current code:
+    - rewrote the non-bug Solo preservation suite so active-market preservation checks focus on live fee claimability, live encumbrance, swap math, rebalance lifecycle, and close-time principal reconciliation instead of preserving swap-time ACI exactness
+    - added a live-encumbrance withdrawal-blocking preservation test proving active-market reserve encumbrance still blocks withdrawals until close
+    - `forge test --match-path test/EqualXSoloAmmFacet.t.sol --no-match-test 'BugCondition|Gas'` passed with `41/41` tests
+
+- [x] 3. Remove per-swap ACI synchronization from the Solo hot path
+  - In `src/equalx/EqualXSoloAmmFacet.sol`, update `_applyReserveDelta`
+  - Keep live `enc.encumberedCapital` adjustment logic
+  - Remove `LibActiveCreditIndex.applyEncumbranceIncrease(...)` and `applyEncumbranceDecrease(...)` from swap-time reserve changes
+  - Verify the active-swap redesign regression from task 1 now passes
+  - Observed outcome after fix:
+    - `test_BugCondition_Redesign_SoloSwap_ShouldNotMutateAciWhileMarketIsActive` passed
+    - swap-time live encumbrance still moved with reserve deltas while ACI stayed pinned to the synced baseline
+
+- [x] 4. Preserve live fee backing and active-market yield claimability
+  - In `src/equalx/EqualXSoloAmmFacet.sol`, keep the current `routeSamePool(...)`, `_accrueProtocolFees(...)`, and live fee-pool `trackedBalance` / `nativeTrackedTotal` increments
+  - Verify active-market yield claim tests still pass after the rollback
+  - Verify no fee-routing semantics regress while removing swap-time ACI updates
+  - Observed outcome after verification:
+    - `test_BugCondition_SoloSwap_TrackedBalanceShouldIncreaseLiveWithProtocolFees` passed, confirming routed non-treasury protocol fees still increase live fee-pool backing
+    - `test_Preservation_SoloLiveYieldCanBeClaimedBeforeFinalize` passed, confirming active-market yield claimability is still live
+    - `test_Integration_SoloLifecycle_SwapClaimLiveFinalizeAndClaimRemainingYield` passed after narrowing it to fee-backing and claimability semantics rather than unfinished close-time ACI-boundary semantics
+
+- [x] 5. Move Solo rebalance to boundary-synced ACI semantics
+  - In `src/equalx/EqualXSoloAmmFacet.sol`, update rebalance execution so:
+    - live encumbrance moves from `previousReserve -> targetReserve`
+    - ACI moves from `baselineReserve -> targetReserve`
+    - `baselineReserve` is updated to the new target after execution
+  - Rewrite or replace the old swap-time ACI-sync EqualX regression to assert rebalance-time ACI sync instead
+  - Re-run targeted rebalance regressions
+  - Observed outcome after fix:
+    - `test_BugCondition_SoloRebalance_AciShouldSyncFromBoundaryBaseline` passed after rewriting the old swap-time ACI regression to assert rebalance-time boundary sync
+    - `test_BugCondition_Redesign_SoloRebalance_ShouldBeTheAciSyncBoundary` passed
+    - `test_ExecuteRebalance_UsesStoredTargetsAfterLiveReservesDrift` passed, confirming rebalance still executes the stored targets while resynchronizing ACI at the boundary
+
+- [x] 6. Move Solo finalize/cancel to boundary-synced ACI unwind semantics
+  - In `src/equalx/EqualXSoloAmmFacet.sol`, update `_closeMarket` so:
+    - live reserve backing unlock still uses `market.reserveA/B`
+    - ACI unwind uses `baselineReserveA/B`
+    - principal reconciliation still uses `reserveForPrincipal` vs `baselineReserveA/B`
+  - Verify finalized markets clear both live encumbrance and boundary-synced ACI state cleanly
+  - Observed outcome after fix:
+    - `test_BugCondition_Redesign_SoloFinalize_ShouldUnwindBaselineSyncedAciNotLiveReserveAci` passed
+    - `test_Integration_SoloLifecycle_SwapClaimLiveFinalizeAndClaimRemainingYield` passed
+    - `test_Finalize_ClearsPendingRebalanceState` and `test_Integration_SoloCancelLifecycle_RejectsStartedMarketsAndAllowsPreStartCancel` both passed, confirming finalize/cancel cleanup remains clean under the boundary-synced unwind model
+
+- [x] 7. Refresh Solo regression coverage for the new model
+  - In `test/EqualXSoloAmmFacet.t.sol`, replace the old expectation that `activeCreditPrincipalTotal == live reserve during active market`
+  - Add end-to-end coverage for:
+    - active swap -> live claim -> rebalance -> finalize
+    - active swap -> finalize without rebalance
+    - multiple swaps between rebalance boundaries
+    - cancel-before-start with no active-market ACI drift
+  - Keep Community AMM and Curve coverage untouched within this Solo rollback track
+  - Observed outcome after refresh:
+    - rewrote the remaining Solo integration assertions so active-market coverage now preserves live encumbrance and baseline-synced ACI semantics instead of the old `ACI == live reserve on every swap` model
+    - `test_Integration_SoloLifecycle_WithRebalance_PreservesLiveAccountingAndCloseReconciliation` passed with active swap -> live claim -> rebalance -> finalize coverage
+    - `test_Integration_SoloLifecycle_SwapClaimLiveFinalizeAndClaimRemainingYield` passed for active swap -> finalize without rebalance
+    - `test_Integration_SoloMultiDirectionalSwaps_PreserveLiveEncumbranceThroughFinalize` passed for multiple swaps between rebalance boundaries
+    - `test_Integration_SoloCancelLifecycle_RejectsStartedMarketsAndAllowsPreStartCancel` passed with explicit pre-start cancel unwind assertions
+
+- [x] 8. Re-run benchmarks and document the new Solo hot-path gas
+  - Run:
+    - `forge test --match-path test/EqualXSoloAmmFacet.t.sol`
+    - `forge test --match-path test/EqualXSoloAmmFacet.t.sol --match-test test_Gas_SoloSwap_ExactInHotPath`
+  - Record:
+    - prior Solo benchmark (`~443k`)
+    - new Solo benchmark after rollback
+    - remaining gap to the `~200k` target
+  - Ask whether an additional fee-routing hot-path pass is needed if gas is still above target
+  - Observed outcome after checkpoint:
+    - `forge test --match-path test/EqualXSoloAmmFacet.t.sol` passed with `49/49` tests
+    - `test_Gas_SoloSwap_ExactInHotPath` passed at `255,054` gas after the full rollback and follow-up hot-path cleanup
+    - prior Solo benchmark: `443,885`
+    - new Solo benchmark after rollback: `255,054`
+    - improvement: `188,831` gas saved
+    - remaining gap to the `200k` target: `55,054`
+    - note: later Community-specific gas work landed after this Solo track and is intentionally separate

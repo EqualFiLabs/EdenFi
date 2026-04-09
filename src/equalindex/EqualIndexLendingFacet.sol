@@ -363,7 +363,8 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         }
         address treasury = LibAppStorage.treasuryAddress(LibAppStorage.s());
         if (treasury == address(0)) revert LibEqualIndexLending.FlatFeeTreasuryNotSet();
-        LibCurrency.transfer(address(0), treasury, feeNative);
+        (bool sent,) = treasury.call{value: feeNative}("");
+        if (!sent) revert NativeTransferFailed(treasury, feeNative);
     }
 
     function _sumForNative(address[] memory assets, uint256[] memory amounts) private pure returns (uint256 sum) {

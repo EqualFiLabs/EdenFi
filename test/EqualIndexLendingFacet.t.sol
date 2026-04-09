@@ -39,7 +39,7 @@ contract EqualIndexLendingFacetTest is LaunchFixture {
     function test_configureLending_onlyTimelock() public {
         BorrowCtx memory ctx = _readyBorrowContext();
 
-        vm.expectRevert(Unauthorized.selector);
+        vm.expectRevert(bytes("LibAccess: not timelock"));
         EqualIndexLendingFacet(diamond).configureLending(ctx.indexId, 10_000, 1 days, 30 days);
 
         _configureLending(ctx.indexId, 10_000, 1 days, 30 days);

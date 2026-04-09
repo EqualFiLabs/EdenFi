@@ -84,6 +84,51 @@ contract EqualIndexAdminHarness is PoolManagementFacet, EqualIndexAdminFacetV3 {
     }
 }
 
+contract EqualIndexGovernanceHarness is PoolManagementFacet, EqualIndexAdminFacetV3, EqualIndexLendingFacet {
+    function setOwner(address owner_) external {
+        LibDiamond.setContractOwner(owner_);
+    }
+
+    function setTimelock(address timelock_) external {
+        LibAppStorage.s().timelock = timelock_;
+    }
+
+    function setDefaultPoolConfig(Types.PoolConfig calldata config) external override {
+        LibAppStorage.AppStorage storage store = LibAppStorage.s();
+        store.defaultPoolConfigSet = true;
+        store.defaultPoolConfig.rollingApyBps = config.rollingApyBps;
+        store.defaultPoolConfig.depositorLTVBps = config.depositorLTVBps;
+        store.defaultPoolConfig.maintenanceRateBps = config.maintenanceRateBps;
+        store.defaultPoolConfig.flashLoanFeeBps = config.flashLoanFeeBps;
+        store.defaultPoolConfig.flashLoanAntiSplit = config.flashLoanAntiSplit;
+        store.defaultPoolConfig.minDepositAmount = config.minDepositAmount;
+        store.defaultPoolConfig.minLoanAmount = config.minLoanAmount;
+        store.defaultPoolConfig.minTopupAmount = config.minTopupAmount;
+        store.defaultPoolConfig.isCapped = config.isCapped;
+        store.defaultPoolConfig.depositCap = config.depositCap;
+        store.defaultPoolConfig.maxUserCount = config.maxUserCount;
+        store.defaultPoolConfig.aumFeeMinBps = config.aumFeeMinBps;
+        store.defaultPoolConfig.aumFeeMaxBps = config.aumFeeMaxBps;
+        store.defaultPoolConfig.borrowFee = config.borrowFee;
+        store.defaultPoolConfig.repayFee = config.repayFee;
+        store.defaultPoolConfig.withdrawFee = config.withdrawFee;
+        store.defaultPoolConfig.flashFee = config.flashFee;
+        store.defaultPoolConfig.closeRollingFee = config.closeRollingFee;
+        delete store.defaultPoolConfig.fixedTermConfigs;
+        for (uint256 i = 0; i < config.fixedTermConfigs.length; i++) {
+            store.defaultPoolConfig.fixedTermConfigs.push(config.fixedTermConfigs[i]);
+        }
+    }
+
+    function poolFeeShareBpsExternal() external view returns (uint16) {
+        return s().poolFeeShareBps;
+    }
+
+    function mintBurnFeeIndexShareBpsExternal() external view returns (uint16) {
+        return s().mintBurnFeeIndexShareBps;
+    }
+}
+
 contract EqualIndexFlashLoanReceiverPreservation is IEqualIndexFlashReceiver {
     function onEqualIndexFlashLoan(
         uint256,
@@ -250,6 +295,343 @@ contract EqualIndexLaunchTest is LaunchFixture {
         assertEq(EqualIndexAdminFacetV3(diamond).getVaultBalance(indexId, address(alt)), altVaultBefore);
         assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(indexId, address(eve)), evePotBefore + evePotFee);
         assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(indexId, address(alt)), altPotBefore + altPotFee);
+    }
+
+    function test_BurnRounding_ConsistentAcrossWalletAndPositionModes() public {
+        eve.mint(alice, 10e18);
+        eve.mint(bob, 1_000);
+
+        uint256 positionId = _mintPosition(alice, 1);
+        vm.startPrank(alice);
+        eve.approve(diamond, 10e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 10e18, 10e18);
+        vm.stopPrank();
+
+        EqualIndexBaseV3.CreateIndexParams memory walletParams =
+            _singleAssetIndexParams("Wallet Round", "WROUND", address(eve), 0, 333);
+        walletParams.bundleAmounts[0] = 301;
+        (uint256 walletIndexId,) = _createIndexThroughTimelock(walletParams);
+
+        EqualIndexBaseV3.CreateIndexParams memory positionParams =
+            _singleAssetIndexParams("Position Round", "PROUND", address(eve), 0, 333);
+        positionParams.bundleAmounts[0] = 301;
+        (uint256 positionIndexId,) = _createIndexThroughTimelock(positionParams);
+
+        uint256 walletPotBefore = EqualIndexAdminFacetV3(diamond).getFeePot(walletIndexId, address(eve));
+        uint256 walletReserveBefore = testSupport.getPoolView(1).yieldReserve;
+
+        vm.startPrank(bob);
+        eve.approve(diamond, 1_000);
+        uint256[] memory walletMaxInputs = new uint256[](1);
+        walletMaxInputs[0] = 301;
+        EqualIndexActionsFacetV3(diamond).mint(walletIndexId, 1e18, bob, walletMaxInputs);
+        uint256[] memory walletAssetsOut = EqualIndexActionsFacetV3(diamond).burn(walletIndexId, 1e18, bob);
+        vm.stopPrank();
+
+        assertEq(walletAssetsOut[0], 290);
+        assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(walletIndexId, address(eve)) - walletPotBefore, 7);
+        assertEq(testSupport.getPoolView(1).yieldReserve - walletReserveBefore, 4);
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(positionId, positionIndexId, 1e18);
+
+        uint256 positionPotBefore = EqualIndexAdminFacetV3(diamond).getFeePot(positionIndexId, address(eve));
+        uint256 positionReserveBefore = testSupport.getPoolView(1).yieldReserve;
+
+        vm.prank(alice);
+        uint256[] memory positionAssetsOut = EqualIndexPositionFacet(diamond).burnFromPosition(positionId, positionIndexId, 1e18);
+
+        assertEq(positionAssetsOut[0], 290);
+        assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(positionIndexId, address(eve)) - positionPotBefore, 10);
+        assertEq(testSupport.getPoolView(1).yieldReserve - positionReserveBefore, 1);
+    }
+
+    function test_FeeShareGovernance_UpdatedMintBurnFeeIndexShareRoutesWalletFees() public {
+        eve.mint(alice, 200e18);
+        eve.mint(bob, 50e18);
+
+        uint256 positionId = _mintPosition(alice, 1);
+        vm.startPrank(alice);
+        eve.approve(diamond, 200e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 200e18, 200e18);
+        vm.stopPrank();
+
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(EqualIndexAdminFacetV3.setEqualIndexMintBurnFeeIndexShareBps.selector, uint16(6000))
+        );
+
+        EqualIndexBaseV3.CreateIndexParams memory walletMintParams =
+            _singleAssetIndexParams("Wallet Mint Fee", "WMF", address(eve), 1000, 0);
+        (uint256 walletMintIndexId,) = _createIndexThroughTimelock(walletMintParams);
+        uint256 walletMintPotBefore = EqualIndexAdminFacetV3(diamond).getFeePot(walletMintIndexId, address(eve));
+        uint256 walletMintReserveBefore = testSupport.getPoolView(1).yieldReserve;
+        uint256 walletMintTreasuryBefore = eve.balanceOf(treasury);
+
+        vm.startPrank(bob);
+        eve.approve(diamond, 50e18);
+        uint256[] memory walletMintMaxInputs = new uint256[](1);
+        walletMintMaxInputs[0] = 11e18;
+        EqualIndexActionsFacetV3(diamond).mint(walletMintIndexId, 10e18, bob, walletMintMaxInputs);
+        vm.stopPrank();
+
+        assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(walletMintIndexId, address(eve)) - walletMintPotBefore, 4e17);
+        assertEq(testSupport.getPoolView(1).yieldReserve - walletMintReserveBefore, 54e16);
+        assertEq(eve.balanceOf(treasury) - walletMintTreasuryBefore, 6e16);
+
+        EqualIndexBaseV3.CreateIndexParams memory walletBurnParams =
+            _singleAssetIndexParams("Wallet Burn Fee", "WBF", address(eve), 0, 1000);
+        (uint256 walletBurnIndexId,) = _createIndexThroughTimelock(walletBurnParams);
+
+        vm.startPrank(bob);
+        uint256[] memory walletBurnMaxInputs = new uint256[](1);
+        walletBurnMaxInputs[0] = 10e18;
+        EqualIndexActionsFacetV3(diamond).mint(walletBurnIndexId, 10e18, bob, walletBurnMaxInputs);
+        vm.stopPrank();
+
+        uint256 walletBurnPotBefore = EqualIndexAdminFacetV3(diamond).getFeePot(walletBurnIndexId, address(eve));
+        uint256 walletBurnReserveBefore = testSupport.getPoolView(1).yieldReserve;
+        uint256 walletBurnTreasuryBefore = eve.balanceOf(treasury);
+
+        vm.prank(bob);
+        EqualIndexActionsFacetV3(diamond).burn(walletBurnIndexId, 10e18, bob);
+
+        assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(walletBurnIndexId, address(eve)) - walletBurnPotBefore, 4e17);
+        assertEq(testSupport.getPoolView(1).yieldReserve - walletBurnReserveBefore, 54e16);
+        assertEq(eve.balanceOf(treasury) - walletBurnTreasuryBefore, 6e16);
+    }
+
+    function test_FeeShareGovernance_UpdatedPoolShareRoutesPositionFees() public {
+        eve.mint(alice, 200e18);
+
+        uint256 positionId = _mintPosition(alice, 1);
+        vm.startPrank(alice);
+        eve.approve(diamond, 200e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 200e18, 200e18);
+        vm.stopPrank();
+
+        _timelockCall(
+            diamond, abi.encodeWithSelector(EqualIndexAdminFacetV3.setEqualIndexPoolFeeShareBps.selector, uint16(2000))
+        );
+
+        EqualIndexBaseV3.CreateIndexParams memory positionMintParams =
+            _singleAssetIndexParams("Position Mint Fee", "PMF", address(eve), 1000, 0);
+        (uint256 positionMintIndexId,) = _createIndexThroughTimelock(positionMintParams);
+        uint256 positionMintPotBefore = EqualIndexAdminFacetV3(diamond).getFeePot(positionMintIndexId, address(eve));
+        uint256 positionMintReserveBefore = testSupport.getPoolView(1).yieldReserve;
+        uint256 positionMintTreasuryBefore = eve.balanceOf(treasury);
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(positionId, positionMintIndexId, 10e18);
+
+        assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(positionMintIndexId, address(eve)) - positionMintPotBefore, 8e17);
+        assertEq(testSupport.getPoolView(1).yieldReserve - positionMintReserveBefore, 18e16);
+        assertEq(eve.balanceOf(treasury) - positionMintTreasuryBefore, 2e16);
+
+        EqualIndexBaseV3.CreateIndexParams memory positionBurnParams =
+            _singleAssetIndexParams("Position Burn Fee", "PBF", address(eve), 0, 1000);
+        (uint256 positionBurnIndexId,) = _createIndexThroughTimelock(positionBurnParams);
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(positionId, positionBurnIndexId, 10e18);
+
+        uint256 positionBurnPotBefore = EqualIndexAdminFacetV3(diamond).getFeePot(positionBurnIndexId, address(eve));
+        uint256 positionBurnReserveBefore = testSupport.getPoolView(1).yieldReserve;
+        uint256 positionBurnTreasuryBefore = eve.balanceOf(treasury);
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).burnFromPosition(positionId, positionBurnIndexId, 10e18);
+
+        assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(positionBurnIndexId, address(eve)) - positionBurnPotBefore, 8e17);
+        assertEq(testSupport.getPoolView(1).yieldReserve - positionBurnReserveBefore, 18e16);
+        assertEq(eve.balanceOf(treasury) - positionBurnTreasuryBefore, 2e16);
+    }
+
+    function test_FeeShareGovernance_SettersRejectUnauthorizedAndInvalidValues() public {
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        EqualIndexAdminFacetV3(diamond).setEqualIndexPoolFeeShareBps(2000);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        EqualIndexAdminFacetV3(diamond).setEqualIndexMintBurnFeeIndexShareBps(5000);
+
+        EqualIndexAdminHarness harness = new EqualIndexAdminHarness();
+        harness.setOwner(address(this));
+        address timelock = _addr("timelock-invalid");
+        harness.setTimelock(timelock);
+
+        vm.prank(timelock);
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "poolFeeShareBps"));
+        harness.setEqualIndexPoolFeeShareBps(10001);
+
+        vm.prank(timelock);
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "mintBurnFeeIndexShareBps"));
+        harness.setEqualIndexMintBurnFeeIndexShareBps(10001);
+    }
+
+    function test_AdminAccess_FallbackAndTimelockModesGateEqualIndexGovernanceCalls() public {
+        EqualIndexGovernanceHarness harness = new EqualIndexGovernanceHarness();
+        harness.setOwner(address(this));
+        harness.setTimelock(address(0));
+
+        MockERC20Launch local = new MockERC20Launch("Gov Local", "GLOCAL");
+        Types.PoolConfig memory cfg = _poolConfig();
+        Types.ActionFeeSet memory actionFees = _actionFees();
+        harness.setDefaultPoolConfig(cfg);
+        harness.initPoolWithActionFees(1, address(local), cfg, actionFees);
+
+        EqualIndexBaseV3.CreateIndexParams memory params =
+            _singleAssetIndexParams("Gov Index", "GINDEX", address(local), 0, 0);
+        (uint256 indexId,) = harness.createIndex(params);
+
+        uint256[] memory initialMinCollateral = new uint256[](1);
+        initialMinCollateral[0] = 1e18;
+        uint256[] memory initialFlatFee = new uint256[](1);
+        initialFlatFee[0] = 1e15;
+
+        harness.setPaused(indexId, true);
+        harness.configureLending(indexId, 10_000, 1 days, 30 days);
+        harness.configureBorrowFeeTiers(indexId, initialMinCollateral, initialFlatFee);
+        harness.setEqualIndexPoolFeeShareBps(2000);
+        harness.setEqualIndexMintBurnFeeIndexShareBps(5000);
+
+        assertTrue(harness.getIndex(indexId).paused);
+        assertEq(uint256(harness.getLendingConfig(indexId).ltvBps), 10_000);
+        (uint256[] memory minCollateralUnits, uint256[] memory flatFeeNative) = harness.getBorrowFeeTiers(indexId);
+        assertEq(minCollateralUnits.length, 1);
+        assertEq(minCollateralUnits[0], 1e18);
+        assertEq(flatFeeNative[0], 1e15);
+        assertEq(uint256(harness.poolFeeShareBpsExternal()), 2000);
+        assertEq(uint256(harness.mintBurnFeeIndexShareBpsExternal()), 5000);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibDiamond: must be owner"));
+        harness.setPaused(indexId, false);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibDiamond: must be owner"));
+        harness.configureLending(indexId, 10_000, 2 days, 40 days);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibDiamond: must be owner"));
+        harness.configureBorrowFeeTiers(indexId, initialMinCollateral, initialFlatFee);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibDiamond: must be owner"));
+        harness.setEqualIndexPoolFeeShareBps(3000);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibDiamond: must be owner"));
+        harness.setEqualIndexMintBurnFeeIndexShareBps(4000);
+
+        address timelock = _addr("governance-timelock");
+        harness.setTimelock(timelock);
+
+        uint256[] memory updatedMinCollateral = new uint256[](1);
+        updatedMinCollateral[0] = 2e18;
+        uint256[] memory updatedFlatFee = new uint256[](1);
+        updatedFlatFee[0] = 2e15;
+
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        harness.setPaused(indexId, false);
+
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        harness.configureLending(indexId, 10_000, 2 days, 40 days);
+
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        harness.configureBorrowFeeTiers(indexId, updatedMinCollateral, updatedFlatFee);
+
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        harness.setEqualIndexPoolFeeShareBps(3000);
+
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        harness.setEqualIndexMintBurnFeeIndexShareBps(4000);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        harness.setPaused(indexId, false);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        harness.configureLending(indexId, 10_000, 2 days, 40 days);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        harness.configureBorrowFeeTiers(indexId, updatedMinCollateral, updatedFlatFee);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        harness.setEqualIndexPoolFeeShareBps(3000);
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("LibAccess: not timelock"));
+        harness.setEqualIndexMintBurnFeeIndexShareBps(4000);
+
+        vm.prank(timelock);
+        harness.setPaused(indexId, false);
+        vm.prank(timelock);
+        harness.configureLending(indexId, 10_000, 2 days, 40 days);
+        vm.prank(timelock);
+        harness.configureBorrowFeeTiers(indexId, updatedMinCollateral, updatedFlatFee);
+        vm.prank(timelock);
+        harness.setEqualIndexPoolFeeShareBps(3000);
+        vm.prank(timelock);
+        harness.setEqualIndexMintBurnFeeIndexShareBps(4000);
+
+        assertTrue(!harness.getIndex(indexId).paused);
+        assertEq(uint256(harness.getLendingConfig(indexId).minDuration), 2 days);
+        assertEq(uint256(harness.getLendingConfig(indexId).maxDuration), 40 days);
+        (minCollateralUnits, flatFeeNative) = harness.getBorrowFeeTiers(indexId);
+        assertEq(minCollateralUnits.length, 1);
+        assertEq(minCollateralUnits[0], 2e18);
+        assertEq(flatFeeNative[0], 2e15);
+        assertEq(uint256(harness.poolFeeShareBpsExternal()), 3000);
+        assertEq(uint256(harness.mintBurnFeeIndexShareBpsExternal()), 4000);
+    }
+
+    function test_WalletMode_MintExactPull_AvoidsSurplusAcrossBothMaxBoundShapes() public {
+        MockERC20Launch exact = new MockERC20Launch("Exact Integration", "XINT");
+        _initPoolWithActionFees(7, address(exact), _poolConfig(), _actionFees());
+
+        EqualIndexBaseV3.CreateIndexParams memory params =
+            _singleAssetIndexParams("Exact Integration", "XPINT", address(exact), 0, 0);
+        params.bundleAmounts[0] = 1;
+        (uint256 indexId,) = _createIndexThroughTimelock(params);
+
+        exact.mint(bob, 2);
+        exact.mint(carol, 1);
+
+        uint256 diamondBefore = exact.balanceOf(diamond);
+        uint256 vaultBefore = EqualIndexAdminFacetV3(diamond).getVaultBalance(indexId, address(exact));
+
+        vm.startPrank(bob);
+        exact.approve(diamond, 2);
+        uint256[] memory doubledMax = new uint256[](1);
+        doubledMax[0] = 2;
+        EqualIndexActionsFacetV3(diamond).mint(indexId, 1e18, bob, doubledMax);
+        vm.stopPrank();
+
+        assertEq(exact.balanceOf(bob), 1);
+        assertEq(exact.balanceOf(diamond) - diamondBefore, 1);
+        assertEq(EqualIndexAdminFacetV3(diamond).getVaultBalance(indexId, address(exact)) - vaultBefore, 1);
+        assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(indexId, address(exact)), 0);
+
+        uint256 diamondMid = exact.balanceOf(diamond);
+        uint256 vaultMid = EqualIndexAdminFacetV3(diamond).getVaultBalance(indexId, address(exact));
+
+        vm.startPrank(carol);
+        exact.approve(diamond, 1);
+        uint256[] memory exactMax = new uint256[](1);
+        exactMax[0] = 1;
+        EqualIndexActionsFacetV3(diamond).mint(indexId, 1e18, carol, exactMax);
+        vm.stopPrank();
+
+        assertEq(exact.balanceOf(carol), 0);
+        assertEq(exact.balanceOf(diamond) - diamondMid, 1);
+        assertEq(EqualIndexAdminFacetV3(diamond).getVaultBalance(indexId, address(exact)) - vaultMid, 1);
+        assertEq(exact.balanceOf(diamond), EqualIndexAdminFacetV3(diamond).getVaultBalance(indexId, address(exact)));
+        assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(indexId, address(exact)), 0);
     }
 
     function test_BugCondition_WalletBurnFeeRounding_ShouldRoundUp() public {

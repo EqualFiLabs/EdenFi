@@ -455,13 +455,15 @@ contract DeployEqualFi is Script {
     }
 
     function _selectorsEqualIndexAdmin() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](8);
         s[0] = EqualIndexAdminFacetV3.createIndex.selector;
         s[1] = EqualIndexAdminFacetV3.setPaused.selector;
         s[2] = EqualIndexAdminFacetV3.getIndex.selector;
         s[3] = EqualIndexAdminFacetV3.getVaultBalance.selector;
         s[4] = EqualIndexAdminFacetV3.getFeePot.selector;
         s[5] = EqualIndexAdminFacetV3.getIndexPoolId.selector;
+        s[6] = EqualIndexAdminFacetV3.setEqualIndexPoolFeeShareBps.selector;
+        s[7] = EqualIndexAdminFacetV3.setEqualIndexMintBurnFeeIndexShareBps.selector;
     }
 
     function _selectorsEqualIndexActions() internal pure returns (bytes4[] memory s) {

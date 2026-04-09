@@ -1,16 +1,15 @@
 # Implementation Plan
 
 - [x] 1. Write bug condition exploration tests (BEFORE implementing fixes)
-  - **Property 1: Bug Condition** — EqualX Findings 1-5 Accounting, ACI, Close, Share, and Cancel Bugs
+  - **Property 1: Bug Condition** — EqualX Findings 1, 3, 4, and 5 Accounting, Close, Share, and Cancel Bugs
   - **CRITICAL**: These tests MUST FAIL on unfixed code — failure confirms the bugs exist
   - **DO NOT attempt to fix the tests or the code when they fail**
   - **NOTE**: These tests encode the expected behavior — they will validate the fixes when they pass after implementation
   - **GOAL**: Surface counterexamples that demonstrate each bug exists on the current unfixed code
   - **REFER TO ETHSKILLS.md** before writing any Solidity
-  - Test file: `test/EqualXSoloAmmFacet.t.sol` for findings 1-3, 5; `test/EqualXCommunityAmmFacet.t.sol` for finding 4
+  - Test file: `test/EqualXSoloAmmFacet.t.sol` for findings 1, 3, 5; `test/EqualXCommunityAmmFacet.t.sol` for finding 4
   - Use real deposits, real market creation, real swaps, real joins — no synthetic shortcuts
   - **Finding 1 — Solo swap trackedBalance**: Create Solo AMM market, execute a swap that routes non-zero protocol fees, assert `feePool.trackedBalance` increased by `toActive + toFeeIndex` after the swap. On unfixed code this will FAIL because `trackedBalance` is not incremented at swap time.
-  - **Finding 2 — Solo swap ACI sync**: Create Solo AMM market, record both maker-side `encumberedCapital` and pool `activeCreditPrincipalTotal` before swap, execute a swap that moves reserves, assert the ACI change matches the encumbrance delta produced by the reserve update. On unfixed code this will FAIL because `_applyReserveDelta` mutates encumbrance without calling ACI.
   - **Finding 3 — Solo close skewed fees**: Create Solo AMM market, execute many one-sided swaps to skew reserves so cumulative protocol fees on one side exceed remaining reserve, finalize, assert `reserveForPrincipal == 0` (clamped). On unfixed code this will FAIL because conditional per-fee subtraction leaves protocol-fee amounts inside principal.
   - **Finding 4 — Community join after growth**: Create Community AMM market, execute swaps to grow reserves via retained fees, join with new maker, assert shares minted are proportional (`share == min(amountA * totalShares / reserveA, amountB * totalShares / reserveB)`). On unfixed code this will FAIL because `sqrt` formula grants excess shares.
   - **Finding 5 — Solo cancel after start**: Create Solo AMM market, warp to `startTime`, attempt cancel by owner, assert revert. On unfixed code this will FAIL because cancel succeeds after `startTime`.
@@ -19,12 +18,11 @@
   - Document counterexamples found to understand root cause
   - Observed counterexamples on unfixed code:
     - Finding 1: `trackedBalance` stayed `500e18` instead of increasing to `500.081e18` after a fee-routing Solo swap
-    - Finding 2: pool A `activeCreditPrincipalTotal` delta stayed `0` while maker encumbrance delta was `+9.991e18`
     - Finding 3: after a skewed TokenOut Solo market close, maker pool-B principal settled to `467.688377630453860404e18` instead of the clamped `400e18`
     - Finding 4: Community post-growth join minted `43.566134717447065388e18` shares instead of proportional `43.483365438551482130e18`
     - Finding 5: Solo cancel at `startTime` did not revert
   - Mark task complete when tests are written, run, and failures are documented
-  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7_
+  - _Requirements: 1.1, 1.2, 1.5, 1.6, 1.7_
 
 - [x] 2. Write preservation property tests (BEFORE implementing fixes)
   - **Property 2: Preservation** — EqualX AMM Unchanged Behavior Across All Five Findings
@@ -50,7 +48,7 @@
     - Solo AMM preservation suite passed with `35/35` tests
     - Community AMM preservation suite passed with `12/12` tests
   - Mark task complete when tests are written, run, and passing on unfixed code
-  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11_
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.8, 3.9, 3.10, 3.11_
 
 
 - [x] 3. Fix Finding 1 — Solo AMM live fee-backing accounting
@@ -101,44 +99,13 @@
       - Community AMM preservation suite passed with `12/12` tests
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
 
-- [x] 4. Fix Finding 2 — Solo AMM live ACI synchronization
+- [x] 4. Solo Finding 2 superseded by boundary-synced Solo redesign
 
-  - [x] 4.1 Implement ACI sync in `_applyReserveDelta`
-    - In `src/equalx/EqualXSoloAmmFacet.sol`, function `_applyReserveDelta`
-    - Load pool data: `Types.PoolData storage pool = LibPositionHelpers.pool(poolId)`
-    - When `newReserve > previousReserve`: after `enc.encumberedCapital += delta`, call `LibActiveCreditIndex.applyEncumbranceIncrease(pool, poolId, makerPositionKey, delta)`
-    - When `newReserve < previousReserve`: after `enc.encumberedCapital -= delta`, call `LibActiveCreditIndex.applyEncumbranceDecrease(pool, poolId, makerPositionKey, delta)`
-    - Note: `_applyReserveDelta` already receives `poolId` and `makerPositionKey` as parameters
-    - Compatibility updates applied alongside the live sync:
-      - `_closeMarket` now unwinds ACI using live `market.reserveA` / `market.reserveB`, so close zeroes the live swap-adjusted ACI state
-      - executed rebalance now adjusts ACI from `previousReserve -> targetReserve` instead of `previousBaseline -> targetReserve`, preserving rebalance behavior after reserve drift
-      - Solo swap continues routing protocol fees before reserve/ACI commit so previewed fee splits remain unchanged
-    - _Bug_Condition: isBugCondition(finding=2) where isSoloAmmSwap AND reserveDelta != 0_
-    - _Expected_Behavior: activeCreditPrincipalTotal stays synchronized with maker encumberedCapital changes caused by `_applyReserveDelta`_
-    - _Preservation: Encumbrance bookkeeping unchanged; only adds ACI notification_
-    - _Requirements: 2.3, 2.4_
-
-  - [x] 4.2 Verify bug condition exploration test for Finding 2 now passes
-    - **Property 1: Expected Behavior** — Solo AMM Live ACI Sync
-    - **IMPORTANT**: Re-run the SAME Finding 2 test from task 1 — do NOT write a new test
-    - The test from task 1 asserts `activeCreditPrincipalTotal` changes by the encumbrance delta after a swap
-    - Run targeted regression: `forge test --match-path test/EqualXSoloAmmFacet.t.sol --match-test test_BugCondition_SoloSwap_AciShouldTrackEncumbranceDelta`
-    - **EXPECTED OUTCOME**: Test PASSES (confirms Finding 2 bug is fixed)
-    - Observed outcome after fix:
-      - `test_BugCondition_SoloSwap_AciShouldTrackEncumbranceDelta` passed
-    - _Requirements: 2.3, 2.4_
-
-  - [x] 4.3 Verify preservation tests still pass after Finding 2 fix
-    - **Property 2: Preservation** — Solo AMM Swap and Close Preservation
-    - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
-    - Run:
-      - `forge test --match-path test/EqualXSoloAmmFacet.t.sol --no-match-test BugCondition`
-      - `forge test --match-path test/EqualXCommunityAmmFacet.t.sol --no-match-test BugCondition`
-    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
-    - Observed outcome after fix:
-      - Solo AMM preservation suite passed with `35/35` tests
-      - Community AMM preservation suite passed with `12/12` tests
-    - _Requirements: 3.1, 3.3, 3.7_
+  - The original task in this track required per-swap `LibActiveCreditIndex.applyEncumbranceIncrease(...)` / `applyEncumbranceDecrease(...)` calls in `_applyReserveDelta`
+  - That behavior has been intentionally retired and replaced by `.kiro/specs/equalx-solo-hot-path-rollback`
+  - Solo now keeps live encumbrance at swap time while synchronizing ACI only at rebalance / finalize boundaries
+  - Any future Solo work should follow the rollback spec rather than restoring swap-time ACI exactness
+  - _Requirements: superseded by equalx-solo-hot-path-rollback_
 
 
 - [x] 5. Fix Finding 3 — Solo AMM deterministic close-time fee subtraction
@@ -245,12 +212,12 @@
 - [x] 8. Refresh and expand AMM regression tests
 
   - [x] 8.1 Add Solo AMM full lifecycle integration test
-    - Create → swap (verify live `trackedBalance` and ACI accounting) → claim yield while market is active → finalize → claim any remaining yield
-    - Proves findings 1 and 2 fixes end-to-end through a value-moving live flow
+    - Create → swap (verify live `trackedBalance`) → claim yield while market is active → finalize → claim any remaining yield
+    - Proves finding 1 fix end-to-end through a value-moving live flow; Solo ACI boundary sync is covered in `.kiro/specs/equalx-solo-hot-path-rollback`
     - Use real deposits, real market creation, real swaps, real finalization, real yield claims
     - Run: `forge test --match-path test/EqualXSoloAmmFacet.t.sol`
     - Implemented in `test_Integration_SoloLifecycle_SwapClaimLiveFinalizeAndClaimRemainingYield()`
-    - _Requirements: 2.1, 2.2, 2.3, 2.4_
+    - _Requirements: 2.1, 2.2_
 
   - [x] 8.2 Add Solo AMM skewed-reserve lifecycle integration test
     - Create → many one-sided swaps to deplete one reserve → finalize
@@ -261,21 +228,18 @@
     - Implemented in `test_Integration_SoloSkewedReserveLifecycle_ClampsCloseAndPreservesTrackedBalance()`
     - _Requirements: 2.5_
 
-  - [x] 8.3 Add Solo AMM multi-directional swap ACI consistency test
-    - Create → swap A→B → swap B→A → swap A→B → finalize
-    - Verify `activeCreditPrincipalTotal` stays consistent through direction changes
-    - Verify encumbrance and ACI reduce cleanly to zero at finalization
-    - Run: `forge test --match-path test/EqualXSoloAmmFacet.t.sol`
-    - Implemented in `test_Integration_SoloMultiDirectionalSwaps_KeepAciConsistentThroughFinalize()`
-    - _Requirements: 2.3, 2.4_
+  - [x] 8.3 Solo multi-directional swap coverage superseded by boundary-synced Solo redesign
+    - The old version of this task preserved swap-time `activeCreditPrincipalTotal` consistency through direction changes
+    - That expectation is now intentionally retired in favor of live encumbrance plus boundary-synced ACI
+    - Replacement coverage lives in `.kiro/specs/equalx-solo-hot-path-rollback`
 
   - [x] 8.4 Add Solo AMM rebalance-bearing lifecycle integration test
     - Create → swap to move reserves → schedule rebalance → execute rebalance after timelock → finalize
-    - Verify live `trackedBalance` and ACI accounting remain correct across the rebalance path
+    - Verify live `trackedBalance` remains correct across the rebalance path
     - Verify close-time reconciliation still excludes protocol fees from maker principal after rebalance
     - Run: `forge test --match-path test/EqualXSoloAmmFacet.t.sol`
     - Implemented in `test_Integration_SoloLifecycle_WithRebalance_PreservesLiveAccountingAndCloseReconciliation()`
-    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
+    - _Requirements: 2.1, 2.2, 2.5_
 
   - [x] 8.5 Add Community AMM post-growth join integration test
     - Create → swap to grow reserves via retained fees → join with new maker → leave

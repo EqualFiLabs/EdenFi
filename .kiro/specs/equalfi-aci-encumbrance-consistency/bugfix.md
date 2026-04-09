@@ -2,9 +2,9 @@
 
 ## Introduction
 
-Three root-cause defects in the shared EqualFi accounting libraries break ACI bucket placement, encumbrance yield settlement, and debt tracker consistency across the protocol substrate. Finding 1 (Libraries Phase 1, [90]): `_removeFromBase` and `_scheduleState` disagree on bucket placement when `offset >= BUCKET_COUNT` — `_scheduleState` places principal in a pending bucket, but `_removeFromBase` subtracts from `activeCreditMaturedTotal` instead, causing permanent inflation of the matured total when buckets roll and phantom principal that earns ACI yield diluting real participants. Finding 2 (Libraries Phase 1, [88]): `_increaseEncumbrance` and `_decreaseEncumbrance` overwrite `enc.indexSnapshot` to the current `activeCreditIndex` without first settling pending ACI yield accrued since the last snapshot, permanently destroying any unsettled yield on every encumbrance change — affecting every Solo AMM swap and every Community AMM join/leave. Finding 3 (Libraries Phase 2, [93]): `_decreaseBorrowedPrincipal` and `_decreaseSameAssetDebt` silently clamp five independent debt trackers to zero instead of reverting on over-subtraction, causing permanent desynchronization when multiple agreements share the same borrower/pool pair — `activeCreditPrincipalTotal` inflates, `userSameAssetDebt` understates, and per-positionId `sameAssetDebt` diverges.
+Three root-cause defects in the shared EqualFi accounting libraries break ACI bucket placement, encumbrance yield settlement, and debt tracker consistency across the protocol substrate. Finding 1 (Libraries Phase 1, [90]): `_removeFromBase` and `_scheduleState` disagree on bucket placement when `offset >= BUCKET_COUNT` — `_scheduleState` places principal in a pending bucket, but `_removeFromBase` subtracts from `activeCreditMaturedTotal` instead, causing permanent inflation of the matured total when buckets roll and phantom principal that earns ACI yield diluting real participants. Finding 2 (Libraries Phase 1, [88]): `_increaseEncumbrance` and `_decreaseEncumbrance` overwrite `enc.indexSnapshot` to the current `activeCreditIndex` without first settling pending ACI yield accrued since the last snapshot, permanently destroying any unsettled yield on every encumbrance change — affecting every Community AMM join/leave and any Solo boundary-sync path that changes encumbrance. Finding 3 (Libraries Phase 2, [93]): `_decreaseBorrowedPrincipal` and `_decreaseSameAssetDebt` silently clamp five independent debt trackers to zero instead of reverting on over-subtraction, causing permanent desynchronization when multiple agreements share the same borrower/pool pair — `activeCreditPrincipalTotal` inflates, `userSameAssetDebt` understates, and per-positionId `sameAssetDebt` diverges.
 
-These three library-level defects are the root cause of downstream accounting bugs in EqualX (finding 2 — Solo AMM swap missing ACI update on encumbrance changes), EqualScale (finding 1 — chargeOffLine never clears borrower debt state), EqualLend (debt-service tracker integrity), and EDEN (eligible supply and reward settlement semantics where `LibFeeIndex.settle` mutates balances). Fixing the shared accounting substrate first is the prerequisite for downstream product specs.
+These three library-level defects are the root cause of downstream accounting bugs in EqualX boundary-synced encumbrance flows, EqualScale (finding 1 — chargeOffLine never clears borrower debt state), EqualLend (debt-service tracker integrity), and EDEN (eligible supply and reward settlement semantics where `LibFeeIndex.settle` mutates balances). Fixing the shared accounting substrate first is the prerequisite for downstream product specs.
 
 Canonical Track: Track B. ACI / Encumbrance / Debt Tracker Consistency
 Phase: Phase 1. Shared Accounting Substrate
@@ -15,7 +15,7 @@ Source reports:
 Remediation plan: `assets/remediation/EqualFi-unified-remediation-plan.md` (Track B)
 
 Downstream reports affected:
-- `assets/findings/EdenFi-equalx-pashov-ai-audit-report-20260405-002000.md` (finding 2 — Solo AMM swap missing ACI update)
+- `assets/findings/EdenFi-equalx-pashov-ai-audit-report-20260405-002000.md` (finding 2 — original Solo AMM swap-time ACI sync issue, later redesigned into boundary-synced Solo accounting)
 - `assets/findings/EdenFi-equalscale-pashov-ai-audit-report-20260405-011500.md` (finding 1 — chargeOffLine never clears borrower debt state)
 - `assets/findings/EdenFi-equallend-pashov-ai-audit-report-20260405-160000.md` (debt-service tracker integrity)
 - EDEN eligible supply and reward settlement semantics where `LibFeeIndex.settle` mutates balances
@@ -34,11 +34,11 @@ Downstream reports affected:
 
 **Finding 2 — ACI Encumbrance Changes Overwrite `indexSnapshot` Without Settling Pending Yield**
 
-1.4 WHEN `_increaseEncumbrance` is called (e.g., during a Solo AMM swap that increases reserves or a Community AMM join) THEN the system overwrites `enc.indexSnapshot` to the current `state.activeCreditIndex` without first settling any pending ACI yield accrued since the last snapshot, permanently destroying the unsettled yield equal to `principal * (currentIndex - oldSnapshot) / INDEX_SCALE`
+1.4 WHEN `_increaseEncumbrance` is called (e.g., during a Solo AMM rebalance / finalize boundary sync or a Community AMM join) THEN the system overwrites `enc.indexSnapshot` to the current `state.activeCreditIndex` without first settling any pending ACI yield accrued since the last snapshot, permanently destroying the unsettled yield equal to `principal * (currentIndex - oldSnapshot) / INDEX_SCALE`
 
-1.5 WHEN `_decreaseEncumbrance` is called (e.g., during a Solo AMM swap that decreases reserves or a Community AMM leave) and the encumbrance state is not fully zeroed THEN the system overwrites `enc.indexSnapshot` to the current `state.activeCreditIndex` without first settling pending ACI yield, permanently destroying the unsettled yield
+1.5 WHEN `_decreaseEncumbrance` is called (e.g., during a Solo AMM finalize / cancel boundary sync or a Community AMM leave) and the encumbrance state is not fully zeroed THEN the system overwrites `enc.indexSnapshot` to the current `state.activeCreditIndex` without first settling pending ACI yield, permanently destroying the unsettled yield
 
-1.6 WHEN multiple encumbrance changes occur across the life of a Solo AMM market (multiple swaps in alternating directions) THEN each encumbrance change compounds the yield loss because each snapshot overwrite discards the yield accrued since the previous change
+1.6 WHEN multiple encumbrance changes occur across the life of a Solo AMM market across rebalance and close boundaries, or across repeated Community join/leave actions, THEN each snapshot overwrite compounds the yield loss because each change discards the yield accrued since the previous change
 
 **Finding 3 — `_decreaseBorrowedPrincipal` / `_decreaseSameAssetDebt` Silent Clamp-to-Zero**
 
@@ -104,7 +104,7 @@ Downstream reports affected:
 
 **Downstream product flows**
 
-3.14 WHEN EqualX Solo AMM swaps change reserves and trigger encumbrance changes THEN the system SHALL CONTINUE TO update `activeCreditPrincipalTotal` via `applyEncumbranceIncrease` / `applyEncumbranceDecrease` (this is the downstream fix from EqualX finding 2 that depends on the encumbrance yield settlement fix landing here first)
+3.14 WHEN EqualX encumbrance flows mutate principal — especially Community AMM join/leave and Solo rebalance / finalize boundary sync — THEN the system SHALL CONTINUE TO settle pending yield correctly before overwriting `indexSnapshot`
 
 3.15 WHEN EqualLend Direct loans are originated and settled THEN the system SHALL CONTINUE TO track debt correctly through `_increaseSameAssetDebt` / `_decreaseSameAssetDebt` for same-asset loans
 

@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Write bug condition exploration tests (BEFORE implementing fixes)
+- [x] 1. Write bug condition exploration tests (BEFORE implementing fixes)
   - **Property 1: Bug Condition** — EqualScale Line Lifecycle Findings 1, 4, 5, 6, 7 and Agreed Leads
   - **CRITICAL**: These tests MUST FAIL on unfixed code — failure confirms the bugs exist
   - **DO NOT attempt to fix the tests or the code when they fail**
@@ -25,8 +25,24 @@
   - Document counterexamples found to understand root cause
   - Mark task complete when tests are written, run, and failures are documented
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14_
+  - Added `10` real-flow `BugCondition` regressions to `test/EqualScaleAlphaFacet.t.sol`, plus a narrow native reentering treasury harness and a narrow `missedPayments` test setter in the existing facet harness
+  - Observed run on unfixed code: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test BugCondition` -> `0/10` passed, `10/10` failed
+  - Documented counterexamples:
+    - charge-off left borrower `sameAssetDebt` and `activeCreditPrincipalTotal` uncleared after closure
+    - two same-block minimum payments advanced `nextDueAt` twice
+    - repayment near maturity advanced `nextDueAt` past `termEndAt`
+    - charge-off discarded accrued interest instead of recording lender-side loss
+    - runoff cured back to `Active` even though `currentCommittedAmount < minimumViableLine`
+    - native treasury wallet reentered `draw` and doubled `outstandingPrincipal`
+    - `missedPayments` at `255` wrapped instead of reverting
+    - frozen lines still entered refinancing at term end
+    - borrower treasury wallet changed successfully after activation
+    - repayment dust still landed deterministically on the last lender commitment
+  - Notes:
+    - no separate `test/EqualScaleAlphaViewFacet.t.sol` exists in this repo, so no separate borrower-line-view bug-condition file was added
+    - the `allocateRecovery` stranding lead did not yield a distinct failing counterexample under the current real partial-recovery charge-off flow because recovery is capped by total exposed principal; keeping it as an observational lead for later follow-up if the recovery path changes
 
-- [ ] 2. Write preservation property tests (BEFORE implementing fixes)
+- [x] 2. Write preservation property tests (BEFORE implementing fixes)
   - **Property 2: Preservation** — EqualScale Line Lifecycle Unchanged Behavior
   - **IMPORTANT**: Follow observation-first methodology — observe behavior on UNFIXED code first, then write tests capturing that behavior
   - **REFER TO ETHSKILLS.md** before writing any Solidity
@@ -49,10 +65,23 @@
   - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
   - Mark task complete when tests are written, run, and passing on unfixed code
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, 3.14_
+  - Added explicit preservation coverage in `test/EqualScaleAlphaFacet.t.sol` for:
+    - fully repaid `closeLine` finalization and lender encumbrance release
+    - raw borrower line history including canceled proposals
+    - active-line profile updates that keep `treasuryWallet` fixed while allowing `bankrToken` and `metadataHash` changes
+  - Reused the existing live EqualScale suite for the remaining preservation surface:
+    - charge-off accrual / recovery / write-down / finalization
+    - repayment waterfall, debt reduction, cure logic, and events
+    - active draw capacity / debt / exposure / transfer behavior
+    - delinquency transitions and refinancing roll / exit / resolve flows
+    - activation / commitment lifecycle and collateral recovery accounting
+    - borrower profile and line / commitment view behavior
+  - Observed run on unfixed code: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition` -> `132/132` passed
+  - Note: the file contains both `EqualScaleAlphaFacetTest` and `EqualScaleAlphaFacetBugConditionTest`, so the no-match run executes the preserved base tests through both contracts while excluding the `BugCondition` methods
 
-- [ ] 3. Fix Finding 1 — Charge-off borrower debt cleanup
+- [x] 3. Fix Finding 1 — Charge-off borrower debt cleanup
 
-  - [ ] 3.1 Add `reduceBorrowerDebt` call in `chargeOffLine` before finalization
+  - [x] 3.1 Add `reduceBorrowerDebt` call in `chargeOffLine` before finalization
     - In `src/equalscale/LibEqualScaleAlphaLifecycle.sol`, function `chargeOffLine`
     - Before the `finalizeChargedOffLine` call, add:
       ```
@@ -70,23 +99,28 @@
     - _Preservation: Charge-off flow otherwise unchanged_
     - _Requirements: 2.1, 2.2, 3.1_
 
-  - [ ] 3.2 Verify bug condition exploration test for Finding 1 now passes
+  - [x] 3.2 Verify bug condition exploration test for Finding 1 now passes
     - **Property 1: Expected Behavior** — Charge-Off Debt Cleanup
     - **IMPORTANT**: Re-run the SAME Finding 1 test from task 1 — do NOT write a new test
     - Run targeted regression: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test BugCondition.*ChargeOffDebt`
     - **EXPECTED OUTCOME**: Test PASSES (confirms Finding 1 bug is fixed)
     - _Requirements: 2.1, 2.2_
 
-  - [ ] 3.3 Verify preservation tests still pass after Finding 1 fix
+  - [x] 3.3 Verify preservation tests still pass after Finding 1 fix
     - **Property 2: Preservation** — Charge-Off and Repayment Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
     - _Requirements: 3.1, 3.2, 3.3_
+  - Implemented in `src/equalscale/LibEqualScaleAlphaLifecycle.sol` by settling the borrower settlement position and calling `reduceBorrowerDebt(...)` before charged-off finalization zeroes the line principal
+  - Renamed the existing finding-1 bug-condition test to include `ChargeOffDebt` so the spec’s targeted rerun command matches the same regression test from task 1
+  - Verification:
+    - `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test 'BugCondition.*ChargeOffDebt'` -> `1/1` passed
+    - `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition` -> `132/132` passed
 
-- [ ] 4. Fix Finding 6 — Charge-off interest-loss recognition
+- [x] 4. Fix Finding 6 — Charge-off interest-loss recognition
 
-  - [ ] 4.1 Add interest-loss allocation in `chargeOffLine`
+  - [x] 4.1 Add interest-loss allocation in `chargeOffLine`
     - In `src/equalscale/LibEqualScaleAlphaLifecycle.sol`, function `chargeOffLine`
     - After `accrueInterest(line)` and before recovery/write-down, snapshot `uint256 accruedInterestAtChargeOff = line.accruedInterest`
     - After write-down allocation, if `accruedInterestAtChargeOff > 0`, distribute interest loss across commitments pro-rata by current `principalExposed`
@@ -98,23 +132,32 @@
     - _Preservation: Zero-interest charge-offs preserve current principal-only behavior_
     - _Requirements: 2.5, 2.6_
 
-  - [ ] 4.2 Verify bug condition exploration test for Finding 6 now passes
+  - [x] 4.2 Verify bug condition exploration test for Finding 6 now passes
     - **Property 1: Expected Behavior** — Interest-Loss Recognition
     - **IMPORTANT**: Re-run the SAME Finding 6 test from task 1 — do NOT write a new test
     - Run targeted regression: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test BugCondition.*InterestLoss`
     - **EXPECTED OUTCOME**: Test PASSES (confirms Finding 6 bug is fixed)
     - _Requirements: 2.5_
 
-  - [ ] 4.3 Verify preservation tests still pass after Finding 6 fix
+  - [x] 4.3 Verify preservation tests still pass after Finding 6 fix
     - **Property 2: Preservation** — Charge-Off Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
     - _Requirements: 3.1_
+  - Implemented by:
+    - adding `interestLossAllocated` to `LibEqualScaleAlphaStorage.Commitment`
+    - snapshotting `accruedInterestAtChargeOff` in `chargeOffLine`
+    - allocating lender-side interest loss pro-rata from the realized charge-off basis after recovery/write-down
+    - emitting `CreditLineInterestLossRecorded(lineId, accruedInterestAtChargeOff)`
+  - Updated the existing finding-6 bug-condition regression in `test/EqualScaleAlphaFacet.t.sol` to assert the separate lender-side `interestLossAllocated` field while keeping principal write-down checks separate
+  - Verification:
+    - `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test 'BugCondition.*InterestLoss'` -> `1/1` passed
+    - `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition` -> `132/132` passed
 
-- [ ] 5. Fix Finding 7 — Runoff cure `minimumViableLine` enforcement
+- [x] 5. Fix Finding 7 — Runoff cure `minimumViableLine` enforcement
 
-  - [ ] 5.1 Add `minimumViableLine` check in `cureLineIfCovered`
+  - [x] 5.1 Add `minimumViableLine` check in `cureLineIfCovered`
     - In `src/equalscale/LibEqualScaleAlphaShared.sol`, function `cureLineIfCovered`
     - Add `&& line.currentCommittedAmount >= line.minimumViableLine` to the `Runoff` restart condition:
       ```diff
@@ -131,23 +174,28 @@
     - _Preservation: Cure at or above minimumViableLine still restarts as intended_
     - _Requirements: 2.7, 2.8_
 
-  - [ ] 5.2 Verify bug condition exploration test for Finding 7 now passes
+  - [x] 5.2 Verify bug condition exploration test for Finding 7 now passes
     - **Property 1: Expected Behavior** — Runoff Cure Floor
     - **IMPORTANT**: Re-run the SAME Finding 7 test from task 1 — do NOT write a new test
     - Run targeted regression: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test BugCondition.*RunoffCureFloor`
     - **EXPECTED OUTCOME**: Test PASSES (confirms Finding 7 bug is fixed)
     - _Requirements: 2.7_
 
-  - [ ] 5.3 Verify preservation tests still pass after Finding 7 fix
+  - [x] 5.3 Verify preservation tests still pass after Finding 7 fix
     - **Property 2: Preservation** — Cure and Refinancing Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
     - _Requirements: 3.8, 3.9_
+  - Implemented in `src/equalscale/LibEqualScaleAlphaShared.sol` by requiring `line.currentCommittedAmount >= line.minimumViableLine` before a `Runoff` line can restart
+  - Renamed the existing finding-7 regression in `test/EqualScaleAlphaFacet.t.sol` to include `RunoffCureFloor` so the spec’s targeted rerun command matches the same task-1 test
+  - Verification:
+    - `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test 'BugCondition.*RunoffCureFloor'` -> `1/1` passed
+    - `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition` -> `132/132` passed
 
-- [ ] 6. Fix Finding 5 — Payment checkpoint advancement guardrails
+- [x] 6. Fix Finding 5 — Payment checkpoint advancement guardrails
 
-  - [ ] 6.1 Cap `nextDueAt` at `termEndAt` in `advanceDueCheckpoint`
+  - [x] 6.1 Cap `nextDueAt` at `termEndAt` in `advanceDueCheckpoint`
     - In `src/equalscale/LibEqualScaleAlphaShared.sol`, function `advanceDueCheckpoint`
     - Replace unconditional increment with capped version:
       ```
@@ -159,7 +207,7 @@
     - _Expected_Behavior: nextDueAt capped at termEndAt_
     - _Requirements: 2.3_
 
-  - [ ] 6.2 Limit checkpoint advancement to one period per due window
+  - [x] 6.2 Limit checkpoint advancement to one period per due window
     - In `src/equalscale/LibEqualScaleAlphaLifecycle.sol`, function `repayLine`
     - Snapshot the due checkpoint before allocation and allow at most one `advanceDueCheckpoint` call per transaction / due window satisfaction event
     - The guard must live in `repayLine`, where the code can distinguish "currently due window satisfied" from "extra payment after advancement"
@@ -170,23 +218,30 @@
     - _Preservation: Normal single-payment checkpoint advancement unchanged_
     - _Requirements: 2.4, 3.3_
 
-  - [ ] 6.3 Verify bug condition exploration tests for Finding 5 now pass
+  - [x] 6.3 Verify bug condition exploration tests for Finding 5 now pass
     - **Property 1: Expected Behavior** — Checkpoint Guardrails
     - **IMPORTANT**: Re-run the SAME Finding 5 tests from task 1 — do NOT write new tests
     - Run targeted regression: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test BugCondition.*Checkpoint`
     - **EXPECTED OUTCOME**: Tests PASS (confirms Finding 5 bugs are fixed)
     - _Requirements: 2.3, 2.4_
 
-  - [ ] 6.4 Verify preservation tests still pass after Finding 5 fix
+  - [x] 6.4 Verify preservation tests still pass after Finding 5 fix
     - **Property 2: Preservation** — Repayment and Checkpoint Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
     - _Requirements: 3.3, 3.4_
+  - Implemented by:
+    - capping `advanceDueCheckpoint` at `termEndAt` in `src/equalscale/LibEqualScaleAlphaShared.sol`
+    - adding a repay-side guard in `src/equalscale/LibEqualScaleAlphaLifecycle.sol` that only advances a due checkpoint when the current due window was actually open, still unsatisfied, and not freshly reset earlier in the same block
+  - This preserves normal due advancement and delinquent cures while preventing repeated same-block repayments from rolling multiple checkpoints for the same satisfied window
+  - Verification:
+    - `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test 'BugCondition.*Checkpoint'` -> `2/2` passed
+    - `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition` -> `132/132` passed
 
-- [ ] 7. Fix Lead — Block `Frozen -> Refinancing` bypass
+- [x] 7. Fix Lead — Block `Frozen -> Refinancing` bypass
 
-  - [ ] 7.1 Remove `Frozen` from `enterRefinancing` allowed statuses
+  - [x] 7.1 Remove `Frozen` from `enterRefinancing` allowed statuses
     - In `src/equalscale/LibEqualScaleAlphaLifecycle.sol`, function `enterRefinancing`
     - Change the status check from:
       ```
@@ -202,23 +257,25 @@
     - _Preservation: Active lines past term still enter refinancing normally_
     - _Requirements: 2.11, 3.9_
 
-  - [ ] 7.2 Verify bug condition exploration test for freeze bypass now passes
+  - [x] 7.2 Verify bug condition exploration test for freeze bypass now passes
     - **Property 1: Expected Behavior** — Freeze Integrity
     - **IMPORTANT**: Re-run the SAME freeze bypass test from task 1 — do NOT write a new test
     - Run targeted regression: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test BugCondition.*FreezeBypass`
     - **EXPECTED OUTCOME**: Test PASSES (confirms freeze bypass bug is fixed)
+    - **RESULT**: PASS — `1/1` passed
     - _Requirements: 2.11_
 
-  - [ ] 7.3 Verify preservation tests still pass after freeze bypass fix
+  - [x] 7.3 Verify preservation tests still pass after freeze bypass fix
     - **Property 2: Preservation** — Refinancing Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - **RESULT**: PASS — `132/132` passed
     - _Requirements: 3.9, 3.10_
 
-- [ ] 8. Fix Lead — Harden `missedPayments` tracking
+- [x] 8. Fix Lead — Harden `missedPayments` tracking
 
-  - [ ] 8.1 Remove `unchecked` block from `markDelinquent`
+  - [x] 8.1 Remove `unchecked` block from `markDelinquent`
     - In `src/equalscale/LibEqualScaleAlphaLifecycle.sol`, function `markDelinquent`
     - Replace:
       ```
@@ -235,23 +292,25 @@
     - _Preservation: Normal delinquency increment unchanged_
     - _Requirements: 2.10, 3.7_
 
-  - [ ] 8.2 Verify bug condition exploration test for `missedPayments` overflow now passes
+  - [x] 8.2 Verify bug condition exploration test for `missedPayments` overflow now passes
     - **Property 1: Expected Behavior** — Checked Overflow
     - **IMPORTANT**: Re-run the SAME overflow test from task 1 — do NOT write a new test
     - Run targeted regression: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test BugCondition.*MissedPaymentsOverflow`
     - **EXPECTED OUTCOME**: Test PASSES (confirms overflow bug is fixed)
+    - **RESULT**: PASS — `1/1` passed
     - _Requirements: 2.10_
 
-  - [ ] 8.3 Verify preservation tests still pass after `missedPayments` fix
+  - [x] 8.3 Verify preservation tests still pass after `missedPayments` fix
     - **Property 2: Preservation** — Delinquency Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - **RESULT**: PASS — `132/132` passed
     - _Requirements: 3.7_
 
-- [ ] 9. Fix Lead — `allocateRecovery` value-stranding fix
+- [x] 9. Fix Lead — `allocateRecovery` value-stranding fix
 
-  - [ ] 9.1 Replace `allocateRecovery` with remaining-amount / remaining-exposure pattern
+  - [x] 9.1 Replace `allocateRecovery` with remaining-amount / remaining-exposure pattern
     - In `src/equalscale/LibEqualScaleAlphaShared.sol`, function `allocateRecovery`
     - Replace the current pattern (early shares against original `totalExposed`, last commitment gets remainder) with:
       ```
@@ -277,23 +336,25 @@
     - _Preservation: Total recovery conserved, bounded by totalExposed_
     - _Requirements: 2.12, 2.13_
 
-  - [ ] 9.2 Verify bug condition exploration test for recovery stranding now passes
+  - [x] 9.2 Verify bug condition exploration test for recovery stranding now passes
     - **Property 1: Expected Behavior** — Recovery Fully Credited
-    - **IMPORTANT**: Re-run the SAME recovery stranding test from task 1 — do NOT write a new test
+    - **IMPORTANT**: Task 1 did not yield a distinct live-flow counterexample for this lead because the current charge-off path already caps recovery by total exposed principal. Use the narrow harness regression added for this edge instead of a nonexistent task-1 repro.
     - Run targeted regression: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test BugCondition.*RecoveryStranding`
     - **EXPECTED OUTCOME**: Test PASSES (confirms recovery stranding bug is fixed)
+    - **RESULT**: PASS — `1/1` passed
     - _Requirements: 2.12_
 
-  - [ ] 9.3 Verify preservation tests still pass after recovery fix
+  - [x] 9.3 Verify preservation tests still pass after recovery fix
     - **Property 2: Preservation** — Charge-Off and Recovery Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - **RESULT**: PASS — `132/132` passed
     - _Requirements: 3.1, 3.12_
 
-- [ ] 10. Fix Lead — Treasury wallet lock during live lines
+- [x] 10. Fix Lead — Treasury wallet lock during live lines
 
-  - [ ] 10.1 Add lifecycle guard to `updateBorrowerProfile` for treasury wallet changes
+  - [x] 10.1 Add lifecycle guard to `updateBorrowerProfile` for treasury wallet changes
     - In `src/equalscale/EqualScaleAlphaFacet.sol`, function `updateBorrowerProfile`
     - Before setting `profile.treasuryWallet`, check if the new value differs and if any borrower line is non-closed:
       ```
@@ -313,23 +374,25 @@
     - _Preservation: Other profile fields remain mutable; treasury changes allowed when all lines closed_
     - _Requirements: 2.16, 2.17, 3.13_
 
-  - [ ] 10.2 Verify bug condition exploration test for treasury lock now passes
+  - [x] 10.2 Verify bug condition exploration test for treasury lock now passes
     - **Property 1: Expected Behavior** — Treasury Wallet Lock
     - **IMPORTANT**: Re-run the SAME treasury lock test from task 1 — do NOT write a new test
     - Run targeted regression: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test BugCondition.*TreasuryLock`
     - **EXPECTED OUTCOME**: Test PASSES (confirms treasury lock bug is fixed)
+    - **RESULT**: PASS — `1/1` passed
     - _Requirements: 2.16_
 
-  - [ ] 10.3 Verify preservation tests still pass after treasury lock fix
+  - [x] 10.3 Verify preservation tests still pass after treasury lock fix
     - **Property 2: Preservation** — Profile Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - **RESULT**: PASS — `132/132` passed
     - _Requirements: 3.13_
 
-- [ ] 11. Fix Finding 4 — Native-asset draw reentrancy hardening
+- [x] 11. Fix Finding 4 — Native-asset draw reentrancy hardening
 
-  - [ ] 11.1 Add `nonReentrant` to `draw`
+  - [x] 11.1 Add `nonReentrant` to `draw`
     - In `src/equalscale/EqualScaleAlphaFacet.sol`
     - Make `EqualScaleAlphaFacet` inherit `ReentrancyGuardModifiers` (from the diamond's shared reentrancy guard)
     - Add `nonReentrant` modifier to `draw`:
@@ -338,28 +401,31 @@
       + function draw(uint256 lineId, uint256 amount) external nonReentrant {
       ```
     - Review whether `repayLine` and other lifecycle entrypoints should also be guarded for consistency
+    - Review note: `repayLine` was left unchanged in this task; the concrete external callback reentrancy surface here was the native-asset `draw` transfer to `treasuryWallet`
     - _Bug_Condition: isBugCondition(finding=4) where isDraw AND isNativeSettlement_
     - _Expected_Behavior: nonReentrant blocks reentry through treasury callback_
     - _Preservation: ERC20 draws and normal native draws unchanged_
     - _Requirements: 2.9, 3.5, 3.6_
 
-  - [ ] 11.2 Verify bug condition exploration test for reentrancy now passes
+  - [x] 11.2 Verify bug condition exploration test for reentrancy now passes
     - **Property 1: Expected Behavior** — Reentrancy Guard
     - **IMPORTANT**: Re-run the SAME reentrancy test from task 1 — do NOT write a new test
     - Run targeted regression: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test BugCondition.*DrawReentrancy`
     - **EXPECTED OUTCOME**: Test PASSES (confirms reentrancy bug is fixed)
+    - **RESULT**: PASS — `1/1` passed
     - _Requirements: 2.9_
 
-  - [ ] 11.3 Verify preservation tests still pass after reentrancy fix
+  - [x] 11.3 Verify preservation tests still pass after reentrancy fix
     - **Property 2: Preservation** — Draw Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - **RESULT**: PASS — `132/132` passed
     - _Requirements: 3.5, 3.6_
 
-- [ ] 12. Fix Lead — Pro-rata remainder fairness
+- [x] 12. Fix Lead — Pro-rata remainder fairness
 
-  - [ ] 12.1 Apply remaining-amount / remaining-exposure pattern to all allocation helpers
+  - [x] 12.1 Apply remaining-amount / remaining-exposure pattern to all allocation helpers
     - In `src/equalscale/LibEqualScaleAlphaShared.sol`, functions `allocateRepayment`, `allocateWriteDown`, and `allocateDrawExposure`
     - Replace the current pattern (early shares against original total, last commitment gets remainder) with the same remaining-amount / remaining-exposure pattern used in the fixed `allocateRecovery`
     - Each step computes its share against the unreconciled remainder and remaining exposure, so dust distributes more fairly
@@ -369,23 +435,25 @@
     - _Preservation: Total allocated amounts conserved_
     - _Requirements: 2.18_
 
-  - [ ] 12.2 Verify bug condition exploration test for remainder fairness now passes
+  - [x] 12.2 Verify bug condition exploration test for remainder fairness now passes
     - **Property 1: Expected Behavior** — Fair Remainder Distribution
     - **IMPORTANT**: Re-run the SAME remainder fairness test from task 1 — do NOT write a new test
     - Run targeted regression: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test BugCondition.*RemainderFairness`
     - **EXPECTED OUTCOME**: Test PASSES (confirms remainder fairness bug is fixed)
+    - **RESULT**: PASS — `1/1` passed
     - _Requirements: 2.18_
 
-  - [ ] 12.3 Verify preservation tests still pass after remainder fairness fix
+  - [x] 12.3 Verify preservation tests still pass after remainder fairness fix
     - **Property 2: Preservation** — Allocation Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - **RESULT**: PASS — `132/132` passed
     - _Requirements: 3.1, 3.3_
 
-- [ ] 13. Fix Lead — Filtered borrower line view
+- [x] 13. Fix Lead — Filtered borrower line view
 
-  - [ ] 13.1 Add `getActiveBorrowerLineIds` view function
+  - [x] 13.1 Add `getActiveBorrowerLineIds` view function
     - In `src/equalscale/EqualScaleAlphaViewFacet.sol`
     - Add a new view function that returns only non-closed, non-canceled-proposal line IDs:
       ```
@@ -419,15 +487,16 @@
     - _Preservation: raw historical view unchanged_
     - _Requirements: 2.14, 2.15, 3.14_
 
-  - [ ] 13.2 Add test for filtered borrower line view
+  - [x] 13.2 Add test for filtered borrower line view
     - Create line proposals, cancel some, close some, verify `getActiveBorrowerLineIds` returns only live lines
     - Verify `getBorrowerLineIds` still returns the full raw array
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol --match-test FilteredBorrowerView`
+    - **RESULT**: PASS — `2/2` passed
     - _Requirements: 2.14, 2.15, 3.14_
 
-- [ ] 14. Refresh and expand EqualScale regression tests
+- [x] 14. Refresh and expand EqualScale regression tests
 
-  - [ ] 14.1 Add full charge-off lifecycle integration test
+  - [x] 14.1 Add full charge-off lifecycle integration test
     - Propose → commit → activate → draw → warp past delinquency + charge-off threshold → charge off
     - Verify borrower debt state fully cleared, interest loss recorded, borrower can withdraw or clean up membership
     - Proves findings 1 and 6 fixes end-to-end through a value-moving live flow
@@ -435,39 +504,39 @@
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol`
     - _Requirements: 2.1, 2.2, 2.5, 2.6_
 
-  - [ ] 14.2 Add repayment checkpoint lifecycle integration test
+  - [x] 14.2 Add repayment checkpoint lifecycle integration test
     - Propose → commit → activate → draw → warp past due → make repeated payments → verify single-period advancement and `termEndAt` cap
     - Proves finding 5 fix end-to-end with real payment flows
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol`
     - _Requirements: 2.3, 2.4_
 
-  - [ ] 14.3 Add runoff cure lifecycle integration test
+  - [x] 14.3 Add runoff cure lifecycle integration test
     - Propose → commit → activate → draw → enter refinancing → exit commitments below `minimumViableLine` → resolve to runoff → repay → verify stays in runoff
     - Also test cure at or above `minimumViableLine` succeeds
     - Proves finding 7 fix end-to-end
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol`
     - _Requirements: 2.7, 2.8_
 
-  - [ ] 14.4 Add freeze integrity lifecycle integration test
+  - [x] 14.4 Add freeze integrity lifecycle integration test
     - Propose → commit → activate → admin freeze → warp past term → attempt `enterRefinancing` (revert) → admin unfreeze → `enterRefinancing` (success)
     - Proves freeze bypass fix end-to-end
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol`
     - _Requirements: 2.11, 3.9_
 
-  - [ ] 14.5 Add treasury wallet lock lifecycle integration test
+  - [x] 14.5 Add treasury wallet lock lifecycle integration test
     - Propose → commit → activate → attempt treasury change (revert) → repay fully → close line → treasury change (success)
     - Proves treasury lock fix end-to-end
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol`
     - _Requirements: 2.16, 2.17_
 
-  - [ ] 14.6 Add recovery allocation lifecycle integration test
+  - [x] 14.6 Add recovery allocation lifecycle integration test
     - Propose → commit (3 skewed lenders) → activate → draw → charge off with partial collateral recovery
     - Verify all recovery is fully credited across commitments with no stranded remainder
     - Proves `allocateRecovery` fix end-to-end
     - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol`
     - _Requirements: 2.12, 2.13_
 
-  - [ ] 14.7 Add native draw reentrancy lifecycle integration test
+  - [x] 14.7 Add native draw reentrancy lifecycle integration test
     - Propose → commit → activate → draw with reentering treasury harness → verify blocked
     - Also verify normal native draw succeeds
     - Proves finding 4 fix end-to-end
@@ -479,8 +548,21 @@
     - `forge test --match-path test/EqualScaleAlphaFacet.t.sol`
     - `forge test --match-path test/EqualScaleAlpha.t.sol`
     - `forge test --match-path test/EqualScaleAlphaLaunch.t.sol`
+  - Added new end-to-end EqualScale coverage in:
+    - `test/EqualScaleAlpha.t.sol`
+      - `test_chargeOffLifecycle_clearsBorrowerDebtRecognizesInterestLossAndAllowsBorrowerExit`
+      - `test_repaymentCheckpointLifecycle_advancesOncePerWindowAndCapsAtTermEnd`
+      - `test_runoffCureLifecycle_respectsMinimumViableLineFloor`
+      - `test_treasuryWalletLockLifecycle_unlocksAfterLineClosure`
+      - `test_recoveryAllocationLifecycle_fullyCreditsSkewedLendersWithoutStranding`
+    - `test/EqualScaleAlphaLaunch.t.sol`
+      - `test_LiveLaunch_EqualScaleAlpha_FreezeIntegrityBlocksRefinancingUntilUnfreeze`
+    - `test/EqualScaleAlphaFacet.t.sol`
+      - `test_Integration_NativeDrawLifecycle_NormalNativeDrawStillSucceeds`
+      - existing native reentrancy regression retained as the blocked-draw half of the lifecycle proof
+  - These additions prove the EqualScale fixes through live propose / commit / activate / draw / repay / delinquency / charge-off / refinancing flows instead of harness-only branches
 
-- [ ] 15. Checkpoint — Run targeted EqualScale test suites and ensure all tests pass
+- [x] 15. Checkpoint — Run targeted EqualScale test suites and ensure all tests pass
   - Run: `forge test --match-path test/EqualScaleAlphaFacet.t.sol`
   - Run: `forge test --match-path test/EqualScaleAlpha.t.sol`
   - Run: `forge test --match-path test/EqualScaleAlphaLaunch.t.sol`
@@ -488,3 +570,11 @@
   - Ensure all preservation tests still PASS (confirming no regressions)
   - Ensure all integration regression tests PASS (confirming end-to-end correctness)
   - Ask the user if questions arise
+  - Final checkpoint results:
+    - `forge test --match-path test/EqualScaleAlphaFacet.t.sol` -> `146/146` passed
+    - `forge test --match-path test/EqualScaleAlpha.t.sol` -> `12/12` passed
+    - `forge test --match-path test/EqualScaleAlphaLaunch.t.sol` -> `3/3` passed
+  - Confirmation:
+    - EqualScale bug-condition regressions now pass
+    - preservation baselines remain green
+    - the refreshed integration and launch regressions pass end-to-end

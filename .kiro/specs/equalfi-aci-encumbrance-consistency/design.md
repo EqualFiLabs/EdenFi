@@ -78,7 +78,7 @@ END FUNCTION
 
 - **Finding 1 — Bucket asymmetry**: State has `startTime` such that `maturityHour - startHour - 1 >= BUCKET_COUNT`. `_scheduleState` places 100e18 principal in `pendingBuckets[last]`. Later, `_removeFromBase` is called for the same state. Instead of removing from `pendingBuckets[last]`, it subtracts 100e18 from `activeCreditMaturedTotal`. When `_rollMatured` later processes `pendingBuckets[last]`, it adds 100e18 to `activeCreditMaturedTotal` again — net inflation of 100e18 phantom matured principal.
 
-- **Finding 2 — Lost encumbrance yield**: Encumbrance state has `principal = 500e18`, `indexSnapshot = 1.0e18`. Pool `activeCreditIndex` has grown to `1.02e18`. Pending yield = `500e18 * 0.02e18 / 1e18 = 10e18`. A Solo AMM swap calls `_increaseEncumbrance` with `delta = 50e18`. The function overwrites `indexSnapshot = 1.02e18` without settling the 10e18 pending yield. That yield is permanently lost.
+- **Finding 2 — Lost encumbrance yield**: Encumbrance state has `principal = 500e18`, `indexSnapshot = 1.0e18`. Pool `activeCreditIndex` has grown to `1.02e18`. Pending yield = `500e18 * 0.02e18 / 1e18 = 10e18`. A Solo AMM rebalance boundary or Community join calls `_increaseEncumbrance` with `delta = 50e18`. The function overwrites `indexSnapshot = 1.02e18` without settling the 10e18 pending yield. That yield is permanently lost.
 
 - **Finding 3 — Debt tracker desync**: Borrower has two agreements on the same pool. Agreement A: `borrowedPrincipal = 100e18`. Agreement B: `borrowedPrincipal = 100e18`. Pool-level `borrowedPrincipalByPool = 200e18`. Agreement A settles with `principalDelta = 120e18` (over-clears by 20e18). `borrowedPrincipalByPool` clamps to `max(0, 200 - 120) = 80e18`. Agreement B settles with `principalDelta = 100e18`. `borrowedPrincipalByPool` clamps to `max(0, 80 - 100) = 0`. But the true remaining should be `200 - 120 - 100 = -20e18` — the over-subtraction was silently absorbed, and `activeCreditPrincipalTotal` is now inflated by the phantom 20e18.
 
@@ -100,7 +100,7 @@ END FUNCTION
 - `_decreaseBorrowedPrincipal` with `amount <= current` must continue to decrement without reverting
 - `_decreaseSameAssetDebt` with `principalComponent` within bounds must continue to decrement all trackers correctly
 - `settlePrincipal` for single-agreement borrower/pool pairs must continue to settle correctly
-- EqualX Solo AMM encumbrance changes must continue to update `activeCreditPrincipalTotal`
+- EqualX encumbrance changes that still call into `LibActiveCreditIndex` must continue to settle pending yield correctly before snapshot overwrite
 - EqualLend Direct loan origination and settlement must continue to track debt correctly
 - EqualScale chargeOffLine must continue to reduce debt trackers correctly
 
@@ -370,7 +370,7 @@ Note: All five trackers now use Solidity 0.8.x checked arithmetic. Any over-subt
 
 - This is a Phase 1 shared substrate fix. Downstream product specs (Track D, E, F, G) depend on these fixes landing first.
 - Track A (Native Asset Tracking) should land first or concurrently — it does not conflict with these changes.
-- The EqualX finding 2 fix (Solo AMM swap missing ACI update on encumbrance changes) depends on the encumbrance yield settlement fix (Finding 2 here) being in place so that the newly added `applyEncumbranceIncrease` / `applyEncumbranceDecrease` calls in `_applyReserveDelta` correctly settle yield.
+- The EqualX Solo boundary-sync model depends on the encumbrance yield settlement fix (Finding 2 here) so that rebalance / finalize encumbrance mutations settle yield correctly before snapshot overwrite.
 - The EqualScale finding 1 fix (chargeOffLine never clears borrower debt state) depends on the debt tracker revert fix (Finding 3 here) being in place so that `reduceBorrowerDebt` surfaces any over-subtraction rather than silently absorbing it.
 
 ## Testing Strategy
@@ -463,5 +463,5 @@ END FOR
 - Full ACI lifecycle: schedule → accrue → settle → remove → verify matured total and yield are correct
 - Multi-encumbrance lifecycle: increase → accrue → increase again → accrue → decrease → verify cumulative yield is correct and no yield is lost
 - Multi-agreement debt lifecycle: originate two same-asset loans → settle first → settle second → verify all five trackers are zero
-- EqualX Solo AMM with ACI: create market → swap (triggers encumbrance change) → verify yield is settled before snapshot overwrite → finalize → verify clean ACI state
+- EqualX Solo AMM with boundary-synced ACI: create market → rebalance or finalize (triggers encumbrance change) → verify yield is settled before snapshot overwrite → verify clean ACI state
 - EqualLend Direct with same-asset: originate → partial settle → full settle → verify all debt trackers are zero

@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Write bug condition exploration tests (BEFORE implementing fixes)
+- [x] 1. Write bug condition exploration tests (BEFORE implementing fixes)
   - **Property 1: Bug Condition** — EqualLend Payment Lifecycle Findings 3, 5, 6, 8 and Agreed Leads
   - **CRITICAL**: These tests MUST FAIL on unfixed code, except for the Finding 3 positive-control test which intentionally PASSES to prove the dead guard is ignored
   - **DO NOT attempt to fix the tests or the code when they fail**
@@ -25,9 +25,22 @@
   - **EXPECTED OUTCOME**: All bug-condition tests FAIL except the Finding 3 positive-control test, which intentionally PASSES on unfixed code to prove the dead guard does nothing
   - Document counterexamples found to understand root cause
   - Mark task complete when tests are written, run, and failures are documented
+  - Observed results:
+    - `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol --match-test BugCondition` failed `3/4` with the intended single positive-control pass:
+      - `test_BugCondition_MakeRollingPayment_MinReceivedGuardIsIgnored` PASSED, proving nonzero `minReceived` is ignored
+      - `test_BugCondition_MakeRollingPayment_ArrearsOnlyPaymentShouldAdvanceNextDue` failed because `nextDue` stayed at `604801` instead of advancing to `1814401`
+      - `test_BugCondition_MakeRollingPayment_ShouldAllowOverDeliveryWithoutAmortizationRevert` failed with `RollingError_AmortizationDisabled()`
+      - `test_BugCondition_MakeRollingPayment_ShouldRevertPastMaxPaymentCount` failed because the next payment did not revert
+    - `forge test --match-path test/EqualLendDirectFixedAgreementFacet.t.sol --match-test BugCondition` failed `2/2`:
+      - fixed borrower acceptance recorded `userInterest == 0` for nonzero principal/APR/duration
+      - lender-ratio fill locked `6666666666666666666` collateral instead of the ceiling-rounded `6666666666666666667`
+    - `forge test --match-path test/EqualLendDirectRollingLifecycleFacet.t.sol --match-test BugCondition` failed `1/1`:
+      - `recoverRolling` emitted `penaltyPaid == 90 ether` even though the realized-value cap was `4.5 ether`
+    - `forge test --match-path test/PoolAumFacet.t.sol --match-test BugCondition` failed `1/1`:
+      - owner call to `setAumFee` reverted with `LibAccess: not timelock` when timelock was configured
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12_
 
-- [ ] 2. Write preservation property tests (BEFORE implementing fixes)
+- [x] 2. Write preservation property tests (BEFORE implementing fixes)
   - **Property 2: Preservation** — EqualLend Payment Lifecycle Unchanged Behavior
   - **IMPORTANT**: Follow observation-first methodology — observe behavior on UNFIXED code first, then write tests capturing that behavior
   - **REFER TO ETHSKILLS.md** before writing any Solidity
@@ -53,11 +66,20 @@
     - `forge test --match-path test/PoolAumFacet.t.sol --no-match-test BugCondition`
   - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
   - Mark task complete when tests are written, run, and passing on unfixed code
+  - Observed results:
+    - `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol --no-match-test BugCondition` passed `18/18`
+      - preserves rolling payment allocation, amortization behavior, borrower-ownership checks, full repay, recovery, exercise, and rolling-offer acceptance storage/collateral semantics
+    - `forge test --match-path test/EqualLendDirectFixedAgreementFacet.t.sol --no-match-test BugCondition` passed `20/20`
+      - preserves fixed origination, same-asset and cross-asset fee handling, ratio-fill mechanics, multi-fill depletion, and zero-APR zero-interest behavior
+    - `forge test --match-path test/EqualLendDirectRollingLifecycleFacet.t.sol --no-match-test BugCondition` passed `21/21`
+      - preserves early-repay guard behavior, exercised no-penalty closeout, default split routing, and the existing rolling payment/full-close lifecycle behaviors
+    - `forge test --match-path test/PoolAumFacet.t.sol --no-match-test BugCondition` passed `4/4`
+      - preserves timelock-only AUM updates, bounds enforcement, and pool AUM/maintenance views
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, 3.14, 3.15_
 
-- [ ] 3. Fix Finding 3 — Replace rolling `minReceived` with `maxInterestDue` guard
+- [x] 3. Fix Finding 3 — Replace rolling `minReceived` with `maxInterestDue` guard
 
-  - [ ] 3.1 Replace `minReceived` with `maxInterestDue` in `makeRollingPayment`
+  - [x] 3.1 Replace `minReceived` with `maxInterestDue` in `makeRollingPayment`
     - In `src/equallend/EqualLendDirectRollingPaymentFacet.sol`, function `makeRollingPayment`
     - Rename parameter `minReceived` → `maxInterestDue`
     - Remove the bare `minReceived;` statement
@@ -68,7 +90,7 @@
     - _Preservation: Payment allocation, settlement, events unchanged when guard is satisfied_
     - _Requirements: 2.1, 2.3, 3.1_
 
-  - [ ] 3.2 Replace `minReceived` with `maxInterestDue` in `repayRollingInFull`
+  - [x] 3.2 Replace `minReceived` with `maxInterestDue` in `repayRollingInFull`
     - In `src/equallend/EqualLendDirectRollingLifecycleFacet.sol`, function `repayRollingInFull`
     - Rename parameter `minReceived` → `maxInterestDue`
     - Remove the bare `minReceived;` statement
@@ -78,14 +100,14 @@
     - _Preservation: Full repay flow unchanged when guard is satisfied_
     - _Requirements: 2.2, 2.3, 3.3_
 
-  - [ ] 3.3 Verify bug condition exploration test for Finding 3 now passes
+  - [x] 3.3 Verify bug condition exploration test for Finding 3 now passes
     - **Property 1: Expected Behavior** — Rolling Interest Guard
     - **IMPORTANT**: Re-run the SAME Finding 3 test from task 1 — do NOT write a new test
     - Run targeted regression: `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol --match-test BugCondition.*InterestGuard`
     - **EXPECTED OUTCOME**: Test PASSES (confirms Finding 3 bug is fixed)
     - _Requirements: 2.1, 2.2_
 
-  - [ ] 3.4 Verify preservation tests still pass after Finding 3 fix
+  - [x] 3.4 Verify preservation tests still pass after Finding 3 fix
     - **Property 2: Preservation** — Rolling Payment and Full Repay Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run:
@@ -94,9 +116,9 @@
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
     - _Requirements: 3.1, 3.2, 3.3, 3.4_
 
-- [ ] 4. Fix Finding 5 — Separate overdue arrears cure from current-period accrual
+- [x] 4. Fix Finding 5 — Separate overdue arrears cure from current-period accrual
 
-  - [ ] 4.1 Update `applyPaymentState` to advance `nextDue` on historical arrears cure
+  - [x] 4.1 Update `applyPaymentState` to advance `nextDue` on historical arrears cure
     - In `src/libraries/LibEqualLendDirectRolling.sol`, function `applyPaymentState`
     - Change the `nextDue` advancement condition from `if (agreement.arrears == 0 && snapshot.dueCountDelta != 0)` to `if (remainingArrears == 0 && snapshot.dueCountDelta != 0)`
     - This advances `nextDue` when historical overdue arrears are fully paid, regardless of whether current-period interest remains unpaid
@@ -106,14 +128,14 @@
     - _Preservation: Genuinely delinquent positions (uncured historical arrears) still do not advance nextDue_
     - _Requirements: 2.4, 2.5, 2.6_
 
-  - [ ] 4.2 Verify bug condition exploration test for Finding 5 now passes
+  - [x] 4.2 Verify bug condition exploration test for Finding 5 now passes
     - **Property 1: Expected Behavior** — Rolling Arrears Cure Advances NextDue
     - **IMPORTANT**: Re-run the SAME Finding 5 test from task 1 — do NOT write a new test
-    - Run targeted regression: `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol --match-test BugCondition.*ArrearsTrap`
+    - Run targeted regression: `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol --match-test test_BugCondition_MakeRollingPayment_ArrearsOnlyPaymentShouldAdvanceNextDue`
     - **EXPECTED OUTCOME**: Test PASSES (confirms Finding 5 bug is fixed)
     - _Requirements: 2.4, 2.5_
 
-  - [ ] 4.3 Verify preservation tests still pass after Finding 5 fix
+  - [x] 4.3 Verify preservation tests still pass after Finding 5 fix
     - **Property 2: Preservation** — Rolling Payment State Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run:
@@ -122,9 +144,9 @@
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
     - _Requirements: 3.1, 3.5_
 
-- [ ] 5. Fix Finding 6 — Rebase rolling default penalty onto realized recovery value
+- [x] 5. Fix Finding 6 — Rebase rolling default penalty onto realized recovery value
 
-  - [ ] 5.1 Compute penalty from `min(collateralSeized, totalDebt)` in `_settleRollingDefaultPath`
+  - [x] 5.1 Compute penalty from `min(collateralSeized, totalDebt)` in `_settleRollingDefaultPath`
     - In `src/equallend/EqualLendDirectRollingLifecycleFacet.sol`, function `_settleRollingDefaultPath`
     - Replace `settlement.penaltyPaid = (totalDebt * store.rollingConfig.defaultPenaltyBps) / LibEqualLendDirectStorage.BPS_DENOMINATOR;`
     - With:
@@ -138,23 +160,23 @@
     - _Preservation: Default split routing, lender credit, terminal state finalization unchanged_
     - _Requirements: 2.7, 2.8, 3.7_
 
-  - [ ] 5.2 Verify bug condition exploration test for Finding 6 now passes
+  - [x] 5.2 Verify bug condition exploration test for Finding 6 now passes
     - **Property 1: Expected Behavior** — Default Penalty on Realized Value
     - **IMPORTANT**: Re-run the SAME Finding 6 test from task 1 — do NOT write a new test
-    - Run targeted regression: `forge test --match-path test/EqualLendDirectRollingLifecycleFacet.t.sol --match-test BugCondition.*PenaltyBase`
+    - Run targeted regression: `forge test --match-path test/EqualLendDirectRollingLifecycleFacet.t.sol --match-test test_BugCondition_RecoverRolling_PenaltyShouldBeCappedBySeizedDebtValue`
     - **EXPECTED OUTCOME**: Test PASSES (confirms Finding 6 bug is fixed)
     - _Requirements: 2.7_
 
-  - [ ] 5.3 Verify preservation tests still pass after Finding 6 fix
+  - [x] 5.3 Verify preservation tests still pass after Finding 6 fix
     - **Property 2: Preservation** — Rolling Default Settlement Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualLendDirectRollingLifecycleFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
     - _Requirements: 3.5, 3.6, 3.7_
 
-- [ ] 6. Fix Finding 8 — Round fixed interest up with `Math.Rounding.Ceil`
+- [x] 6. Fix Finding 8 — Round fixed interest up with `Math.Rounding.Ceil`
 
-  - [ ] 6.1 Use ceiling rounding in `_quoteFixedFees`
+  - [x] 6.1 Use ceiling rounding in `_quoteFixedFees`
     - In `src/equallend/EqualLendDirectFixedAgreementFacet.sol`, function `_quoteFixedFees`
     - Replace `quote.interestAmount = Math.mulDiv(principal, uint256(aprBps) * effectiveDuration, YEAR * BPS_DENOMINATOR);`
     - With `quote.interestAmount = Math.mulDiv(principal, uint256(aprBps) * effectiveDuration, YEAR * BPS_DENOMINATOR, Math.Rounding.Ceil);`
@@ -164,23 +186,23 @@
     - _Preservation: Normal (non-truncating) fixed fee quotes produce identical or +1 wei results_
     - _Requirements: 2.9, 2.10, 3.8, 3.9_
 
-  - [ ] 6.2 Verify bug condition exploration test for Finding 8 now passes
+  - [x] 6.2 Verify bug condition exploration test for Finding 8 now passes
     - **Property 1: Expected Behavior** — Fixed Interest Ceiling Rounding
     - **IMPORTANT**: Re-run the SAME Finding 8 test from task 1 — do NOT write a new test
-    - Run targeted regression: `forge test --match-path test/EqualLendDirectFixedAgreementFacet.t.sol --match-test BugCondition.*FixedInterestZero`
+    - Run targeted regression: `forge test --match-path test/EqualLendDirectFixedAgreementFacet.t.sol --match-test test_BugCondition_AcceptFixedBorrowerOffer_ShouldRoundInterestUpToAtLeastOneUnit`
     - **EXPECTED OUTCOME**: Test PASSES (confirms Finding 8 bug is fixed)
     - _Requirements: 2.9_
 
-  - [ ] 6.3 Verify preservation tests still pass after Finding 8 fix
+  - [x] 6.3 Verify preservation tests still pass after Finding 8 fix
     - **Property 2: Preservation** — Fixed Origination Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualLendDirectFixedAgreementFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
     - _Requirements: 3.8, 3.9_
 
-- [ ] 7. Fix Lead — Round lender-ratio collateral up
+- [x] 7. Fix Lead — Round lender-ratio collateral up
 
-  - [ ] 7.1 Use ceiling rounding in `_validateLenderRatioFill`
+  - [x] 7.1 Use ceiling rounding in `_validateLenderRatioFill`
     - In `src/equallend/EqualLendDirectFixedAgreementFacet.sol`, function `_validateLenderRatioFill`
     - Replace `collateralRequired = Math.mulDiv(principalAmount, offer.priceNumerator, offer.priceDenominator);`
     - With `collateralRequired = Math.mulDiv(principalAmount, offer.priceNumerator, offer.priceDenominator, Math.Rounding.Ceil);`
@@ -189,23 +211,23 @@
     - _Preservation: Ratio-fill validation, solvency checks, zero-collateral revert unchanged_
     - _Requirements: 2.11, 3.10, 3.11_
 
-  - [ ] 7.2 Verify bug condition exploration test for collateral rounding now passes
+  - [x] 7.2 Verify bug condition exploration test for collateral rounding now passes
     - **Property 1: Expected Behavior** — Collateral Ceiling Rounding
     - **IMPORTANT**: Re-run the SAME collateral rounding test from task 1 — do NOT write a new test
-    - Run targeted regression: `forge test --match-path test/EqualLendDirectFixedAgreementFacet.t.sol --match-test BugCondition.*CollateralRounding`
+    - Run targeted regression: `forge test --match-path test/EqualLendDirectFixedAgreementFacet.t.sol --match-test test_BugCondition_AcceptLenderRatioTrancheOffer_ShouldCeilCollateralRequirement`
     - **EXPECTED OUTCOME**: Test PASSES (confirms collateral rounding bug is fixed)
     - _Requirements: 2.11_
 
-  - [ ] 7.3 Verify preservation tests still pass after collateral rounding fix
+  - [x] 7.3 Verify preservation tests still pass after collateral rounding fix
     - **Property 2: Preservation** — Ratio Fill Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualLendDirectFixedAgreementFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
     - _Requirements: 3.10, 3.11_
 
-- [ ] 8. Fix Lead — Normalize rolling over-receive handling
+- [x] 8. Fix Lead — Normalize rolling over-receive handling
 
-  - [ ] 8.1 Cap allocatable amount in `_collectPayment` for amortization-disabled paths
+  - [x] 8.1 Cap allocatable amount in `_collectPayment` for amortization-disabled paths
     - In `src/equallend/EqualLendDirectRollingPaymentFacet.sol`, function `_collectPayment`
     - After `pullAtLeast` returns `allocation.received`, add normalization:
       ```
@@ -223,23 +245,23 @@
     - _Preservation: Genuine principal reduction on amortization-disabled agreements still reverts_
     - _Requirements: 2.12, 2.13_
 
-  - [ ] 8.2 Verify bug condition exploration test for over-receive now passes
+  - [x] 8.2 Verify bug condition exploration test for over-receive now passes
     - **Property 1: Expected Behavior** — Over-Receive Normalization
     - **IMPORTANT**: Re-run the SAME over-receive test from task 1 — do NOT write a new test
-    - Run targeted regression: `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol --match-test BugCondition.*OverReceive`
+    - Run targeted regression: `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol --match-test test_BugCondition_MakeRollingPayment_ShouldAllowOverDeliveryWithoutAmortizationRevert`
     - **EXPECTED OUTCOME**: Test PASSES (confirms over-receive bug is fixed)
     - _Requirements: 2.12_
 
-  - [ ] 8.3 Verify preservation tests still pass after over-receive fix
+  - [x] 8.3 Verify preservation tests still pass after over-receive fix
     - **Property 2: Preservation** — Rolling Payment Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run: `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol --no-match-test BugCondition`
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
     - _Requirements: 3.1, 3.2_
 
-- [ ] 9. Fix Lead — Enforce rolling `maxPaymentCount` as hard cap
+- [x] 9. Fix Lead — Enforce rolling `maxPaymentCount` as hard cap
 
-  - [ ] 9.1 Add payment cap check in `makeRollingPayment`
+  - [x] 9.1 Add payment cap check in `makeRollingPayment`
     - In `src/equallend/EqualLendDirectRollingPaymentFacet.sol`, function `makeRollingPayment`
     - After `_settleAgreementPositions`, before accrual computation, add:
       ```
@@ -254,14 +276,14 @@
     - _Preservation: repayRollingInFull still follows intended closeout policy_
     - _Requirements: 2.14, 2.15_
 
-  - [ ] 9.2 Verify bug condition exploration test for payment cap now passes
+  - [x] 9.2 Verify bug condition exploration test for payment cap now passes
     - **Property 1: Expected Behavior** — Payment Cap Enforcement
     - **IMPORTANT**: Re-run the SAME payment cap test from task 1 — do NOT write a new test
-    - Run targeted regression: `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol --match-test BugCondition.*PaymentCap`
+    - Run targeted regression: `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol --match-test test_BugCondition_MakeRollingPayment_ShouldRevertPastMaxPaymentCount`
     - **EXPECTED OUTCOME**: Test PASSES (confirms payment cap bug is fixed)
     - _Requirements: 2.14_
 
-  - [ ] 9.3 Verify preservation tests still pass after payment cap fix
+  - [x] 9.3 Verify preservation tests still pass after payment cap fix
     - **Property 2: Preservation** — Rolling Payment and Full Repay Preservation
     - **IMPORTANT**: Re-run the SAME preservation tests from task 2 — do NOT write new tests
     - Run:
@@ -270,9 +292,9 @@
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
     - _Requirements: 3.1, 3.3, 3.4_
 
-- [ ] 10. Fix Lead — Normalize `setAumFee` access control
+- [x] 10. Fix Lead — Normalize `setAumFee` access control
 
-  - [ ] 10.1 Change `setAumFee` to use `enforceOwnerOrTimelock()`
+  - [x] 10.1 Change `setAumFee` to use `enforceOwnerOrTimelock()`
     - In `src/equallend/PoolManagementFacet.sol`, function `setAumFee`
     - Replace `LibAccess.enforceTimelockOrOwnerIfUnset();` with `LibAccess.enforceOwnerOrTimelock();`
     - Keep existing bounds checks and event behavior unchanged
@@ -281,14 +303,14 @@
     - _Preservation: Timelock retains same authority; non-owner non-timelock callers still revert; bounds checks unchanged_
     - _Requirements: 2.16, 2.17, 3.12, 3.13_
 
-  - [ ] 10.2 Verify bug condition exploration test for `setAumFee` now passes
+  - [x] 10.2 Verify bug condition exploration test for `setAumFee` now passes
     - **Property 1: Expected Behavior** — `setAumFee` Owner Access
     - **IMPORTANT**: Re-run the SAME `setAumFee` test from task 1 — do NOT write a new test
-    - Run targeted regression: `forge test --match-path test/PoolAumFacet.t.sol --match-test BugCondition.*AumFeeOwner`
+    - Run targeted regression: `forge test --match-path test/PoolAumFacet.t.sol --match-test test_BugCondition_SetAumFee_ShouldAllowOwnerWhenTimelockIsConfigured`
     - **EXPECTED OUTCOME**: Test PASSES (confirms `setAumFee` access control bug is fixed)
     - _Requirements: 2.16_
 
-  - [ ] 10.3 Update existing `setAumFee` tests to reflect new access control
+  - [x] 10.3 Update existing `setAumFee` tests to reflect new access control
     - In `test/PoolAumFacet.t.sol`, update `test_SetAumFee_IsTimelockOnlyAndEmitsEvent` to verify owner can also call after timelock is configured
     - Verify timelock still works
     - Verify non-owner non-timelock still reverts
@@ -296,45 +318,45 @@
     - **EXPECTED OUTCOME**: All tests PASS
     - _Requirements: 2.16, 2.17, 3.12, 3.13_
 
-- [ ] 11. Refresh and expand EqualLend regression tests
+- [x] 11. Refresh and expand EqualLend regression tests
 
-  - [ ] 11.1 Add rolling full lifecycle integration test
+  - [x] 11.1 Add rolling full lifecycle integration test
     - Originate rolling agreement → make payments with `maxInterestDue` guard → repay in full
     - Proves Finding 3 fix end-to-end through a value-moving live flow
     - Use real deposits, real offers, real origination, real payments, real full repay
     - Run: `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol`
     - _Requirements: 2.1, 2.2, 2.3_
 
-  - [ ] 11.2 Add rolling catch-up lifecycle integration test
+  - [x] 11.2 Add rolling catch-up lifecycle integration test
     - Originate → miss multiple payments → pay historical arrears → verify not immediately recoverable → make current payment → verify clean state
     - Proves Finding 5 fix end-to-end with real overdue-state transitions
     - Run: `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol`
     - _Requirements: 2.4, 2.5, 2.6_
 
-  - [ ] 11.3 Add rolling default penalty integration test
+  - [x] 11.3 Add rolling default penalty integration test
     - Originate → warp far past due → trigger `recoverRolling` → verify penalty based on realized recovery value
     - Verify lender recovery does not degrade solely because `totalDebt` increased
     - Run: `forge test --match-path test/EqualLendDirectRollingLifecycleFacet.t.sol`
     - _Requirements: 2.7, 2.8_
 
-  - [ ] 11.4 Add fixed small-loan integration test
+  - [x] 11.4 Add fixed small-loan integration test
     - Originate fixed agreement with small principal, low APR, short duration → verify nonzero interest charged
     - Verify fixed and rolling fee behavior are directionally aligned on rounding
     - Run: `forge test --match-path test/EqualLendDirectFixedAgreementFacet.t.sol`
     - _Requirements: 2.9, 2.10_
 
-  - [ ] 11.5 Add lender-ratio fill collateral rounding integration test
+  - [x] 11.5 Add lender-ratio fill collateral rounding integration test
     - Create lender-ratio offer → fill tranche → verify collateral rounded up
     - Verify no valid fill can under-collateralize solely because of floor rounding
     - Run: `forge test --match-path test/EqualLendDirectFixedAgreementFacet.t.sol`
     - _Requirements: 2.11_
 
-  - [ ] 11.6 Add rolling payment cap lifecycle integration test
+  - [x] 11.6 Add rolling payment cap lifecycle integration test
     - Originate → make `maxPaymentCount` payments → verify next `makeRollingPayment` reverts → verify `repayRollingInFull` still succeeds
     - Run: `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol`
     - _Requirements: 2.14, 2.15_
 
-  - [ ] 11.7 Add AUM fee admin lifecycle integration test
+  - [x] 11.7 Add AUM fee admin lifecycle integration test
     - Configure timelock → owner sets fee → verify success → timelock sets fee → verify success → non-owner non-timelock → verify revert
     - Run: `forge test --match-path test/PoolAumFacet.t.sol`
     - _Requirements: 2.16, 2.17_
@@ -345,7 +367,7 @@
     - `forge test --match-path test/EqualLendDirectRollingLifecycleFacet.t.sol`
     - `forge test --match-path test/PoolAumFacet.t.sol`
 
-- [ ] 12. Checkpoint — Run targeted EqualLend test suites and ensure all tests pass
+- [x] 12. Checkpoint — Run targeted EqualLend test suites and ensure all tests pass
   - Run: `forge test --match-path test/EqualLendDirectRollingPaymentFacet.t.sol`
   - Run: `forge test --match-path test/EqualLendDirectFixedAgreementFacet.t.sol`
   - Run: `forge test --match-path test/EqualLendDirectRollingLifecycleFacet.t.sol`
