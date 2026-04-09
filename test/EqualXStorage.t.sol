@@ -208,6 +208,12 @@ contract EqualXStorageHarness is EqualXViewFacet {
         );
     }
 
+    function addCommunityPositionMarket(bytes32 positionKey, uint256 marketId) external {
+        LibEqualXDiscoveryStorage.addPositionMarket(
+            LibEqualXDiscoveryStorage.s(), positionKey, LibEqualXTypes.MarketType.COMMUNITY_AMM, marketId
+        );
+    }
+
     function setCommunityFeeIndexes(uint256 marketId, uint256 feeIndexA, uint256 feeIndexB) external {
         LibEqualXCommunityAmmStorage.CommunityAmmMarket storage market = LibEqualXCommunityAmmStorage.s().markets[marketId];
         market.feeIndexA = feeIndexA;
@@ -383,6 +389,22 @@ contract EqualXStorageTest is Test {
         assertEq(activeByPairAfter[0].marketId, communityId);
         assertEq(uint8(activeByPairAfter[1].marketType), uint8(LibEqualXTypes.MarketType.CURVE_LIQUIDITY));
         assertEq(activeByPairAfter[1].marketId, curveId);
+    }
+
+    function test_DiscoveryPositionRegistry_DeduplicatesCommunityRejoinPath() public {
+        uint256 communityId = harness.createCommunity(POSITION_KEY_ONE, 1, TOKEN_A, TOKEN_B);
+
+        LibEqualXTypes.MarketPointer[] memory creatorDiscoveryBefore = harness.getEqualXMarketsByPosition(POSITION_KEY_TWO);
+        assertEq(creatorDiscoveryBefore.length, 0);
+
+        harness.addCommunityPositionMarket(POSITION_KEY_TWO, communityId);
+        harness.addCommunityPositionMarket(POSITION_KEY_TWO, communityId);
+
+        LibEqualXTypes.MarketPointer[] memory creatorDiscoveryAfter = harness.getEqualXMarketsByPosition(POSITION_KEY_TWO);
+
+        assertEq(creatorDiscoveryAfter.length, 1, "community position discovery should deduplicate rejoin pointers");
+        assertEq(uint8(creatorDiscoveryAfter[0].marketType), uint8(LibEqualXTypes.MarketType.COMMUNITY_AMM));
+        assertEq(creatorDiscoveryAfter[0].marketId, communityId);
     }
 
     function test_ViewFacetExposesStoredMarketShapes() public {

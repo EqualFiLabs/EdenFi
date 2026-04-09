@@ -92,7 +92,10 @@ library LibEqualXDiscoveryStorage {
     ) internal {
         LibEqualXTypes.MarketPointer memory pointer =
             LibEqualXTypes.MarketPointer({marketType: marketType, marketId: marketId});
-        store.marketsByPosition[positionKey].push(pointer);
+        LibEqualXTypes.MarketPointer[] storage byPosition = store.marketsByPosition[positionKey];
+        if (!_containsMarket(byPosition, marketType, marketId)) {
+            byPosition.push(pointer);
+        }
     }
 
     function marketsByPosition(DiscoveryStorage storage store, bytes32 positionKey)
