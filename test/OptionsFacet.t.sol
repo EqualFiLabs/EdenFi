@@ -8,6 +8,7 @@ import {OptionTokenAdminFacet} from "src/options/OptionTokenAdminFacet.sol";
 import {OptionsFacet} from "src/options/OptionsFacet.sol";
 import {OptionsViewFacet} from "src/options/OptionsViewFacet.sol";
 import {OptionTokenViewFacet} from "src/options/OptionTokenViewFacet.sol";
+import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
@@ -15,7 +16,7 @@ import {LibDiamond} from "src/libraries/LibDiamond.sol";
 import {LibOptionsStorage} from "src/libraries/LibOptionsStorage.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {Types} from "src/libraries/Types.sol";
-import {NotNFTOwner, PoolMembershipRequired} from "src/libraries/Errors.sol";
+import {DepositCapExceeded, MaxUserCountExceeded, NotNFTOwner, PoolMembershipRequired} from "src/libraries/Errors.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {OptionToken} from "src/tokens/OptionToken.sol";
 
@@ -262,6 +263,107 @@ contract OptionsFacetTest is LaunchFixture {
         uint256 previewPayment = OptionsViewFacet(diamond).previewExercisePayment(seriesId, 1e18);
 
         assertEq(previewPayment, 2e6);
+    }
+
+    function test_UserCount_LongIdleSeriesCreationPreservesMakerPoolCount() public {
+        (uint256 positionId, bytes32 positionKey) = _prepareCallWriter(alice, 10e18, 10e18, ALT_PID);
+
+        alt.mint(alice, 10e18);
+        vm.startPrank(alice);
+        alt.approve(diamond, 10e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, ALT_PID, 10e18, 10e18);
+        vm.stopPrank();
+
+        LibOptionsStorage.CreateOptionSeriesParams memory params =
+            _callParams(positionId, ALT_PID, 1e18, BASE_CONTRACT_SIZE);
+        params.expiry = uint64(block.timestamp + 40_000 days);
+        _createSeries(alice, params);
+
+        assertEq(testSupport.principalOf(ALT_PID, positionKey), 10e18);
+        assertEq(testSupport.getPoolView(ALT_PID).userCount, 1);
+
+        vm.warp(block.timestamp + 36_500 days);
+        _createSeries(alice, params);
+
+        assertEq(testSupport.principalOf(ALT_PID, positionKey), 10e18);
+        assertEq(testSupport.getPoolView(ALT_PID).userCount, 1);
+    }
+
+    function test_UserCount_ExerciseAfterLongIdleKeepsSingleMakerCount() public {
+        (uint256 positionId, bytes32 positionKey) = _prepareCallWriter(alice, 10e18, 10e18, ALT_PID);
+
+        alt.mint(alice, 10e18);
+        vm.startPrank(alice);
+        alt.approve(diamond, 10e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, ALT_PID, 10e18, 10e18);
+        vm.stopPrank();
+
+        LibOptionsStorage.CreateOptionSeriesParams memory params =
+            _callParams(positionId, ALT_PID, 1e18, BASE_CONTRACT_SIZE);
+        params.expiry = uint64(block.timestamp + 40_000 days);
+        uint256 seriesId = _createSeries(alice, params);
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, seriesId, 1e18, "");
+
+        vm.warp(block.timestamp + 36_500 days);
+
+        uint256 payment = OptionsViewFacet(diamond).previewExercisePayment(seriesId, 1e18);
+        alt.mint(bob, payment);
+        vm.startPrank(bob);
+        alt.approve(diamond, payment);
+        OptionsFacet(diamond).exerciseOptions(seriesId, 1e18, bob, payment, 1e18);
+        vm.stopPrank();
+
+        assertEq(testSupport.principalOf(ALT_PID, positionKey), 10e18 + payment);
+        assertEq(testSupport.getPoolView(ALT_PID).userCount, 1);
+    }
+
+    function test_UserCount_MaintenanceChurnDoesNotBlockNewEntrant() public {
+        uint256 strikePid = 7;
+        address replacementUser = _addr("replacement-user");
+        MockERC20Option limitedStrike = new MockERC20Option("Limited Strike", "LSTR", 6);
+        Types.PoolConfig memory limitedConfig = _sixDecPoolConfig();
+        limitedConfig.maxUserCount = 2;
+        _initPoolWithActionFees(strikePid, address(limitedStrike), limitedConfig, _actionFees());
+
+        (uint256 positionId,) = _prepareCallWriter(alice, 10e18, 10e18, strikePid);
+
+        limitedStrike.mint(alice, 10e6);
+        vm.startPrank(alice);
+        IERC20(address(limitedStrike)).approve(diamond, 10e6);
+        PositionManagementFacet(diamond).depositToPosition(positionId, strikePid, 10e6, 10e6);
+        vm.stopPrank();
+
+        LibOptionsStorage.CreateOptionSeriesParams memory params =
+            _callParams(positionId, strikePid, 1e18, BASE_CONTRACT_SIZE);
+        params.expiry = uint64(block.timestamp + 40_000 days);
+        uint256 seriesId = _createSeries(alice, params);
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, seriesId, 1e18, "");
+
+        vm.warp(block.timestamp + 36_500 days);
+
+        uint256 payment = OptionsViewFacet(diamond).previewExercisePayment(seriesId, 1e18);
+        limitedStrike.mint(bob, payment);
+        vm.startPrank(bob);
+        IERC20(address(limitedStrike)).approve(diamond, payment);
+        OptionsFacet(diamond).exerciseOptions(seriesId, 1e18, bob, payment, 1e18);
+        vm.stopPrank();
+
+        assertEq(testSupport.getPoolView(strikePid).userCount, 1);
+
+        _fundHomePosition(carol, strikePid, address(limitedStrike), 1e6, 1e6);
+        assertEq(testSupport.getPoolView(strikePid).userCount, 2);
+
+        limitedStrike.mint(replacementUser, 1e6);
+        uint256 replacementPositionId = _mintPosition(replacementUser, strikePid);
+        vm.startPrank(replacementUser);
+        IERC20(address(limitedStrike)).approve(diamond, 1e6);
+        vm.expectRevert(abi.encodeWithSelector(MaxUserCountExceeded.selector, 2));
+        PositionManagementFacet(diamond).depositToPosition(replacementPositionId, strikePid, 1e6, 1e6);
+        vm.stopPrank();
     }
 
     function test_CreateOptionSeries_UsesRealFundingAndIndexesPosition() public {
@@ -708,6 +810,199 @@ contract OptionsFacetTest is LaunchFixture {
         assertEq(series.remainingSize, 15e16);
         assertEq(series.collateralLocked, 15e16);
         assertEq(eve.balanceOf(bob), exerciseAmount);
+    }
+
+    function test_Integration_CallLifecycle_PartialThenTerminalExerciseThenReclaim() public {
+        (uint256 positionId, bytes32 positionKey) = _prepareCallWriter(alice, 20e18, 20e18, SIX_DEC_PID);
+        uint256 seriesId = _createSeries(alice, _callParams(positionId, SIX_DEC_PID, 3e18, BASE_CONTRACT_SIZE));
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, seriesId, 3e18, "");
+
+        uint256 firstPayment = OptionsViewFacet(diamond).previewExercisePayment(seriesId, 1e18);
+        uint256 secondPayment = OptionsViewFacet(diamond).previewExercisePayment(seriesId, 2e18);
+        sixDecStrike.mint(bob, firstPayment + secondPayment);
+
+        vm.startPrank(bob);
+        IERC20(address(sixDecStrike)).approve(diamond, firstPayment + secondPayment);
+        uint256 paidFirst = OptionsFacet(diamond).exerciseOptions(seriesId, 1e18, bob, firstPayment, 1e18);
+        uint256 paidSecond = OptionsFacet(diamond).exerciseOptions(seriesId, 2e18, bob, secondPayment, 2e18);
+        vm.stopPrank();
+
+        LibOptionsStorage.OptionSeries memory afterExercise = OptionsViewFacet(diamond).getOptionSeries(seriesId);
+        assertEq(paidFirst, 2e6);
+        assertEq(paidSecond, 4e6);
+        assertEq(afterExercise.remainingSize, 0);
+        assertEq(afterExercise.collateralLocked, 0);
+        assertEq(testSupport.principalOf(UNDERLYING_PID, positionKey), 17e18);
+        assertEq(testSupport.principalOf(SIX_DEC_PID, positionKey), 6e6);
+        assertEq(testSupport.lockedCapitalOf(positionKey, UNDERLYING_PID), 0);
+
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(alice);
+        OptionsFacet(diamond).reclaimOptions(seriesId);
+
+        LibOptionsStorage.OptionSeries memory reclaimed = OptionsViewFacet(diamond).getOptionSeries(seriesId);
+        assertTrue(reclaimed.reclaimed);
+        assertEq(reclaimed.remainingSize, 0);
+        assertEq(reclaimed.collateralLocked, 0);
+        assertEq(testSupport.principalOf(UNDERLYING_PID, positionKey), 17e18);
+        assertEq(testSupport.principalOf(SIX_DEC_PID, positionKey), 6e6);
+    }
+
+    function test_Integration_PutLifecycle_PartialExerciseThenResidualReclaim() public {
+        (uint256 positionId, bytes32 positionKey) = _preparePutWriter(alice, 20e6, 20e6, UNDERLYING_PID);
+        uint256 seriesId = _createSeries(alice, _putParams(positionId, 3e18, BASE_CONTRACT_SIZE));
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, seriesId, 2e18, "");
+
+        uint256 payment = OptionsViewFacet(diamond).previewExercisePayment(seriesId, 2e18);
+        eve.mint(bob, payment);
+        vm.startPrank(bob);
+        eve.approve(diamond, payment);
+        OptionsFacet(diamond).exerciseOptions(seriesId, 2e18, bob, payment, 4e6);
+        vm.stopPrank();
+
+        LibOptionsStorage.OptionSeries memory beforeReclaim = OptionsViewFacet(diamond).getOptionSeries(seriesId);
+        assertEq(beforeReclaim.remainingSize, 1e18);
+        assertEq(beforeReclaim.collateralLocked, 2e6);
+        assertEq(testSupport.principalOf(UNDERLYING_PID, positionKey), 2e18);
+        assertEq(testSupport.principalOf(SIX_DEC_PID, positionKey), 16e6);
+        assertEq(testSupport.lockedCapitalOf(positionKey, SIX_DEC_PID), 2e6);
+
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(alice);
+        OptionsFacet(diamond).reclaimOptions(seriesId);
+
+        LibOptionsStorage.OptionSeries memory reclaimed = OptionsViewFacet(diamond).getOptionSeries(seriesId);
+        assertTrue(reclaimed.reclaimed);
+        assertEq(reclaimed.remainingSize, 0);
+        assertEq(reclaimed.collateralLocked, 0);
+        assertEq(testSupport.lockedCapitalOf(positionKey, SIX_DEC_PID), 0);
+        assertEq(testSupport.principalOf(UNDERLYING_PID, positionKey), 2e18);
+        assertEq(testSupport.principalOf(SIX_DEC_PID, positionKey), 16e6);
+    }
+
+    function test_Integration_EuropeanLifecycle_ExerciseWindowAndReclaimBoundary() public {
+        (uint256 positionId,) = _prepareCallWriter(alice, 10e18, 10e18, SIX_DEC_PID);
+        _setEuropeanTolerance(1 hours);
+
+        LibOptionsStorage.CreateOptionSeriesParams memory params =
+            _callParams(positionId, SIX_DEC_PID, 2e18, BASE_CONTRACT_SIZE);
+        params.isAmerican = false;
+        uint64 expiry = uint64(block.timestamp + 1 days);
+        params.expiry = expiry;
+        uint256 seriesId = _createSeries(alice, params);
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, seriesId, 1e18, "");
+
+        uint256 payment = OptionsViewFacet(diamond).previewExercisePayment(seriesId, 1e18);
+        sixDecStrike.mint(bob, payment);
+
+        vm.warp(expiry - 30 minutes);
+        vm.startPrank(bob);
+        IERC20(address(sixDecStrike)).approve(diamond, payment);
+        OptionsFacet(diamond).exerciseOptions(seriesId, 1e18, bob, payment, 1e18);
+        vm.stopPrank();
+
+        vm.warp(expiry + 30 minutes);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(OptionsFacet.Options_ExerciseWindowStillOpen.selector, seriesId));
+        OptionsFacet(diamond).reclaimOptions(seriesId);
+
+        vm.warp(expiry + 1 hours + 1);
+        vm.prank(alice);
+        OptionsFacet(diamond).reclaimOptions(seriesId);
+
+        LibOptionsStorage.OptionSeries memory reclaimed = OptionsViewFacet(diamond).getOptionSeries(seriesId);
+        assertTrue(reclaimed.reclaimed);
+        assertEq(reclaimed.remainingSize, 0);
+        assertEq(reclaimed.collateralLocked, 0);
+    }
+
+    function test_Integration_ToleranceBounding_PreservesValidTolerance() public {
+        _setEuropeanTolerance(1 hours);
+        assertEq(OptionsViewFacet(diamond).europeanToleranceSeconds(), 1 hours);
+
+        uint64 excessiveTolerance = 31 days;
+        bytes memory data = abi.encodeWithSelector(OptionsFacet.setEuropeanTolerance.selector, excessiveTolerance);
+        bytes32 salt = keccak256(abi.encodePacked("equalfi-test-salt", timelockSaltNonce++));
+
+        timelockController.schedule(diamond, 0, data, bytes32(0), salt, 7 days);
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(OptionsFacet.Options_ExcessiveTolerance.selector, excessiveTolerance)
+        );
+        timelockController.execute(diamond, 0, data, bytes32(0), salt);
+
+        assertEq(OptionsViewFacet(diamond).europeanToleranceSeconds(), 1 hours);
+    }
+
+    function test_Integration_ExerciseThroughCappedPool_PreservesDepositCap() public {
+        (uint256 positionId, bytes32 positionKey) = _prepareCallWriter(alice, 10e18, 10e18, CAPPED_STRIKE_PID);
+
+        cappedStrike.mint(alice, 10e6);
+        vm.startPrank(alice);
+        IERC20(address(cappedStrike)).approve(diamond, 10e6);
+        PositionManagementFacet(diamond).depositToPosition(positionId, CAPPED_STRIKE_PID, 10e6, 10e6);
+        vm.stopPrank();
+
+        uint256 seriesId = _createSeries(alice, _callParams(positionId, CAPPED_STRIKE_PID, 1e18, BASE_CONTRACT_SIZE));
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, seriesId, 1e18, "");
+
+        uint256 payment = OptionsViewFacet(diamond).previewExercisePayment(seriesId, 1e18);
+        cappedStrike.mint(bob, payment);
+        vm.startPrank(bob);
+        IERC20(address(cappedStrike)).approve(diamond, payment);
+        uint256 paid = OptionsFacet(diamond).exerciseOptions(seriesId, 1e18, bob, payment, 1e18);
+        vm.stopPrank();
+
+        assertEq(paid, payment);
+        assertEq(testSupport.principalOf(CAPPED_STRIKE_PID, positionKey), 12e6);
+
+        cappedStrike.mint(alice, 1e6);
+        vm.startPrank(alice);
+        IERC20(address(cappedStrike)).approve(diamond, 1e6);
+        vm.expectRevert(abi.encodeWithSelector(DepositCapExceeded.selector, 13e6, 11e6));
+        PositionManagementFacet(diamond).depositToPosition(positionId, CAPPED_STRIKE_PID, 1e6, 1e6);
+        vm.stopPrank();
+    }
+
+    function test_Integration_ZeroStrikeRejection_DoesNotBlockValidLifecycle() public {
+        (uint256 positionId,) = _prepareCallWriter(alice, 10e18, 10e18, SIX_DEC_PID);
+
+        LibOptionsStorage.CreateOptionSeriesParams memory invalidParams =
+            _callParams(positionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE);
+        invalidParams.strikePrice = 0;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(OptionsFacet.Options_InvalidPrice.selector, 0));
+        OptionsFacet(diamond).createOptionSeries(invalidParams);
+
+        uint256 seriesId = _createSeries(alice, _callParams(positionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE));
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, seriesId, 1e18, "");
+
+        uint256 payment = OptionsViewFacet(diamond).previewExercisePayment(seriesId, 1e18);
+        sixDecStrike.mint(bob, payment);
+        vm.startPrank(bob);
+        IERC20(address(sixDecStrike)).approve(diamond, payment);
+        OptionsFacet(diamond).exerciseOptions(seriesId, 1e18, bob, payment, 1e18);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(alice);
+        OptionsFacet(diamond).reclaimOptions(seriesId);
+
+        LibOptionsStorage.OptionSeries memory reclaimed = OptionsViewFacet(diamond).getOptionSeries(seriesId);
+        assertTrue(reclaimed.reclaimed);
+        assertEq(reclaimed.remainingSize, 0);
+        assertEq(reclaimed.collateralLocked, 0);
     }
 
     function _prepareCallWriter(address user, uint256 minAmount, uint256 maxAmount, uint256 strikePid)

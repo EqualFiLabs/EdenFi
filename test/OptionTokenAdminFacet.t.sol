@@ -52,6 +52,31 @@ contract OptionTokenAdminFacetTest is LaunchFixture {
         assertTrue(previousToken != address(replacement));
     }
 
+    function test_Integration_SetOptionToken_RevertsWhileLiveAndSucceedsAfterReclaim() public {
+        uint256 positionId = _fundCallWriter(alice, 10e18);
+        uint256 seriesId = _createSeries(alice, _callParams(positionId, 1e18, BASE_CONTRACT_SIZE));
+        OptionToken replacement = new OptionToken("ipfs://equalfi/options/v2", address(this), diamond);
+
+        bytes memory callData =
+            abi.encodeWithSelector(OptionTokenAdminFacet.setOptionToken.selector, address(replacement));
+        bytes32 revertSalt = keccak256(abi.encodePacked("equalfi-test-salt", timelockSaltNonce++));
+
+        timelockController.schedule(diamond, 0, callData, bytes32(0), revertSalt, 7 days);
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(bytes4(keccak256("OptionTokenAdmin_ActiveSeriesExist(uint256)")), 1)
+        );
+        timelockController.execute(diamond, 0, callData, bytes32(0), revertSalt);
+
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(alice);
+        OptionsFacet(diamond).reclaimOptions(seriesId);
+
+        _timelockCall(diamond, callData);
+
+        assertEq(OptionTokenViewFacet(diamond).getOptionToken(), address(replacement));
+    }
+
     function _fundCallWriter(address user, uint256 amount) internal returns (uint256 positionId) {
         eve.mint(user, amount);
         positionId = _mintPosition(user, UNDERLYING_PID);
