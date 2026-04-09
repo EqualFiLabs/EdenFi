@@ -138,7 +138,7 @@ contract EqualScaleAlphaViewFacet {
         returns (LibEqualScaleAlphaStorage.Commitment[] memory commitments)
     {
         LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
-        uint256[] storage lenderPositionIds = store.lineCommitmentPositionIds[lineId];
+        uint256[] storage lenderPositionIds = store.lineHistoricalCommitmentPositionIds[lineId];
         uint256 len = lenderPositionIds.length;
 
         commitments = new LibEqualScaleAlphaStorage.Commitment[](len);
@@ -272,7 +272,7 @@ contract EqualScaleAlphaViewFacet {
 
     function getLineLossSummary(uint256 lineId) external view returns (LineLossSummaryView memory summary) {
         LibEqualScaleAlphaStorage.EqualScaleAlphaStorage storage store = LibEqualScaleAlphaStorage.s();
-        uint256[] storage lenderPositionIds = store.lineCommitmentPositionIds[lineId];
+        uint256[] storage lenderPositionIds = store.lineHistoricalCommitmentPositionIds[lineId];
         uint256 len = lenderPositionIds.length;
 
         summary.commitmentCount = len;

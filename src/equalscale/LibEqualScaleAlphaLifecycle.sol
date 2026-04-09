@@ -138,6 +138,7 @@ library LibEqualScaleAlphaLifecycle {
         commitment.committedAmount = 0;
         commitment.status = LibEqualScaleAlphaStorage.CommitmentStatus.Exited;
         line.currentCommittedAmount -= exitedAmount;
+        LibEqualScaleAlphaStorage.removeCommitmentPositionId(store, lineId, lenderPositionId);
 
         LibEqualScaleAlphaShared.settleSettlementPosition(line.settlementPoolId, lenderPositionKey);
         LibEqualScaleAlphaShared.decreaseSettlementCommitmentReservation(

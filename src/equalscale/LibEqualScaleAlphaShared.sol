@@ -579,11 +579,10 @@ library LibEqualScaleAlphaShared {
         bool closedWithLoss
     ) internal {
         uint256[] storage lenderPositionIds = store.lineCommitmentPositionIds[lineId];
-        uint256 len = lenderPositionIds.length;
-
-        for (uint256 i = 0; i < len; i++) {
+        while (lenderPositionIds.length != 0) {
+            uint256 lenderPositionId = lenderPositionIds[lenderPositionIds.length - 1];
             LibEqualScaleAlphaStorage.Commitment storage commitment =
-                store.lineCommitments[lineId][lenderPositionIds[i]];
+                store.lineCommitments[lineId][lenderPositionId];
             if (commitment.lenderPositionKey != bytes32(0) && commitment.committedAmount != 0) {
                 settleSettlementPosition(line.settlementPoolId, commitment.lenderPositionKey);
                 decreaseSettlementCommitmentReservation(
@@ -600,6 +599,8 @@ library LibEqualScaleAlphaShared {
             } else if (commitment.status != LibEqualScaleAlphaStorage.CommitmentStatus.Canceled) {
                 commitment.status = LibEqualScaleAlphaStorage.CommitmentStatus.Closed;
             }
+
+            LibEqualScaleAlphaStorage.removeCommitmentPositionId(store, lineId, lenderPositionId);
         }
 
         if (line.collateralMode == LibEqualScaleAlphaStorage.CollateralMode.BorrowerPosted && line.lockedCollateralAmount != 0) {

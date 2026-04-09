@@ -136,12 +136,36 @@ library LibEqualScaleAlphaStorage {
         mapping(uint256 => PaymentRecord[]) paymentRecords;
         mapping(uint256 => uint256[]) lenderPositionLineIds;
         mapping(uint256 => mapping(uint256 => bool)) lenderPositionHasLine;
+        mapping(uint256 => uint256[]) lineHistoricalCommitmentPositionIds;
     }
 
     function s() internal pure returns (EqualScaleAlphaStorage storage store) {
         bytes32 position = STORAGE_POSITION;
         assembly {
             store.slot := position
+        }
+    }
+
+    function removeCommitmentPositionId(
+        EqualScaleAlphaStorage storage store,
+        uint256 lineId,
+        uint256 lenderPositionId
+    ) internal {
+        store.lineHasCommitmentPosition[lineId][lenderPositionId] = false;
+
+        uint256[] storage lenderPositionIds = store.lineCommitmentPositionIds[lineId];
+        uint256 len = lenderPositionIds.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (lenderPositionIds[i] != lenderPositionId) {
+                continue;
+            }
+
+            uint256 lastIndex = len - 1;
+            if (i != lastIndex) {
+                lenderPositionIds[i] = lenderPositionIds[lastIndex];
+            }
+            lenderPositionIds.pop();
+            return;
         }
     }
 }

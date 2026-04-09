@@ -1710,11 +1710,13 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
         LibEqualScaleAlphaStorage.Commitment memory first = facet.commitment(lineId, lenderPositionOne);
         LibEqualScaleAlphaStorage.Commitment memory second = facet.commitment(lineId, lenderPositionTwo);
+        uint256[] memory trackedCommitments = facet.lineCommitmentPositionIds(lineId);
 
         require(line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Closed, "line should close after charge-off");
         require(line.outstandingPrincipal == 0, "outstanding principal should clear");
         require(line.currentCommittedAmount == 0, "committed amount should clear");
         require(line.activeLimit == 0, "active limit should clear");
+        require(trackedCommitments.length == 0, "charge-off should prune commitment tracking");
         require(first.recoveryReceived == 0, "unexpected first recovery");
         require(second.recoveryReceived == 0, "unexpected second recovery");
         require(first.lossWrittenDown == 300e18, "first loss mismatch");
@@ -1983,10 +1985,14 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         LibEqualScaleAlphaStorage.Commitment memory rolled = facet.commitment(lineId, lenderPositionOne);
         LibEqualScaleAlphaStorage.Commitment memory exited = facet.commitment(lineId, lenderPositionTwo);
         LibEqualScaleAlphaStorage.Commitment memory added = facet.commitment(lineId, lenderPositionThree);
+        uint256[] memory trackedCommitments = facet.lineCommitmentPositionIds(lineId);
 
         require(line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Active, "line should renew active");
         require(line.activeLimit == TARGET_LIMIT, "full renewal active limit mismatch");
         require(line.currentCommittedAmount == TARGET_LIMIT, "full renewal commitment mismatch");
+        require(trackedCommitments.length == 2, "refinancing should track only live commitments");
+        require(trackedCommitments[0] == lenderPositionOne, "rolled lender should remain tracked");
+        require(trackedCommitments[1] == lenderPositionThree, "new lender should be tracked");
         require(rolled.status == LibEqualScaleAlphaStorage.CommitmentStatus.Rolled, "rolled commitment status mismatch");
         require(exited.status == LibEqualScaleAlphaStorage.CommitmentStatus.Exited, "exited commitment status mismatch");
         require(added.status == LibEqualScaleAlphaStorage.CommitmentStatus.Active, "new commitment status mismatch");
@@ -2113,12 +2119,14 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 
         LibEqualScaleAlphaStorage.CreditLine memory line = facet.line(lineId);
         LibEqualScaleAlphaStorage.Commitment memory commitment = facet.commitment(lineId, lenderPositionId);
+        uint256[] memory trackedCommitments = facet.lineCommitmentPositionIds(lineId);
 
         require(line.status == LibEqualScaleAlphaStorage.CreditLineStatus.Closed, "line should be closed");
         require(line.outstandingPrincipal == 0, "principal should stay cleared");
         require(line.accruedInterest == 0, "interest should stay cleared");
         require(line.currentCommittedAmount == 0, "committed amount should clear");
         require(line.activeLimit == 0, "active limit should clear");
+        require(trackedCommitments.length == 0, "close should prune commitment tracking");
         require(commitment.committedAmount == 0, "commitment amount should clear");
         require(
             commitment.status == LibEqualScaleAlphaStorage.CommitmentStatus.Closed,

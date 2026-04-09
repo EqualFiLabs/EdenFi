@@ -227,6 +227,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors,
         commitment.committedAmount = 0;
         commitment.status = LibEqualScaleAlphaStorage.CommitmentStatus.Canceled;
         line.currentCommittedAmount -= canceledAmount;
+        LibEqualScaleAlphaStorage.removeCommitmentPositionId(store, lineId, lenderPositionId);
 
         LibEqualScaleAlphaShared.settleSettlementPosition(line.settlementPoolId, lenderPositionKey);
         LibEqualScaleAlphaShared.decreaseSettlementCommitmentReservation(
@@ -428,6 +429,7 @@ contract EqualScaleAlphaFacet is IEqualScaleAlphaEvents, IEqualScaleAlphaErrors,
         if (!store.lenderPositionHasLine[lenderPositionId][lineId]) {
             store.lenderPositionHasLine[lenderPositionId][lineId] = true;
             store.lenderPositionLineIds[lenderPositionId].push(lineId);
+            store.lineHistoricalCommitmentPositionIds[lineId].push(lenderPositionId);
         }
 
         if (commitment.lenderPositionId == 0) {
