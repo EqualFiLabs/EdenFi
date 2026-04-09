@@ -59,6 +59,10 @@ contract EqualIndexHarness is
         LibAppStorage.s().treasury = treasury_;
     }
 
+    function setFoundationReceiver(address receiver_) external {
+        LibAppStorage.s().foundationReceiver = receiver_;
+    }
+
     function setFeeSplits(uint256 treasuryBps, uint256 activeCreditBps) external {
         if (treasuryBps > type(uint16).max || activeCreditBps > type(uint16).max) revert();
         LibAppStorage.AppStorage storage store = LibAppStorage.s();
@@ -144,6 +148,10 @@ contract EqualIndexLendingHarness is
 
     function setTreasury(address treasury_) external {
         LibAppStorage.s().treasury = treasury_;
+    }
+
+    function setFoundationReceiver(address receiver_) external {
+        LibAppStorage.s().foundationReceiver = receiver_;
     }
 
     function setDefaultPoolConfig(Types.PoolConfig calldata config) external override {
@@ -438,6 +446,7 @@ contract EqualIndexPortSmokeTest {
         lendingHarness.setOwner(address(this));
         lendingHarness.setTimelock(_addr("timelock"));
         lendingHarness.setTreasury(treasury);
+        lendingHarness.setFoundationReceiver(treasury);
 
         PositionNFT localNft = new PositionNFT();
         localNft.setMinter(address(lendingHarness));
@@ -476,7 +485,7 @@ contract EqualIndexPortSmokeTest {
         lendingHarness.settleFeeIndex(indexPoolId, positionKey);
 
         uint256 principalAfterMaintenance = lendingHarness.principalOf(indexPoolId, positionKey);
-        _assertGt(principalAfterMaintenance, 1e18, "locked collateral should remain intact");
+        _assertTrue(principalAfterMaintenance >= 1e18, "locked collateral should remain intact");
         _assertLt(principalAfterMaintenance, 2e18, "unlocked principal should still decay under maintenance");
 
         vm.warp(block.timestamp + 2 days);

@@ -106,6 +106,7 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         BorrowPreparation memory prep = _prepareBorrow(idx, indexId, collateralUnits, ltvBps);
         loanId = _createLoan(indexId, positionKey, collateralUnits, ltvBps, duration, prep.lockedAfter);
         LibIndexEncumbrance.encumber(positionKey, indexPoolId, indexId, collateralUnits);
+        indexPool.userIndexEncumberedPrincipal[positionKey] += collateralUnits;
         _disburseBorrowedAssets(loanId, indexId, prep.assets, prep.principals);
 
         _emitLoanCreated(loanId, positionKey, indexId, collateralUnits, ltvBps);
@@ -145,7 +146,9 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         ls.lockedCollateralUnits[loan.indexId] -= loan.collateralUnits;
 
         uint256 indexPoolId = s().indexToPoolId[loan.indexId];
+        Types.PoolData storage indexPool = LibAppStorage.s().pools[indexPoolId];
         LibIndexEncumbrance.unencumber(positionKey, indexPoolId, loan.indexId, loan.collateralUnits);
+        indexPool.userIndexEncumberedPrincipal[loan.positionKey] -= loan.collateralUnits;
 
         uint256 repaidIndexId = loan.indexId;
         delete ls.loans[loanId];
@@ -512,5 +515,6 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         LibEqualIndexRewards.syncEligibleBalanceChange(loan.indexId);
 
         LibIndexEncumbrance.unencumber(loan.positionKey, indexPoolId, loan.indexId, loan.collateralUnits);
+        indexPool.userIndexEncumberedPrincipal[loan.positionKey] -= loan.collateralUnits;
     }
 }
