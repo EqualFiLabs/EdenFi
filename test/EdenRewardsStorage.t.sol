@@ -130,11 +130,12 @@ contract EdenRewardsStorageTest is Test {
 
     function test_ProgramIdsIncrementAndConfigsPersist() public {
         uint256 firstProgramId = harness.createProgram(7, rewardA, manager, 1e18, 100, 200, true, false, false);
-        uint256 secondProgramId = harness.createProgram(9, rewardB, manager, 2e18, 300, 400, false, false, false);
+        uint256 secondProgramId = harness.createProgram(7, rewardB, manager, 2e18, 300, 400, false, false, false);
+        uint256 thirdProgramId = harness.createProgram(9, rewardA, manager, 3e18, 500, 700, true, true, false);
 
-        assertEq(firstProgramId, 0);
-        assertEq(secondProgramId, 1);
-        assertEq(harness.nextProgramId(), 2);
+        assertEq(secondProgramId, firstProgramId + 1);
+        assertEq(thirdProgramId, secondProgramId + 1);
+        assertEq(harness.nextProgramId(), thirdProgramId + 1);
 
         LibEdenRewardsStorage.RewardProgramConfig memory firstConfig = harness.getProgramConfig(firstProgramId);
         assertEq(uint8(firstConfig.target.targetType), uint8(LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION));
@@ -142,12 +143,28 @@ contract EdenRewardsStorageTest is Test {
         assertEq(firstConfig.rewardToken, rewardA);
         assertEq(firstConfig.manager, manager);
 
+        LibEdenRewardsStorage.RewardProgramConfig memory thirdConfig = harness.getProgramConfig(thirdProgramId);
+        assertEq(thirdConfig.target.targetId, 9);
+        assertEq(thirdConfig.rewardToken, rewardA);
+        assertEq(thirdConfig.rewardRatePerSecond, 3e18);
+        assertTrue(thirdConfig.enabled);
+        assertTrue(thirdConfig.paused);
+
         harness.setProgramState(secondProgramId, 500e18, 1234, 9e27, 25e18);
         LibEdenRewardsStorage.RewardProgramState memory state = harness.getProgramState(secondProgramId);
         assertEq(state.fundedReserve, 500e18);
         assertEq(state.lastRewardUpdate, 1234);
         assertEq(state.globalRewardIndex, 9e27);
         assertEq(state.eligibleSupply, 25e18);
+
+        uint256[] memory programsForSeven = harness.getTargetProgramIds(7);
+        assertEq(programsForSeven.length, 2);
+        assertEq(programsForSeven[0], firstProgramId);
+        assertEq(programsForSeven[1], secondProgramId);
+
+        uint256[] memory programsForNine = harness.getTargetProgramIds(9);
+        assertEq(programsForNine.length, 1);
+        assertEq(programsForNine[0], thirdProgramId);
     }
 
     function test_DiscoveryIsScopedByEqualIndexTargetId() public {

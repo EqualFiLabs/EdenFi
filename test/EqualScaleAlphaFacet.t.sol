@@ -1532,6 +1532,61 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(second.interestReceived == secondInterestShare, "second interest share mismatch");
     }
 
+    function test_commitmentTracking_preservesActivePositionIdsThroughRepaymentAllocation() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(borrowerPositionId, params);
+
+        vm.warp(block.timestamp + 3 days + 1);
+        facet.transitionToPooledOpen(lineId);
+
+        uint256 lenderPositionOne = _fundSettlementPosition(bob, 600e18);
+        uint256 lenderPositionTwo = _fundSettlementPosition(carol, 400e18);
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionOne, 600e18);
+        vm.prank(carol);
+        facet.commitPooled(lineId, lenderPositionTwo, 400e18);
+
+        uint256[] memory committedBefore = facet.lineCommitmentPositionIds(lineId);
+        require(committedBefore.length == 2, "line should track two active commitments");
+        require(committedBefore[0] == lenderPositionOne, "first active commitment mismatch");
+        require(committedBefore[1] == lenderPositionTwo, "second active commitment mismatch");
+
+        vm.prank(alice);
+        facet.activateLine(lineId);
+
+        vm.prank(alice);
+        facet.draw(lineId, 500e18);
+
+        vm.warp(block.timestamp + PAYMENT_INTERVAL_SECS);
+
+        uint256 expectedInterest = _expectedInterest(500e18, PAYMENT_INTERVAL_SECS);
+        uint256 repayAmount = expectedInterest + 100e18;
+        uint256 firstInterestShare = (expectedInterest * 300e18) / 500e18;
+        uint256 secondInterestShare = expectedInterest - firstInterestShare;
+
+        _mintAndApprove(alice, repayAmount);
+
+        vm.prank(alice);
+        facet.repayLine(lineId, repayAmount);
+
+        uint256[] memory committedAfter = facet.lineCommitmentPositionIds(lineId);
+        LibEqualScaleAlphaStorage.Commitment memory first = facet.commitment(lineId, lenderPositionOne);
+        LibEqualScaleAlphaStorage.Commitment memory second = facet.commitment(lineId, lenderPositionTwo);
+
+        require(committedAfter.length == 2, "repayment should preserve active commitment tracking");
+        require(committedAfter[0] == lenderPositionOne, "first tracked commitment changed");
+        require(committedAfter[1] == lenderPositionTwo, "second tracked commitment changed");
+        require(first.principalRepaid == 60e18, "first principal repaid mismatch");
+        require(second.principalRepaid == 40e18, "second principal repaid mismatch");
+        require(first.interestReceived == firstInterestShare, "first interest share mismatch");
+        require(second.interestReceived == secondInterestShare, "second interest share mismatch");
+    }
+
     function test_repay_curesDelinquentAndRunoffLinesWhenCoverageIsRestored() external {
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
         params.maxDrawPerPeriod = TARGET_LIMIT;

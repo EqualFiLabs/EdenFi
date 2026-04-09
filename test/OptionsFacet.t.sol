@@ -730,6 +730,59 @@ contract OptionsFacetTest is LaunchFixture {
         OptionsFacet(diamond).exerciseOptions(lateSeriesId, 1e18, alice, payment, 1e18);
     }
 
+    function test_ToleranceOverride_PreservesAmericanAndEuropeanExerciseSemantics() public {
+        (uint256 positionId,) = _prepareCallWriter(alice, 10e18, 10e18, SIX_DEC_PID);
+        uint64 tolerance = 10 minutes;
+        _setEuropeanTolerance(tolerance);
+
+        LibOptionsStorage.CreateOptionSeriesParams memory americanParams =
+            _callParams(positionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE);
+        uint256 americanSeriesId = _createSeries(alice, americanParams);
+
+        LibOptionsStorage.CreateOptionSeriesParams memory europeanParams =
+            _callParams(positionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE);
+        europeanParams.isAmerican = false;
+        uint64 expiry = uint64(block.timestamp + 1 days);
+        europeanParams.expiry = expiry;
+
+        uint256 beforeWindowSeriesId = _createSeries(alice, europeanParams);
+        uint256 lowerBoundSeriesId = _createSeries(alice, europeanParams);
+        uint256 upperBoundSeriesId = _createSeries(alice, europeanParams);
+        uint256 lateSeriesId = _createSeries(alice, europeanParams);
+
+        uint256 payment = OptionsViewFacet(diamond).previewExercisePayment(americanSeriesId, 1e18);
+        sixDecStrike.mint(alice, payment * 3);
+        vm.prank(alice);
+        IERC20(address(sixDecStrike)).approve(diamond, payment * 3);
+
+        vm.prank(alice);
+        OptionsFacet(diamond).exerciseOptions(americanSeriesId, 1e18, alice, payment, 1e18);
+
+        vm.warp(expiry - tolerance - 1);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(OptionsFacet.Options_ExerciseWindowClosed.selector, beforeWindowSeriesId));
+        OptionsFacet(diamond).exerciseOptions(beforeWindowSeriesId, 1e18, alice, payment, 1e18);
+
+        vm.warp(expiry - tolerance);
+        vm.prank(alice);
+        OptionsFacet(diamond).exerciseOptions(lowerBoundSeriesId, 1e18, alice, payment, 1e18);
+
+        vm.warp(expiry + tolerance);
+        vm.prank(alice);
+        OptionsFacet(diamond).exerciseOptions(upperBoundSeriesId, 1e18, alice, payment, 1e18);
+
+        vm.warp(expiry + tolerance + 1);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(OptionsFacet.Options_ExerciseWindowClosed.selector, lateSeriesId));
+        OptionsFacet(diamond).exerciseOptions(lateSeriesId, 1e18, alice, payment, 1e18);
+
+        assertEq(OptionsViewFacet(diamond).europeanToleranceSeconds(), tolerance);
+        assertEq(OptionsViewFacet(diamond).getOptionSeries(americanSeriesId).remainingSize, 0);
+        assertEq(OptionsViewFacet(diamond).getOptionSeries(lowerBoundSeriesId).remainingSize, 0);
+        assertEq(OptionsViewFacet(diamond).getOptionSeries(upperBoundSeriesId).remainingSize, 0);
+        assertEq(OptionsViewFacet(diamond).getOptionSeries(lateSeriesId).remainingSize, 1e18);
+    }
+
     function test_RevertWhen_ExerciseMaxPaymentIsTooLow() public {
         (uint256 positionId,) = _prepareCallWriter(alice, 10e18, 10e18, SIX_DEC_PID);
         uint256 seriesId = _createSeries(alice, _callParams(positionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE));
