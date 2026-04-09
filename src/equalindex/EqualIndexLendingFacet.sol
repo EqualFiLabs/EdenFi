@@ -5,6 +5,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {EqualIndexBaseV3} from "./EqualIndexBaseV3.sol";
 import {IndexToken} from "./IndexToken.sol";
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
+import {LibAccess} from "../libraries/LibAccess.sol";
 import {LibCurrency} from "../libraries/LibCurrency.sol";
 import {LibEqualIndexRewards} from "../libraries/LibEqualIndexRewards.sol";
 import {LibEqualIndexLending} from "../libraries/LibEqualIndexLending.sol";
@@ -31,7 +32,8 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         uint16 ltvBps,
         uint40 minDuration,
         uint40 maxDuration
-    ) external onlyTimelock indexExists(indexId) {
+    ) external indexExists(indexId) {
+        LibAccess.enforceTimelockOrOwnerIfUnset();
         if (ltvBps != 10_000) revert InvalidParameterRange("ltvBps");
         if (minDuration > maxDuration) revert InvalidParameterRange("duration");
 
@@ -46,7 +48,8 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         uint256 indexId,
         uint256[] calldata minCollateralUnits,
         uint256[] calldata flatFeeNative
-    ) external onlyTimelock indexExists(indexId) {
+    ) external indexExists(indexId) {
+        LibAccess.enforceTimelockOrOwnerIfUnset();
         uint256 len = minCollateralUnits.length;
         if (len == 0 || len != flatFeeNative.length) revert InvalidArrayLength();
 

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.20;
 
-import {LibAppStorage} from "../libraries/LibAppStorage.sol";
 import "../libraries/Errors.sol";
 
 /// @notice Shared storage + helpers for EqualIndex V3 facets.
@@ -49,11 +48,6 @@ abstract contract EqualIndexBaseV3 {
     }
 
     bytes32 internal constant EQUAL_INDEX_V3_STORAGE_POSITION = keccak256("equal.index.storage.v3");
-
-    modifier onlyTimelock() {
-        if (msg.sender != LibAppStorage.timelockAddress(LibAppStorage.s())) revert Unauthorized();
-        _;
-    }
 
     modifier indexExists(uint256 indexId) {
         if (indexId >= s().indexCount) revert UnknownIndex(indexId);

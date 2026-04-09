@@ -81,12 +81,14 @@ contract EqualIndexAdminFacetV3 is EqualIndexBaseV3, ReentrancyGuardModifiers {
         emit IndexCreated(indexId, token, p.assets, p.bundleAmounts, p.flashFeeBps);
     }
 
-    function setPaused(uint256 indexId, bool paused) external onlyTimelock indexExists(indexId) {
+    function setPaused(uint256 indexId, bool paused) external indexExists(indexId) {
+        LibAccess.enforceTimelockOrOwnerIfUnset();
         s().indexes[indexId].paused = paused;
         emit IndexPauseUpdated(indexId, paused);
     }
 
-    function setEqualIndexPoolFeeShareBps(uint16 newBps) external onlyTimelock {
+    function setEqualIndexPoolFeeShareBps(uint16 newBps) external {
+        LibAccess.enforceTimelockOrOwnerIfUnset();
         if (newBps > 10_000) revert InvalidParameterRange("poolFeeShareBps");
 
         uint16 oldBps = s().poolFeeShareBps;
@@ -94,7 +96,8 @@ contract EqualIndexAdminFacetV3 is EqualIndexBaseV3, ReentrancyGuardModifiers {
         emit EqualIndexPoolFeeShareBpsUpdated(oldBps, newBps);
     }
 
-    function setEqualIndexMintBurnFeeIndexShareBps(uint16 newBps) external onlyTimelock {
+    function setEqualIndexMintBurnFeeIndexShareBps(uint16 newBps) external {
+        LibAccess.enforceTimelockOrOwnerIfUnset();
         if (newBps > 10_000) revert InvalidParameterRange("mintBurnFeeIndexShareBps");
 
         uint16 oldBps = s().mintBurnFeeIndexShareBps;
