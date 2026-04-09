@@ -7,6 +7,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
 import {EqualIndexBaseV3} from "src/equalindex/EqualIndexBaseV3.sol";
+import {EqualIndexLendingFacet} from "src/equalindex/EqualIndexLendingFacet.sol";
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {IndexToken} from "src/equalindex/IndexToken.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
@@ -22,6 +23,7 @@ import {Types} from "src/libraries/Types.sol";
 import {
     CanonicalPoolAlreadyInitialized,
     IndexPaused,
+    InsufficientUnencumberedPrincipal,
     InvalidArrayLength,
     InvalidBundleDefinition,
     InvalidUnits,
@@ -124,10 +126,77 @@ contract EqualIndexHarness is
     }
 }
 
+contract EqualIndexLendingHarness is
+    PoolManagementFacet,
+    PositionManagementFacet,
+    EqualIndexAdminFacetV3,
+    EqualIndexLendingFacet,
+    EqualIndexPositionFacet
+{
+    function setOwner(address owner_) external {
+        LibDiamond.setContractOwner(owner_);
+    }
+
+    function setTimelock(address timelock_) external {
+        LibAppStorage.s().timelock = timelock_;
+    }
+
+    function setTreasury(address treasury_) external {
+        LibAppStorage.s().treasury = treasury_;
+    }
+
+    function setDefaultPoolConfig(Types.PoolConfig calldata config) external override {
+        LibAppStorage.AppStorage storage store = LibAppStorage.s();
+        store.defaultPoolConfigSet = true;
+
+        store.defaultPoolConfig.rollingApyBps = config.rollingApyBps;
+        store.defaultPoolConfig.depositorLTVBps = config.depositorLTVBps;
+        store.defaultPoolConfig.maintenanceRateBps = config.maintenanceRateBps;
+        store.defaultPoolConfig.flashLoanFeeBps = config.flashLoanFeeBps;
+        store.defaultPoolConfig.flashLoanAntiSplit = config.flashLoanAntiSplit;
+        store.defaultPoolConfig.minDepositAmount = config.minDepositAmount;
+        store.defaultPoolConfig.minLoanAmount = config.minLoanAmount;
+        store.defaultPoolConfig.minTopupAmount = config.minTopupAmount;
+        store.defaultPoolConfig.isCapped = config.isCapped;
+        store.defaultPoolConfig.depositCap = config.depositCap;
+        store.defaultPoolConfig.maxUserCount = config.maxUserCount;
+        store.defaultPoolConfig.aumFeeMinBps = config.aumFeeMinBps;
+        store.defaultPoolConfig.aumFeeMaxBps = config.aumFeeMaxBps;
+        store.defaultPoolConfig.borrowFee = config.borrowFee;
+        store.defaultPoolConfig.repayFee = config.repayFee;
+        store.defaultPoolConfig.withdrawFee = config.withdrawFee;
+        store.defaultPoolConfig.flashFee = config.flashFee;
+        store.defaultPoolConfig.closeRollingFee = config.closeRollingFee;
+
+        delete store.defaultPoolConfig.fixedTermConfigs;
+        for (uint256 i = 0; i < config.fixedTermConfigs.length; i++) {
+            store.defaultPoolConfig.fixedTermConfigs.push(config.fixedTermConfigs[i]);
+        }
+    }
+
+    function setPositionNft(address nft) external {
+        LibPositionNFT.s().positionNFTContract = nft;
+        LibPositionNFT.s().nftModeEnabled = nft != address(0);
+    }
+
+    function indexEncumbranceOf(bytes32 positionKey, uint256 pid) external view returns (uint256) {
+        return LibEncumbrance.total(positionKey, pid);
+    }
+
+    function settleFeeIndex(uint256 pid, bytes32 positionKey) external {
+        LibFeeIndex.settle(pid, positionKey);
+    }
+
+    function principalOf(uint256 pid, bytes32 positionKey) external view returns (uint256) {
+        return LibAppStorage.s().pools[pid].userPrincipal[positionKey];
+    }
+}
+
 interface Vm {
     function prank(address) external;
     function expectRevert(bytes4) external;
     function expectRevert(bytes calldata) external;
+    function warp(uint256) external;
 }
 
 contract EqualIndexPortSmokeTest {
@@ -223,6 +292,149 @@ contract EqualIndexPortSmokeTest {
         _assertEq(harness.principalOf(indexPoolId, positionKey), 0, "index pool principal after burn");
         _assertEq(harness.indexEncumbranceOf(positionKey, 1), 0, "encumbrance released after burn");
         _assertGt(harness.principalOf(1, positionKey), 0, "base pool principal remains");
+    }
+
+    function test_BugCondition_BurnEncumbered_ShouldRejectBurnPastAvailablePrincipal() public {
+        EqualIndexLendingHarness lendingHarness = new EqualIndexLendingHarness();
+        lendingHarness.setOwner(address(this));
+        lendingHarness.setTimelock(_addr("timelock"));
+        lendingHarness.setTreasury(treasury);
+
+        PositionNFT localNft = new PositionNFT();
+        localNft.setMinter(address(lendingHarness));
+        lendingHarness.setPositionNft(address(localNft));
+
+        MockERC20Index localToken = new MockERC20Index("Borrow Mock", "BMOCK");
+        Types.PoolConfig memory cfg = _poolConfig();
+        Types.ActionFeeSet memory actionFees;
+        lendingHarness.initPoolWithActionFees(1, address(localToken), cfg, actionFees);
+        lendingHarness.setDefaultPoolConfig(cfg);
+
+        localToken.mint(alice, 50e18);
+
+        vm.prank(alice);
+        localToken.approve(address(lendingHarness), 50e18);
+        vm.prank(alice);
+        uint256 positionId = lendingHarness.mintPosition(1);
+        bytes32 positionKey = localNft.getPositionKey(positionId);
+        vm.prank(alice);
+        lendingHarness.depositToPosition(positionId, 1, 50e18, 50e18);
+
+        EqualIndexBaseV3.CreateIndexParams memory params = _singleAssetParams("Bug Encumbered", "BENC", 0, 0);
+        params.assets[0] = address(localToken);
+        (uint256 indexId,) = lendingHarness.createIndex(params);
+        uint256 indexPoolId = lendingHarness.getIndexPoolId(indexId);
+
+        vm.prank(alice);
+        lendingHarness.mintFromPosition(positionId, indexId, 2e18);
+
+        vm.prank(_addr("timelock"));
+        lendingHarness.configureLending(indexId, 10_000, 1 days, 30 days);
+
+        vm.prank(alice);
+        lendingHarness.borrowFromPosition(positionId, indexId, 1e18, 7 days);
+
+        vm.expectRevert(abi.encodeWithSelector(InsufficientUnencumberedPrincipal.selector, 2e18, 1e18));
+        vm.prank(alice);
+        lendingHarness.burnFromPosition(positionId, indexId, 2e18);
+
+        _assertEq(
+            lendingHarness.indexEncumbranceOf(positionKey, indexPoolId), 1e18, "borrow encumbrance should remain"
+        );
+    }
+
+    function test_BugCondition_PositionBurn_ShouldClearAllEncumbranceAfterFeeBearingExit() public {
+        token.mint(alice, 20e18);
+
+        vm.prank(alice);
+        token.approve(address(harness), 20e18);
+        vm.prank(alice);
+        uint256 positionId = harness.mintPosition(1);
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+        vm.prank(alice);
+        harness.depositToPosition(positionId, 1, 20e18, 20e18);
+
+        (uint256 indexId,) = harness.createIndex(_singleAssetParams("Leak Index", "LEAK", 0, 1000));
+
+        vm.prank(alice);
+        harness.mintFromPosition(positionId, indexId, 5e18);
+        vm.prank(alice);
+        harness.burnFromPosition(positionId, indexId, 5e18);
+
+        _assertEq(harness.indexEncumbranceOf(positionKey, 1), 0, "full fee-bearing burn should clear encumbrance");
+    }
+
+    function test_BugCondition_PositionBurnFeeRounding_ShouldRoundUp() public {
+        token.mint(alice, 2e18);
+
+        vm.prank(alice);
+        token.approve(address(harness), 2e18);
+        vm.prank(alice);
+        uint256 positionId = harness.mintPosition(1);
+        vm.prank(alice);
+        harness.depositToPosition(positionId, 1, 2e18, 2e18);
+
+        EqualIndexBaseV3.CreateIndexParams memory params = _singleAssetParams("Round Position", "RPOS", 0, 333);
+        params.bundleAmounts[0] = 1;
+        (uint256 indexId,) = harness.createIndex(params);
+
+        vm.prank(alice);
+        harness.mintFromPosition(positionId, indexId, 1e18);
+
+        vm.prank(alice);
+        uint256[] memory assetsOut = harness.burnFromPosition(positionId, indexId, 1e18);
+
+        _assertEq(assetsOut[0], 0, "position burn fee should ceil one-unit gross to full fee");
+    }
+
+    function test_BugCondition_MaintenanceExemptLockedCollateral_ShouldPreserveLockedUnits() public {
+        EqualIndexLendingHarness lendingHarness = new EqualIndexLendingHarness();
+        lendingHarness.setOwner(address(this));
+        lendingHarness.setTimelock(_addr("timelock"));
+        lendingHarness.setTreasury(treasury);
+
+        PositionNFT localNft = new PositionNFT();
+        localNft.setMinter(address(lendingHarness));
+        lendingHarness.setPositionNft(address(localNft));
+
+        MockERC20Index localToken = new MockERC20Index("Maintenance Mock", "MMOCK");
+        Types.PoolConfig memory cfg = _poolConfig();
+        Types.ActionFeeSet memory actionFees;
+        lendingHarness.initPoolWithActionFees(1, address(localToken), cfg, actionFees);
+        lendingHarness.setDefaultPoolConfig(cfg);
+
+        localToken.mint(alice, 20e18);
+        vm.prank(alice);
+        localToken.approve(address(lendingHarness), 20e18);
+        vm.prank(alice);
+        uint256 positionId = lendingHarness.mintPosition(1);
+        bytes32 positionKey = localNft.getPositionKey(positionId);
+        vm.prank(alice);
+        lendingHarness.depositToPosition(positionId, 1, 20e18, 20e18);
+
+        EqualIndexBaseV3.CreateIndexParams memory params = _singleAssetParams("Maintenance Lead", "MLEAD", 0, 0);
+        params.assets[0] = address(localToken);
+        (uint256 indexId,) = lendingHarness.createIndex(params);
+        uint256 indexPoolId = lendingHarness.getIndexPoolId(indexId);
+
+        vm.prank(alice);
+        lendingHarness.mintFromPosition(positionId, indexId, 2e18);
+
+        vm.prank(_addr("timelock"));
+        lendingHarness.configureLending(indexId, 10_000, 1 days, 30 days);
+
+        vm.prank(alice);
+        uint256 loanId = lendingHarness.borrowFromPosition(positionId, indexId, 1e18, 1 days);
+
+        vm.warp(block.timestamp + 36500 days);
+        lendingHarness.settleFeeIndex(indexPoolId, positionKey);
+
+        uint256 principalAfterMaintenance = lendingHarness.principalOf(indexPoolId, positionKey);
+        _assertGt(principalAfterMaintenance, 1e18, "locked collateral should remain intact");
+        _assertLt(principalAfterMaintenance, 2e18, "unlocked principal should still decay under maintenance");
+
+        vm.warp(block.timestamp + 2 days);
+        lendingHarness.recoverExpiredIndexLoan(loanId);
     }
 
     function test_CreateIndex_RevertsForInvalidDefinitionsAndMissingPools() public {
@@ -331,5 +543,9 @@ contract EqualIndexPortSmokeTest {
 
     function _assertGt(uint256 left, uint256 right, string memory message) internal pure {
         require(left > right, message);
+    }
+
+    function _assertLt(uint256 left, uint256 right, string memory message) internal pure {
+        require(left < right, message);
     }
 }

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
@@ -10,20 +11,77 @@ import {EqualIndexLendingFacet} from "src/equalindex/EqualIndexLendingFacet.sol"
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
+import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
+import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
+import {LibDiamond} from "src/libraries/LibDiamond.sol";
+import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
 import {LibCurrency} from "src/libraries/LibCurrency.sol";
 import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
+import {LibEqualIndexLending} from "src/libraries/LibEqualIndexLending.sol";
+import {Types} from "src/libraries/Types.sol";
 import {
     CanonicalPoolAlreadyInitialized,
     IndexPaused,
+    InvalidParameterRange,
     InvalidArrayLength,
     InvalidBundleDefinition,
-    InvalidParameterRange,
+    InsufficientUnencumberedPrincipal,
     InvalidUnits,
     NoPoolForAsset
 } from "src/libraries/Errors.sol";
 
 import {LaunchFixture, MockERC20Launch} from "test/utils/LaunchFixture.t.sol";
+
+contract EqualIndexAdminHarness is PoolManagementFacet, EqualIndexAdminFacetV3 {
+    function setOwner(address owner_) external {
+        LibDiamond.setContractOwner(owner_);
+    }
+
+    function setTimelock(address timelock_) external {
+        LibAppStorage.s().timelock = timelock_;
+    }
+
+    function setPositionNft(address nft) external {
+        LibPositionNFT.s().positionNFTContract = nft;
+        LibPositionNFT.s().nftModeEnabled = nft != address(0);
+    }
+
+    function setDefaultPoolConfig(Types.PoolConfig calldata config) external override {
+        LibAppStorage.AppStorage storage store = LibAppStorage.s();
+        store.defaultPoolConfigSet = true;
+        store.defaultPoolConfig.rollingApyBps = config.rollingApyBps;
+        store.defaultPoolConfig.depositorLTVBps = config.depositorLTVBps;
+        store.defaultPoolConfig.maintenanceRateBps = config.maintenanceRateBps;
+        store.defaultPoolConfig.flashLoanFeeBps = config.flashLoanFeeBps;
+        store.defaultPoolConfig.flashLoanAntiSplit = config.flashLoanAntiSplit;
+        store.defaultPoolConfig.minDepositAmount = config.minDepositAmount;
+        store.defaultPoolConfig.minLoanAmount = config.minLoanAmount;
+        store.defaultPoolConfig.minTopupAmount = config.minTopupAmount;
+        store.defaultPoolConfig.isCapped = config.isCapped;
+        store.defaultPoolConfig.depositCap = config.depositCap;
+        store.defaultPoolConfig.maxUserCount = config.maxUserCount;
+        store.defaultPoolConfig.aumFeeMinBps = config.aumFeeMinBps;
+        store.defaultPoolConfig.aumFeeMaxBps = config.aumFeeMaxBps;
+        store.defaultPoolConfig.borrowFee = config.borrowFee;
+        store.defaultPoolConfig.repayFee = config.repayFee;
+        store.defaultPoolConfig.withdrawFee = config.withdrawFee;
+        store.defaultPoolConfig.flashFee = config.flashFee;
+        store.defaultPoolConfig.closeRollingFee = config.closeRollingFee;
+        delete store.defaultPoolConfig.fixedTermConfigs;
+        for (uint256 i = 0; i < config.fixedTermConfigs.length; i++) {
+            store.defaultPoolConfig.fixedTermConfigs.push(config.fixedTermConfigs[i]);
+        }
+    }
+
+    function poolFeeShareBpsExternal() external view returns (uint16) {
+        return s().poolFeeShareBps;
+    }
+
+    function mintBurnFeeIndexShareBpsExternal() external view returns (uint16) {
+        return s().mintBurnFeeIndexShareBps;
+    }
+}
 
 contract EqualIndexLaunchTest is LaunchFixture {
     function setUp() public override {
@@ -81,6 +139,177 @@ contract EqualIndexLaunchTest is LaunchFixture {
 
         assertEq(ERC20(indexToken).balanceOf(diamond), 0);
         assertEq(EqualIndexAdminFacetV3(diamond).getIndex(indexId).totalUnits, 0);
+    }
+
+    function test_BugCondition_WalletBurnFeeRounding_ShouldRoundUp() public {
+        eve.mint(bob, 1);
+        EqualIndexBaseV3.CreateIndexParams memory params =
+            _singleAssetIndexParams("Round Wallet", "RWLT", address(eve), 0, 333);
+        params.bundleAmounts[0] = 1;
+        (uint256 indexId,) = _createIndexThroughTimelock(params);
+
+        vm.startPrank(bob);
+        eve.approve(diamond, 1);
+        uint256[] memory maxInputs = new uint256[](1);
+        maxInputs[0] = 1;
+        EqualIndexActionsFacetV3(diamond).mint(indexId, 1e18, bob, maxInputs);
+        uint256[] memory assetsOut = EqualIndexActionsFacetV3(diamond).burn(indexId, 1e18, bob);
+        vm.stopPrank();
+
+        assertEq(assetsOut[0], 0);
+    }
+
+    function test_BugCondition_FeeShareSetter_ShouldUpdateConfiguredValues() public {
+        EqualIndexAdminHarness harness = new EqualIndexAdminHarness();
+        harness.setOwner(address(this));
+        harness.setTimelock(_addr("timelock"));
+
+        (bool poolOk,) = address(harness).call(
+            abi.encodeWithSignature("setEqualIndexPoolFeeShareBps(uint16)", uint16(2000))
+        );
+        assertTrue(poolOk);
+        assertEq(uint256(harness.poolFeeShareBpsExternal()), 2000);
+
+        (bool indexOk,) = address(harness).call(
+            abi.encodeWithSignature("setEqualIndexMintBurnFeeIndexShareBps(uint16)", uint16(5000))
+        );
+        assertTrue(indexOk);
+        assertEq(uint256(harness.mintBurnFeeIndexShareBpsExternal()), 5000);
+    }
+
+    function test_BugCondition_TimelockFallback_ShouldAllowOwnerWhenUnset() public {
+        EqualIndexAdminHarness harness = new EqualIndexAdminHarness();
+        harness.setOwner(address(this));
+        harness.setTimelock(address(0));
+
+        MockERC20Launch local = new MockERC20Launch("Local EVE", "LEVE");
+        Types.PoolConfig memory cfg = _poolConfig();
+        Types.ActionFeeSet memory actionFees = _actionFees();
+        harness.setDefaultPoolConfig(cfg);
+        harness.initPoolWithActionFees(1, address(local), cfg, actionFees);
+
+        EqualIndexBaseV3.CreateIndexParams memory params =
+            _singleAssetIndexParams("Fallback", "FALL", address(local), 0, 0);
+        (uint256 indexId,) = harness.createIndex(params);
+
+        harness.setPaused(indexId, true);
+
+        assertTrue(harness.getIndex(indexId).paused);
+    }
+
+    function test_BugCondition_RecoveryGrace_ShouldBlockImmediateRecovery() public {
+        eve.mint(alice, 200e18);
+        uint256 positionId = _mintPosition(alice, 1);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 200e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 200e18, 200e18);
+        vm.stopPrank();
+
+        (uint256 indexId,) =
+            _createIndexThroughTimelock(_singleAssetIndexParams("Grace Index", "GRACE", address(eve), 0, 0));
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(positionId, indexId, 2e18);
+
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(
+                EqualIndexLendingFacet.configureLending.selector, indexId, 10_000, 1 days, 30 days
+            )
+        );
+
+        vm.prank(alice);
+        uint256 loanId = EqualIndexLendingFacet(diamond).borrowFromPosition(positionId, indexId, 1e18, 1 days);
+        uint40 maturity = EqualIndexLendingFacet(diamond).getLoan(loanId).maturity;
+
+        vm.warp(uint256(maturity) + 1);
+        vm.expectRevert(abi.encodeWithSelector(LibEqualIndexLending.LoanNotExpired.selector, loanId, maturity));
+        EqualIndexLendingFacet(diamond).recoverExpiredIndexLoan(loanId);
+
+        vm.warp(uint256(maturity) + 1 hours + 1);
+        EqualIndexLendingFacet(diamond).recoverExpiredIndexLoan(loanId);
+
+        assertEq(EqualIndexLendingFacet(diamond).getLoan(loanId).collateralUnits, 0);
+    }
+
+    function test_MaintenanceExemptLockedCollateral_RecoveryExplorationBaseline() public {
+        eve.mint(alice, 200e18);
+        uint256 positionId = _mintPosition(alice, 1);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 200e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 200e18, 200e18);
+        vm.stopPrank();
+
+        (uint256 indexId,) = _createIndexThroughTimelock(
+            _singleAssetIndexParams("Maintenance Index", "MAIN", address(eve), 0, 0)
+        );
+        uint256 indexPoolId = EqualIndexAdminFacetV3(diamond).getIndexPoolId(indexId);
+
+        vm.prank(alice);
+        EqualIndexPositionFacet(diamond).mintFromPosition(positionId, indexId, 2e18);
+
+        _timelockCall(
+            diamond,
+            abi.encodeWithSelector(
+                EqualIndexLendingFacet.configureLending.selector, indexId, 10_000, 1 days, 30 days
+            )
+        );
+
+        vm.prank(alice);
+        uint256 loanId = EqualIndexLendingFacet(diamond).borrowFromPosition(positionId, indexId, 1e18, 1 days);
+
+        vm.warp(block.timestamp + 36500 days);
+        EqualIndexLendingFacet(diamond).recoverExpiredIndexLoan(loanId);
+
+        assertEq(EqualIndexLendingFacet(diamond).getLoan(loanId).collateralUnits, 0);
+        assertEq(testSupport.getPoolView(indexPoolId).indexEncumberedTotal, 0);
+    }
+
+    function test_BugCondition_ExactPullMint_ShouldOnlyTransferQuotedInput() public {
+        MockERC20Launch exact = new MockERC20Launch("Exact", "EXACT");
+        _initPoolWithActionFees(7, address(exact), _poolConfig(), _actionFees());
+
+        EqualIndexBaseV3.CreateIndexParams memory params =
+            _singleAssetIndexParams("Exact Pull", "XPULL", address(exact), 0, 0);
+        params.bundleAmounts[0] = 1;
+        (uint256 indexId,) = _createIndexThroughTimelock(params);
+
+        exact.mint(bob, 2);
+        uint256 diamondBefore = exact.balanceOf(diamond);
+
+        vm.startPrank(bob);
+        exact.approve(diamond, 2);
+        uint256[] memory maxInputs = new uint256[](1);
+        maxInputs[0] = 2;
+        EqualIndexActionsFacetV3(diamond).mint(indexId, 1e18, bob, maxInputs);
+        vm.stopPrank();
+
+        assertEq(exact.balanceOf(diamond) - diamondBefore, 1);
+    }
+
+    function test_BugCondition_PositionMintFeeRouting_ShouldSucceedWithLowTrackedBalance() public {
+        eve.mint(alice, 2e18);
+        uint256 positionId = _mintPosition(alice, 1);
+        bytes32 positionKey = positionNft.getPositionKey(positionId);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 2e18);
+        PositionManagementFacet(diamond).depositToPosition(positionId, 1, 2e18, 2e18);
+        vm.stopPrank();
+
+        EqualIndexBaseV3.CreateIndexParams memory params =
+            _singleAssetIndexParams("Fee Route", "FROUTE", address(eve), 1000, 0);
+        _createIndexThroughTimelock(params);
+
+        testSupport.setPoolTrackedBalance(1, 0);
+        assertEq(testSupport.principalOf(1, positionKey), 2e18);
+
+        vm.prank(alice);
+        uint256 minted = EqualIndexPositionFacet(diamond).mintFromPosition(positionId, 0, 1e18);
+
+        assertEq(minted, 1e18);
     }
 
     function test_EqualIndexWalletAndPositionFlows_RunWithoutSingletonProductBundle() public {
