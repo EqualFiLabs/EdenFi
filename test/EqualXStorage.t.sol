@@ -220,6 +220,21 @@ contract EqualXStorageHarness is EqualXViewFacet {
         market.finalized = finalized;
     }
 
+    function closeSolo(uint256 marketId) external {
+        LibEqualXSoloAmmStorage.SoloAmmMarket storage market = LibEqualXSoloAmmStorage.s().markets[marketId];
+        market.active = false;
+        market.finalized = true;
+        LibEqualXDiscoveryStorage.removeActiveMarket(
+            LibEqualXDiscoveryStorage.s(), LibEqualXTypes.MarketType.SOLO_AMM, marketId
+        );
+    }
+
+    function registerSoloAgain(bytes32 positionKey, address tokenA, address tokenB, uint256 marketId) external {
+        LibEqualXDiscoveryStorage.registerMarket(
+            LibEqualXDiscoveryStorage.s(), positionKey, tokenA, tokenB, LibEqualXTypes.MarketType.SOLO_AMM, marketId
+        );
+    }
+
     function setSoloRebalanceTiming(uint256 marketId, uint64 lastRebalanceExecutionAt, uint64 rebalanceTimelock) external {
         LibEqualXSoloAmmStorage.SoloAmmMarket storage market = LibEqualXSoloAmmStorage.s().markets[marketId];
         market.lastRebalanceExecutionAt = lastRebalanceExecutionAt;
@@ -260,6 +275,38 @@ contract EqualXStorageTest is Test {
 
     function setUp() public {
         harness = new EqualXStorageHarness();
+    }
+
+    function test_BugCondition_DiscoverySemantics_ShouldPreserveHistoricalPointersAfterSoloClose() public {
+        uint256 soloId = harness.createSolo(POSITION_KEY_ONE, 1, TOKEN_A, TOKEN_B);
+
+        harness.closeSolo(soloId);
+
+        LibEqualXTypes.MarketPointer[] memory historicalByPosition = harness.getEqualXMarketsByPosition(POSITION_KEY_ONE);
+        LibEqualXTypes.MarketPointer[] memory historicalByPair = harness.getEqualXMarketsByPair(TOKEN_A, TOKEN_B);
+        LibEqualXTypes.MarketPointer[] memory activeSolo =
+            harness.getEqualXActiveMarkets(LibEqualXTypes.MarketType.SOLO_AMM);
+
+        assertEq(historicalByPosition.length, 1);
+        assertEq(historicalByPosition[0].marketId, soloId);
+        assertEq(historicalByPair.length, 1);
+        assertEq(historicalByPair[0].marketId, soloId);
+        assertEq(activeSolo.length, 0);
+    }
+
+    function test_BugCondition_DiscoveryDuplicate_ShouldNotDuplicateMarketPointers() public {
+        uint256 soloId = harness.createSolo(POSITION_KEY_ONE, 1, TOKEN_A, TOKEN_B);
+
+        harness.registerSoloAgain(POSITION_KEY_ONE, TOKEN_A, TOKEN_B, soloId);
+
+        LibEqualXTypes.MarketPointer[] memory byPosition = harness.getEqualXMarketsByPosition(POSITION_KEY_ONE);
+        LibEqualXTypes.MarketPointer[] memory byPair = harness.getEqualXMarketsByPair(TOKEN_A, TOKEN_B);
+        LibEqualXTypes.MarketPointer[] memory activeSolo =
+            harness.getEqualXActiveMarkets(LibEqualXTypes.MarketType.SOLO_AMM);
+
+        assertEq(byPosition.length, 1, "position discovery should deduplicate market pointers");
+        assertEq(byPair.length, 1, "pair discovery should deduplicate market pointers");
+        assertEq(activeSolo.length, 1, "active discovery should deduplicate market pointers");
     }
 
     function test_ModuleStorageMaintainsIndependentIdSequences() public {

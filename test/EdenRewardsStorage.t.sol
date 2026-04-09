@@ -122,6 +122,12 @@ contract EdenRewardsStorageTest is Test {
         harness = new EdenRewardsStorageHarness();
     }
 
+    function test_BugCondition_AllocateProgramId_ShouldStartAtOne() public {
+        uint256 firstProgramId = harness.createProgram(7, rewardA, manager, 1e18, 100, 200, true, false, false);
+
+        assertGe(firstProgramId, 1, "first reward program id should be one-based");
+    }
+
     function test_ProgramIdsIncrementAndConfigsPersist() public {
         uint256 firstProgramId = harness.createProgram(7, rewardA, manager, 1e18, 100, 200, true, false, false);
         uint256 secondProgramId = harness.createProgram(9, rewardB, manager, 2e18, 300, 400, false, false, false);

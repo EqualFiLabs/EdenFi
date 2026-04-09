@@ -107,6 +107,10 @@ contract OptionsFacetTest is LaunchFixture {
         operator = _addr("operator");
     }
 
+    function test_BugCondition_DiamondInit_ShouldDefaultEuropeanToleranceToFiveMinutes() public {
+        assertEq(OptionsViewFacet(diamond).europeanToleranceSeconds(), 300);
+    }
+
     function test_BugCondition_SetEuropeanTolerance_ShouldRejectToleranceOverflow() public {
         uint64 excessiveTolerance = MAX_EUROPEAN_TOLERANCE + 1;
         bytes memory data = abi.encodeWithSelector(OptionsFacet.setEuropeanTolerance.selector, excessiveTolerance);

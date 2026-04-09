@@ -2576,6 +2576,22 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
 contract EqualScaleAlphaFacetBugConditionTest is EqualScaleAlphaFacetTest {
     uint256 internal constant NATIVE_SETTLEMENT_POOL_ID = 71;
 
+    function test_BugCondition_CommitmentTracking_ShouldPruneCanceledPositionId() external {
+        uint256 lineId = _openLineToPool();
+        uint256 lenderPositionId = _fundSettlementPosition(bob, 600e18);
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionId, 400e18);
+
+        vm.prank(bob);
+        facet.cancelCommitment(lineId, lenderPositionId);
+
+        uint256[] memory lenderPositionIds = facet.lineCommitmentPositionIds(lineId);
+        for (uint256 i = 0; i < lenderPositionIds.length; i++) {
+            require(lenderPositionIds[i] != lenderPositionId, "canceled commitment position id should be pruned");
+        }
+    }
+
     function test_BugCondition_ChargeOffDebt_ShouldClearBorrowerDebtAndAciPrincipal() external {
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
         params.aprBps = 0;
