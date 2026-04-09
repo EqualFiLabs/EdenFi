@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {LibAppStorage} from "../libraries/LibAppStorage.sol";
+import {LibOptionsStorage} from "../libraries/LibOptionsStorage.sol";
 import {LibPositionNFT} from "../libraries/LibPositionNFT.sol";
 import {LibTimelock} from "../libraries/LibTimelock.sol";
 import {PositionNFT} from "../nft/PositionNFT.sol";
@@ -14,6 +15,7 @@ contract DiamondInit {
         }
         app.timelock = timelock_;
         app.treasury = treasury_;
+        LibOptionsStorage.s().europeanToleranceSeconds = 300;
 
         if (positionNFTContract_ != address(0)) {
             LibPositionNFT.PositionNFTStorage storage nftStorage = LibPositionNFT.s();
