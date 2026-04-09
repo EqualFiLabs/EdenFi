@@ -65,6 +65,57 @@ contract EdenRewardsStorageHarness {
         store.accruedRewards[programId][positionKey] = accrued;
     }
 
+    function fundProgram(uint256 programId, uint256 amount) external {
+        LibEdenRewardsStorage.s().programs[programId].state.fundedReserve += amount;
+    }
+
+    function setEligibleSupply(uint256 programId, uint256 eligibleSupply) external {
+        LibEdenRewardsStorage.s().programs[programId].state.eligibleSupply = eligibleSupply;
+    }
+
+    function accrueProgram(uint256 programId, uint256 elapsed)
+        external
+        returns (uint256 allocated, uint256 globalRewardIndex)
+    {
+        LibEdenRewardsStorage.RewardProgram storage program = LibEdenRewardsStorage.s().programs[programId];
+        uint256 availableReserve = program.state.fundedReserve;
+        allocated = program.config.rewardRatePerSecond * elapsed;
+        if (allocated > availableReserve) {
+            allocated = availableReserve;
+        }
+
+        uint256 eligibleSupply = program.state.eligibleSupply;
+        if (allocated != 0 && eligibleSupply != 0) {
+            program.state.globalRewardIndex += (allocated * LibEdenRewardsStorage.REWARD_INDEX_SCALE) / eligibleSupply;
+        }
+        program.state.fundedReserve = availableReserve - allocated;
+        program.state.lastRewardUpdate += elapsed;
+        globalRewardIndex = program.state.globalRewardIndex;
+    }
+
+    function settlePositionRewards(uint256 programId, bytes32 positionKey, uint256 eligibleBalance)
+        external
+        returns (uint256 claimable)
+    {
+        LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
+        uint256 checkpoint = store.positionRewardIndex[programId][positionKey];
+        uint256 globalRewardIndex = store.programs[programId].state.globalRewardIndex;
+        uint256 newlyAccrued = 0;
+        if (globalRewardIndex > checkpoint && eligibleBalance != 0) {
+            newlyAccrued = (eligibleBalance * (globalRewardIndex - checkpoint)) / LibEdenRewardsStorage.REWARD_INDEX_SCALE;
+        }
+
+        claimable = store.accruedRewards[programId][positionKey] + newlyAccrued;
+        store.positionRewardIndex[programId][positionKey] = globalRewardIndex;
+        store.accruedRewards[programId][positionKey] = claimable;
+    }
+
+    function claimPositionRewards(uint256 programId, bytes32 positionKey) external returns (uint256 claimed) {
+        LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
+        claimed = store.accruedRewards[programId][positionKey];
+        store.accruedRewards[programId][positionKey] = 0;
+    }
+
     function nextProgramId() external view returns (uint256) {
         return LibEdenRewardsStorage.s().nextProgramId;
     }
@@ -156,6 +207,48 @@ contract EdenRewardsStorageTest is Test {
         assertEq(state.lastRewardUpdate, 1234);
         assertEq(state.globalRewardIndex, 9e27);
         assertEq(state.eligibleSupply, 25e18);
+
+        uint256[] memory programsForSeven = harness.getTargetProgramIds(7);
+        assertEq(programsForSeven.length, 2);
+        assertEq(programsForSeven[0], firstProgramId);
+        assertEq(programsForSeven[1], secondProgramId);
+
+        uint256[] memory programsForNine = harness.getTargetProgramIds(9);
+        assertEq(programsForNine.length, 1);
+        assertEq(programsForNine[0], thirdProgramId);
+    }
+
+    function test_Integration_OneBasedProgramLifecycle_FundAccrueClaimAndDiscovery() public {
+        bytes32 alicePositionKey = keccak256("alice-position");
+
+        uint256 firstProgramId = harness.createProgram(7, rewardA, manager, 1e18, 100, 200, true, false, false);
+        uint256 secondProgramId = harness.createProgram(7, rewardB, manager, 2e18, 300, 400, true, false, false);
+        uint256 thirdProgramId = harness.createProgram(9, rewardA, manager, 3e18, 500, 700, true, false, false);
+
+        assertEq(firstProgramId, 1);
+        assertEq(secondProgramId, 2);
+        assertEq(thirdProgramId, 3);
+
+        harness.setEligibleSupply(secondProgramId, 25e18);
+        harness.fundProgram(secondProgramId, 100e18);
+
+        (uint256 allocated, uint256 globalRewardIndex) = harness.accrueProgram(secondProgramId, 10);
+        assertEq(allocated, 20e18);
+        assertEq(globalRewardIndex, 8e26);
+
+        LibEdenRewardsStorage.RewardProgramState memory state = harness.getProgramState(secondProgramId);
+        assertEq(state.fundedReserve, 80e18);
+        assertEq(state.lastRewardUpdate, 10);
+        assertEq(state.globalRewardIndex, 8e26);
+
+        uint256 claimable = harness.settlePositionRewards(secondProgramId, alicePositionKey, 10e18);
+        assertEq(claimable, 8e18);
+        assertEq(harness.getPositionRewardIndex(secondProgramId, alicePositionKey), 8e26);
+        assertEq(harness.getAccruedRewards(secondProgramId, alicePositionKey), 8e18);
+
+        uint256 claimed = harness.claimPositionRewards(secondProgramId, alicePositionKey);
+        assertEq(claimed, 8e18);
+        assertEq(harness.getAccruedRewards(secondProgramId, alicePositionKey), 0);
 
         uint256[] memory programsForSeven = harness.getTargetProgramIds(7);
         assertEq(programsForSeven.length, 2);

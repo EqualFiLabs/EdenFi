@@ -979,6 +979,78 @@ contract OptionsFacetTest is LaunchFixture {
         assertEq(reclaimed.collateralLocked, 0);
     }
 
+    function test_Integration_DefaultAndUpdatedEuropeanTolerance_ExerciseWindowsRemainCorrect() public {
+        assertEq(OptionsViewFacet(diamond).europeanToleranceSeconds(), 300);
+
+        (uint256 defaultPositionId,) = _prepareCallWriter(alice, 10e18, 10e18, SIX_DEC_PID);
+        LibOptionsStorage.CreateOptionSeriesParams memory defaultEuropeanParams =
+            _callParams(defaultPositionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE);
+        defaultEuropeanParams.isAmerican = false;
+        uint64 defaultExpiry = uint64(block.timestamp + 1 days);
+        defaultEuropeanParams.expiry = defaultExpiry;
+        uint256 defaultSeriesId = _createSeries(alice, defaultEuropeanParams);
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, defaultSeriesId, 1e18, "");
+
+        uint256 defaultPayment = OptionsViewFacet(diamond).previewExercisePayment(defaultSeriesId, 1e18);
+        sixDecStrike.mint(bob, defaultPayment);
+
+        vm.warp(defaultExpiry - 301);
+        vm.prank(bob);
+        IERC20(address(sixDecStrike)).approve(diamond, defaultPayment);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(OptionsFacet.Options_ExerciseWindowClosed.selector, defaultSeriesId));
+        OptionsFacet(diamond).exerciseOptions(defaultSeriesId, 1e18, bob, defaultPayment, 1e18);
+
+        vm.warp(defaultExpiry - 300);
+        vm.prank(bob);
+        OptionsFacet(diamond).exerciseOptions(defaultSeriesId, 1e18, bob, defaultPayment, 1e18);
+
+        _setEuropeanTolerance(600);
+        assertEq(OptionsViewFacet(diamond).europeanToleranceSeconds(), 600);
+
+        (uint256 overridePositionId,) = _prepareCallWriter(alice, 10e18, 10e18, SIX_DEC_PID);
+        LibOptionsStorage.CreateOptionSeriesParams memory overrideEuropeanParams =
+            _callParams(overridePositionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE);
+        overrideEuropeanParams.isAmerican = false;
+        uint64 overrideExpiry = uint64(block.timestamp + 1 days);
+        overrideEuropeanParams.expiry = overrideExpiry;
+        uint256 overrideSeriesId = _createSeries(alice, overrideEuropeanParams);
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, overrideSeriesId, 1e18, "");
+
+        uint256 overridePayment = OptionsViewFacet(diamond).previewExercisePayment(overrideSeriesId, 1e18);
+        sixDecStrike.mint(bob, overridePayment);
+
+        vm.warp(overrideExpiry - 601);
+        vm.prank(bob);
+        IERC20(address(sixDecStrike)).approve(diamond, overridePayment);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(OptionsFacet.Options_ExerciseWindowClosed.selector, overrideSeriesId));
+        OptionsFacet(diamond).exerciseOptions(overrideSeriesId, 1e18, bob, overridePayment, 1e18);
+
+        vm.warp(overrideExpiry - 600);
+        vm.prank(bob);
+        OptionsFacet(diamond).exerciseOptions(overrideSeriesId, 1e18, bob, overridePayment, 1e18);
+
+        (uint256 americanPositionId,) = _prepareCallWriter(alice, 10e18, 10e18, SIX_DEC_PID);
+        uint256 americanSeriesId = _createSeries(alice, _callParams(americanPositionId, SIX_DEC_PID, 1e18, BASE_CONTRACT_SIZE));
+
+        vm.prank(alice);
+        optionToken.safeTransferFrom(alice, bob, americanSeriesId, 1e18, "");
+
+        uint256 americanPayment = OptionsViewFacet(diamond).previewExercisePayment(americanSeriesId, 1e18);
+        sixDecStrike.mint(bob, americanPayment);
+
+        vm.warp(block.timestamp + 12 hours);
+        vm.prank(bob);
+        IERC20(address(sixDecStrike)).approve(diamond, americanPayment);
+        vm.prank(bob);
+        OptionsFacet(diamond).exerciseOptions(americanSeriesId, 1e18, bob, americanPayment, 1e18);
+    }
+
     function test_Integration_ToleranceBounding_PreservesValidTolerance() public {
         _setEuropeanTolerance(1 hours);
         assertEq(OptionsViewFacet(diamond).europeanToleranceSeconds(), 1 hours);

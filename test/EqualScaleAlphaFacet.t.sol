@@ -1587,6 +1587,75 @@ contract EqualScaleAlphaFacetTest is IEqualScaleAlphaEvents {
         require(second.interestReceived == secondInterestShare, "second interest share mismatch");
     }
 
+    function test_Integration_CommitmentPruningLifecycle_CancelRecommitRepayAndClose() external {
+        EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
+        params.maxDrawPerPeriod = TARGET_LIMIT;
+
+        uint256 borrowerPositionId = _registerBorrowerProfileForAlice();
+        vm.prank(alice);
+        uint256 lineId = facet.createLineProposal(borrowerPositionId, params);
+
+        vm.warp(block.timestamp + 3 days + 1);
+        facet.transitionToPooledOpen(lineId);
+
+        uint256 lenderPositionOne = _fundSettlementPosition(bob, 600e18);
+        uint256 lenderPositionTwo = _fundSettlementPosition(carol, 400e18);
+
+        vm.prank(bob);
+        facet.commitPooled(lineId, lenderPositionOne, 600e18);
+        vm.prank(carol);
+        facet.commitPooled(lineId, lenderPositionTwo, 400e18);
+
+        vm.prank(carol);
+        facet.cancelCommitment(lineId, lenderPositionTwo);
+
+        uint256[] memory trackedAfterCancel = facet.lineCommitmentPositionIds(lineId);
+        require(trackedAfterCancel.length == 1, "cancel should prune inactive commitment");
+        require(trackedAfterCancel[0] == lenderPositionOne, "remaining active lender mismatch");
+
+        vm.prank(carol);
+        facet.commitPooled(lineId, lenderPositionTwo, 400e18);
+
+        uint256[] memory trackedAfterRecommit = facet.lineCommitmentPositionIds(lineId);
+        require(trackedAfterRecommit.length == 2, "recommit should restore active tracking");
+        require(trackedAfterRecommit[0] == lenderPositionOne, "first lender should remain tracked");
+        require(trackedAfterRecommit[1] == lenderPositionTwo, "recommitted lender should be tracked");
+
+        vm.prank(carol);
+        facet.cancelCommitment(lineId, lenderPositionTwo);
+
+        vm.prank(alice);
+        facet.activateLine(lineId);
+
+        vm.prank(alice);
+        facet.draw(lineId, 300e18);
+
+        vm.warp(block.timestamp + PAYMENT_INTERVAL_SECS);
+        uint256 expectedInterest = _expectedInterest(300e18, PAYMENT_INTERVAL_SECS);
+        uint256 repayAmount = expectedInterest + 300e18;
+        _mintAndApprove(alice, repayAmount);
+
+        vm.prank(alice);
+        facet.repayLine(lineId, repayAmount);
+
+        LibEqualScaleAlphaStorage.Commitment memory first = facet.commitment(lineId, lenderPositionOne);
+        LibEqualScaleAlphaStorage.Commitment memory second = facet.commitment(lineId, lenderPositionTwo);
+        uint256[] memory trackedAfterRepay = facet.lineCommitmentPositionIds(lineId);
+
+        require(trackedAfterRepay.length == 1, "repay should retain only the active lender");
+        require(trackedAfterRepay[0] == lenderPositionOne, "repay tracked lender mismatch");
+        require(first.principalRepaid == 300e18, "active lender should receive all principal repayment");
+        require(first.interestReceived == expectedInterest, "active lender should receive all interest");
+        require(second.principalRepaid == 0, "canceled lender should not receive principal");
+        require(second.interestReceived == 0, "canceled lender should not receive interest");
+
+        vm.prank(alice);
+        facet.closeLine(lineId);
+
+        uint256[] memory trackedAfterClose = facet.lineCommitmentPositionIds(lineId);
+        require(trackedAfterClose.length == 0, "close should prune all tracked commitments");
+    }
+
     function test_repay_curesDelinquentAndRunoffLinesWhenCoverageIsRestored() external {
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposalParamsNone();
         params.maxDrawPerPeriod = TARGET_LIMIT;

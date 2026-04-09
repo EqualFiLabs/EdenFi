@@ -407,6 +407,43 @@ contract EqualXStorageTest is Test {
         assertEq(creatorDiscoveryAfter[0].marketId, communityId);
     }
 
+    function test_Integration_DiscoveryRegistry_TracksHistoricalLifecycleAndDedupedReregistration() public {
+        uint256 firstSoloId = harness.createSolo(POSITION_KEY_ONE, 10, TOKEN_A, TOKEN_B);
+
+        LibEqualXTypes.MarketPointer[] memory initialByPosition = harness.getEqualXMarketsByPosition(POSITION_KEY_ONE);
+        LibEqualXTypes.MarketPointer[] memory initialByPair = harness.getEqualXMarketsByPair(TOKEN_A, TOKEN_B);
+        LibEqualXTypes.MarketPointer[] memory initialActiveByPair = harness.getEqualXActiveMarketsByPair(TOKEN_A, TOKEN_B);
+
+        assertEq(initialByPosition.length, 1);
+        assertEq(initialByPosition[0].marketId, firstSoloId);
+        assertEq(initialByPair.length, 1);
+        assertEq(initialByPair[0].marketId, firstSoloId);
+        assertEq(initialActiveByPair.length, 1);
+        assertEq(initialActiveByPair[0].marketId, firstSoloId);
+
+        harness.closeSolo(firstSoloId);
+
+        uint256 secondSoloId = harness.createSolo(POSITION_KEY_ONE, 10, TOKEN_A, TOKEN_B);
+        harness.registerSoloAgain(POSITION_KEY_ONE, TOKEN_A, TOKEN_B, secondSoloId);
+
+        LibEqualXTypes.MarketPointer[] memory historicalByPosition = harness.getEqualXMarketsByPosition(POSITION_KEY_ONE);
+        LibEqualXTypes.MarketPointer[] memory historicalByPair = harness.getEqualXMarketsByPair(TOKEN_A, TOKEN_B);
+        LibEqualXTypes.MarketPointer[] memory activeSolo =
+            harness.getEqualXActiveMarkets(LibEqualXTypes.MarketType.SOLO_AMM);
+        LibEqualXTypes.MarketPointer[] memory activeByPair = harness.getEqualXActiveMarketsByPair(TOKEN_A, TOKEN_B);
+
+        assertEq(historicalByPosition.length, 2);
+        assertEq(historicalByPosition[0].marketId, firstSoloId);
+        assertEq(historicalByPosition[1].marketId, secondSoloId);
+        assertEq(historicalByPair.length, 2);
+        assertEq(historicalByPair[0].marketId, firstSoloId);
+        assertEq(historicalByPair[1].marketId, secondSoloId);
+        assertEq(activeSolo.length, 1);
+        assertEq(activeSolo[0].marketId, secondSoloId);
+        assertEq(activeByPair.length, 1);
+        assertEq(activeByPair[0].marketId, secondSoloId);
+    }
+
     function test_ViewFacetExposesStoredMarketShapes() public {
         uint256 soloId = harness.createSolo(POSITION_KEY_ONE, 10, TOKEN_A, TOKEN_B);
         uint256 communityId = harness.createCommunity(POSITION_KEY_ONE, 11, TOKEN_A, TOKEN_C);
