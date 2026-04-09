@@ -34,9 +34,35 @@ library LibEqualXDiscoveryStorage {
     ) internal {
         LibEqualXTypes.MarketPointer memory pointer =
             LibEqualXTypes.MarketPointer({marketType: marketType, marketId: marketId});
-        store.marketsByPosition[positionKey].push(pointer);
-        store.marketsByPair[pairKey(tokenA, tokenB)].push(pointer);
-        store.activeMarketsByType[uint8(marketType)].push(pointer);
+        LibEqualXTypes.MarketPointer[] storage byPosition = store.marketsByPosition[positionKey];
+        if (!_containsMarket(byPosition, marketType, marketId)) {
+            byPosition.push(pointer);
+        }
+
+        LibEqualXTypes.MarketPointer[] storage byPair = store.marketsByPair[pairKey(tokenA, tokenB)];
+        if (!_containsMarket(byPair, marketType, marketId)) {
+            byPair.push(pointer);
+        }
+
+        LibEqualXTypes.MarketPointer[] storage active = store.activeMarketsByType[uint8(marketType)];
+        if (!_containsMarket(active, marketType, marketId)) {
+            active.push(pointer);
+        }
+    }
+
+    function _containsMarket(
+        LibEqualXTypes.MarketPointer[] storage pointers,
+        LibEqualXTypes.MarketType marketType,
+        uint256 marketId
+    ) private view returns (bool) {
+        uint256 len = pointers.length;
+        for (uint256 i; i < len; ++i) {
+            if (pointers[i].marketType == marketType && pointers[i].marketId == marketId) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     function removeActiveMarket(
