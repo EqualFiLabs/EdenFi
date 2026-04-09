@@ -212,14 +212,15 @@ contract EqualIndexActionsFacetV3 is EqualIndexBaseV3, ReentrancyGuardModifiers 
         for (uint256 i = 0; i < len; i++) {
             MintLeg memory leg = _quoteMintLeg(idx, indexId, i, units, totalSupply);
 
+            if (maxInputAmounts[i] < leg.total) {
+                revert LibCurrency.LibCurrency_InvalidMax(maxInputAmounts[i], leg.total);
+            }
+
             if (LibCurrency.isNative(leg.asset)) {
                 state.hasNative = true;
                 state.nativeTotal += leg.total;
-                if (maxInputAmounts[i] < leg.total) {
-                    revert LibCurrency.LibCurrency_InvalidMax(maxInputAmounts[i], leg.total);
-                }
             } else {
-                uint256 received = LibCurrency.pullAtLeast(leg.asset, msg.sender, leg.total, maxInputAmounts[i]);
+                uint256 received = LibCurrency.pullAtLeast(leg.asset, msg.sender, leg.total, leg.total);
                 if (received < leg.total) {
                     revert LibCurrency.LibCurrency_InsufficientReceived(received, leg.total);
                 }
