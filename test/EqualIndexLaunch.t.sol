@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {EqualIndexActionsFacetV3} from "src/equalindex/EqualIndexActionsFacetV3.sol";
 import {EqualIndexAdminFacetV3} from "src/equalindex/EqualIndexAdminFacetV3.sol";
@@ -11,8 +12,8 @@ import {EqualIndexLendingFacet} from "src/equalindex/EqualIndexLendingFacet.sol"
 import {EqualIndexPositionFacet} from "src/equalindex/EqualIndexPositionFacet.sol";
 import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
-import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
+import {IEqualIndexFlashReceiver} from "src/interfaces/IEqualIndexFlashReceiver.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
 import {LibDiamond} from "src/libraries/LibDiamond.sol";
 import {LibPositionNFT} from "src/libraries/LibPositionNFT.sol";
@@ -83,6 +84,22 @@ contract EqualIndexAdminHarness is PoolManagementFacet, EqualIndexAdminFacetV3 {
     }
 }
 
+contract EqualIndexFlashLoanReceiverPreservation is IEqualIndexFlashReceiver {
+    function onEqualIndexFlashLoan(
+        uint256,
+        uint256,
+        address[] calldata assets,
+        uint256[] calldata amounts,
+        uint256[] calldata feeAmounts,
+        bytes calldata
+    ) external {
+        uint256 len = assets.length;
+        for (uint256 i = 0; i < len; i++) {
+            IERC20(assets[i]).transfer(msg.sender, amounts[i] + feeAmounts[i]);
+        }
+    }
+}
+
 contract EqualIndexLaunchTest is LaunchFixture {
     function setUp() public override {
         super.setUp();
@@ -139,6 +156,100 @@ contract EqualIndexLaunchTest is LaunchFixture {
 
         assertEq(ERC20(indexToken).balanceOf(diamond), 0);
         assertEq(EqualIndexAdminFacetV3(diamond).getIndex(indexId).totalUnits, 0);
+    }
+
+    function test_WalletMode_MintPreservesExactInputPull() public {
+        eve.mint(bob, 10e18);
+
+        (uint256 indexId,) =
+            _createIndexThroughTimelock(_singleAssetIndexParams("Exact Wallet", "EWLT", address(eve), 0, 0));
+
+        uint256 bobBefore = eve.balanceOf(bob);
+        uint256 diamondBefore = eve.balanceOf(diamond);
+
+        vm.startPrank(bob);
+        eve.approve(diamond, 10e18);
+        uint256[] memory maxInputs = new uint256[](1);
+        maxInputs[0] = 10e18;
+        EqualIndexActionsFacetV3(diamond).mint(indexId, 10e18, bob, maxInputs);
+        vm.stopPrank();
+
+        assertEq(eve.balanceOf(bob), bobBefore - 10e18);
+        assertEq(eve.balanceOf(diamond), diamondBefore + 10e18);
+        assertEq(ERC20(EqualIndexAdminFacetV3(diamond).getIndex(indexId).token).balanceOf(bob), 10e18);
+    }
+
+    function test_AdminPausePreservesAuthorizedTimelockAccess() public {
+        (uint256 indexId,) =
+            _createIndexThroughTimelock(_singleAssetIndexParams("Pauseable", "PAUSE", address(eve), 0, 0));
+
+        _timelockCall(diamond, abi.encodeWithSelector(EqualIndexAdminFacetV3.setPaused.selector, indexId, true));
+        assertTrue(EqualIndexAdminFacetV3(diamond).getIndex(indexId).paused);
+
+        _timelockCall(diamond, abi.encodeWithSelector(EqualIndexAdminFacetV3.setPaused.selector, indexId, false));
+        assertTrue(!EqualIndexAdminFacetV3(diamond).getIndex(indexId).paused);
+    }
+
+    function test_IndexFlashLoanPreservesVaultAndFeePotAccounting() public {
+        EqualIndexBaseV3.CreateIndexParams memory params;
+        params.name = "Flash Preserve";
+        params.symbol = "FPRE";
+        params.assets = new address[](2);
+        params.assets[0] = address(eve);
+        params.assets[1] = address(alt);
+        params.bundleAmounts = new uint256[](2);
+        params.bundleAmounts[0] = 1e18;
+        params.bundleAmounts[1] = 2e18;
+        params.mintFeeBps = new uint16[](2);
+        params.burnFeeBps = new uint16[](2);
+        params.flashFeeBps = 50;
+
+        uint256 evePositionId = _mintPosition(alice, 1);
+        uint256 altPositionId = _mintPosition(alice, 2);
+        eve.mint(alice, 200e18);
+        alt.mint(alice, 200e18);
+
+        vm.startPrank(alice);
+        eve.approve(diamond, 200e18);
+        PositionManagementFacet(diamond).depositToPosition(evePositionId, 1, 100e18, 100e18);
+        alt.approve(diamond, 200e18);
+        PositionManagementFacet(diamond).depositToPosition(altPositionId, 2, 100e18, 100e18);
+        vm.stopPrank();
+
+        (uint256 indexId,) = _createIndexThroughTimelock(params);
+
+        eve.mint(bob, 20e18);
+        alt.mint(bob, 40e18);
+        vm.startPrank(bob);
+        eve.approve(diamond, 20e18);
+        alt.approve(diamond, 40e18);
+        uint256[] memory maxInputs = new uint256[](2);
+        maxInputs[0] = 10e18;
+        maxInputs[1] = 20e18;
+        EqualIndexActionsFacetV3(diamond).mint(indexId, 10e18, bob, maxInputs);
+        vm.stopPrank();
+
+        uint256 eveVaultBefore = EqualIndexAdminFacetV3(diamond).getVaultBalance(indexId, address(eve));
+        uint256 altVaultBefore = EqualIndexAdminFacetV3(diamond).getVaultBalance(indexId, address(alt));
+        uint256 evePotBefore = EqualIndexAdminFacetV3(diamond).getFeePot(indexId, address(eve));
+        uint256 altPotBefore = EqualIndexAdminFacetV3(diamond).getFeePot(indexId, address(alt));
+
+        uint256 eveFee = Math.mulDiv(5e18, params.flashFeeBps, 10_000);
+        uint256 altFee = Math.mulDiv(10e18, params.flashFeeBps, 10_000);
+        uint256 evePotFee = eveFee - Math.mulDiv(eveFee, 1000, 10_000);
+        uint256 altPotFee = altFee - Math.mulDiv(altFee, 1000, 10_000);
+
+        EqualIndexFlashLoanReceiverPreservation receiver = new EqualIndexFlashLoanReceiverPreservation();
+        eve.mint(address(receiver), eveFee);
+        alt.mint(address(receiver), altFee);
+
+        vm.prank(carol);
+        EqualIndexActionsFacetV3(diamond).flashLoan(indexId, 5e18, address(receiver), bytes(""));
+
+        assertEq(EqualIndexAdminFacetV3(diamond).getVaultBalance(indexId, address(eve)), eveVaultBefore);
+        assertEq(EqualIndexAdminFacetV3(diamond).getVaultBalance(indexId, address(alt)), altVaultBefore);
+        assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(indexId, address(eve)), evePotBefore + evePotFee);
+        assertEq(EqualIndexAdminFacetV3(diamond).getFeePot(indexId, address(alt)), altPotBefore + altPotFee);
     }
 
     function test_BugCondition_WalletBurnFeeRounding_ShouldRoundUp() public {

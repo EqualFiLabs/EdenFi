@@ -23,6 +23,7 @@ import {Types} from "src/libraries/Types.sol";
 import {
     CanonicalPoolAlreadyInitialized,
     IndexPaused,
+    InsufficientIndexTokens,
     InsufficientUnencumberedPrincipal,
     InvalidArrayLength,
     InvalidBundleDefinition,
@@ -292,6 +293,51 @@ contract EqualIndexPortSmokeTest {
         _assertEq(harness.principalOf(indexPoolId, positionKey), 0, "index pool principal after burn");
         _assertEq(harness.indexEncumbranceOf(positionKey, 1), 0, "encumbrance released after burn");
         _assertGt(harness.principalOf(1, positionKey), 0, "base pool principal remains");
+    }
+
+    function test_RevertWhen_PositionMintExceedsAvailablePrincipal() public {
+        token.mint(alice, 10e18);
+
+        vm.prank(alice);
+        token.approve(address(harness), 10e18);
+        vm.prank(alice);
+        uint256 positionId = harness.mintPosition(1);
+        vm.prank(alice);
+        harness.depositToPosition(positionId, 1, 10e18, 10e18);
+
+        (uint256 indexId,) = harness.createIndex(_singleAssetParams("Insufficient Mint", "IMINT", 0, 0));
+
+        vm.expectRevert(abi.encodeWithSelector(InsufficientUnencumberedPrincipal.selector, 11e18, 10e18));
+        vm.prank(alice);
+        harness.mintFromPosition(positionId, indexId, 11e18);
+    }
+
+    function test_RevertWhen_PositionBurnExceedsPositionIndexBalance() public {
+        token.mint(alice, 20e18);
+        token.mint(bob, 10e18);
+
+        vm.prank(alice);
+        token.approve(address(harness), 20e18);
+        vm.prank(alice);
+        uint256 positionId = harness.mintPosition(1);
+        vm.prank(alice);
+        harness.depositToPosition(positionId, 1, 20e18, 20e18);
+
+        (uint256 indexId,) = harness.createIndex(_singleAssetParams("Insufficient Burn", "IBURN", 0, 0));
+
+        vm.prank(alice);
+        harness.mintFromPosition(positionId, indexId, 5e18);
+
+        vm.prank(bob);
+        token.approve(address(harness), 10e18);
+        uint256[] memory maxInputs = new uint256[](1);
+        maxInputs[0] = 5e18;
+        vm.prank(bob);
+        harness.mint(indexId, 5e18, bob, maxInputs);
+
+        vm.expectRevert(abi.encodeWithSelector(InsufficientIndexTokens.selector, 6e18, 5e18));
+        vm.prank(alice);
+        harness.burnFromPosition(positionId, indexId, 6e18);
     }
 
     function test_BugCondition_BurnEncumbered_ShouldRejectBurnPastAvailablePrincipal() public {
