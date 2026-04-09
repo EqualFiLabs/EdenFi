@@ -336,15 +336,11 @@ contract EqualIndexPositionFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         state.assetsOut[i] = leg.payout;
         state.feeAmounts[i] = leg.burnFee;
 
-        uint256 gross = leg.bundleOut + leg.potShare;
-        if (gross == 0) return;
-
-        uint256 navOut = Math.mulDiv(leg.payout, leg.bundleOut, gross);
-        uint256 potOut = leg.payout - navOut;
-
-        if (navOut > 0) {
-            LibIndexEncumbrance.unencumber(positionKey, poolId, indexId, navOut);
+        if (leg.bundleOut > 0) {
+            LibIndexEncumbrance.unencumber(positionKey, poolId, indexId, leg.bundleOut);
         }
+
+        uint256 potOut = leg.payout > leg.bundleOut ? leg.payout - leg.bundleOut : 0;
         if (potOut > 0) {
             LibFeeIndex.settle(poolId, positionKey);
             uint256 currentPrincipal = pool.userPrincipal[positionKey];
