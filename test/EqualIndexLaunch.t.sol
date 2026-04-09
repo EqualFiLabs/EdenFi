@@ -273,14 +273,17 @@ contract EqualIndexLaunchTest is LaunchFixture {
     function test_BugCondition_FeeShareSetter_ShouldUpdateConfiguredValues() public {
         EqualIndexAdminHarness harness = new EqualIndexAdminHarness();
         harness.setOwner(address(this));
-        harness.setTimelock(_addr("timelock"));
+        address timelock = _addr("timelock");
+        harness.setTimelock(timelock);
 
+        vm.prank(timelock);
         (bool poolOk,) = address(harness).call(
             abi.encodeWithSignature("setEqualIndexPoolFeeShareBps(uint16)", uint16(2000))
         );
         assertTrue(poolOk);
         assertEq(uint256(harness.poolFeeShareBpsExternal()), 2000);
 
+        vm.prank(timelock);
         (bool indexOk,) = address(harness).call(
             abi.encodeWithSignature("setEqualIndexMintBurnFeeIndexShareBps(uint16)", uint16(5000))
         );

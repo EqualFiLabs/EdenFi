@@ -19,6 +19,8 @@ contract EqualIndexAdminFacetV3 is EqualIndexBaseV3, ReentrancyGuardModifiers {
         uint16 flashFeeBps
     );
     event IndexPauseUpdated(uint256 indexed indexId, bool paused);
+    event EqualIndexPoolFeeShareBpsUpdated(uint16 oldBps, uint16 newBps);
+    event EqualIndexMintBurnFeeIndexShareBpsUpdated(uint16 oldBps, uint16 newBps);
 
     function createIndex(CreateIndexParams calldata p)
         external
@@ -82,6 +84,22 @@ contract EqualIndexAdminFacetV3 is EqualIndexBaseV3, ReentrancyGuardModifiers {
     function setPaused(uint256 indexId, bool paused) external onlyTimelock indexExists(indexId) {
         s().indexes[indexId].paused = paused;
         emit IndexPauseUpdated(indexId, paused);
+    }
+
+    function setEqualIndexPoolFeeShareBps(uint16 newBps) external onlyTimelock {
+        if (newBps > 10_000) revert InvalidParameterRange("poolFeeShareBps");
+
+        uint16 oldBps = s().poolFeeShareBps;
+        s().poolFeeShareBps = newBps;
+        emit EqualIndexPoolFeeShareBpsUpdated(oldBps, newBps);
+    }
+
+    function setEqualIndexMintBurnFeeIndexShareBps(uint16 newBps) external onlyTimelock {
+        if (newBps > 10_000) revert InvalidParameterRange("mintBurnFeeIndexShareBps");
+
+        uint16 oldBps = s().mintBurnFeeIndexShareBps;
+        s().mintBurnFeeIndexShareBps = newBps;
+        emit EqualIndexMintBurnFeeIndexShareBpsUpdated(oldBps, newBps);
     }
 
     function getIndex(uint256 indexId) external view indexExists(indexId) returns (IndexView memory index_) {
