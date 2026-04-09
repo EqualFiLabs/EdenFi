@@ -258,14 +258,13 @@ contract EqualIndexPositionFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
             uint256 poolShare = Math.mulDiv(leg.fee, poolFeeShareBps, 10_000);
             uint256 potShare = leg.fee - poolShare;
             if (potShare > 0) {
-                if (pool.trackedBalance < potShare) {
-                    revert InsufficientPoolLiquidity(potShare, pool.trackedBalance);
-                }
-                pool.trackedBalance -= potShare;
                 s().feePots[indexId][leg.asset] += potShare;
             }
             if (poolShare > 0) {
-                LibFeeRouter.routeManagedShare(leg.poolId, poolShare, POSITION_INDEX_FEE_SOURCE, true, 0);
+                pool.trackedBalance += poolShare;
+                LibFeeRouter.routeManagedShare(
+                    leg.poolId, poolShare, POSITION_INDEX_FEE_SOURCE, true, poolShare
+                );
             }
         }
     }
