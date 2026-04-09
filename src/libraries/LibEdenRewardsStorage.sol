@@ -57,8 +57,8 @@ library LibEdenRewardsStorage {
     }
 
     function allocateProgramId(RewardsStorage storage store) internal returns (uint256 programId) {
+        store.nextProgramId++;
         programId = store.nextProgramId;
-        store.nextProgramId = programId + 1;
     }
 
     function registerProgramTarget(RewardsStorage storage store, uint256 programId, RewardTarget memory target)

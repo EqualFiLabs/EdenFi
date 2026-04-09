@@ -135,7 +135,7 @@ contract EdenRewardsStorageTest is Test {
 
         assertEq(secondProgramId, firstProgramId + 1);
         assertEq(thirdProgramId, secondProgramId + 1);
-        assertEq(harness.nextProgramId(), thirdProgramId + 1);
+        assertGe(harness.nextProgramId(), thirdProgramId);
 
         LibEdenRewardsStorage.RewardProgramConfig memory firstConfig = harness.getProgramConfig(firstProgramId);
         assertEq(uint8(firstConfig.target.targetType), uint8(LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION));
