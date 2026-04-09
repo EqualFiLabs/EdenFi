@@ -20,6 +20,7 @@ import "../libraries/Errors.sol";
 /// @dev Borrowing is index-based: collateral index units unlock proportional underlying principal.
 contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
     uint256 internal constant INDEX_SCALE = 1e18;
+    uint256 internal constant RECOVERY_GRACE_PERIOD = 1 hours;
 
     struct BorrowPreparation {
         uint256 lockedAfter;
@@ -187,7 +188,7 @@ contract EqualIndexLendingFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         LibCurrency.assertZeroMsgValue();
 
         LibEqualIndexLending.IndexLoan memory loan = _loanSnapshot(loanId);
-        if (block.timestamp <= loan.maturity) {
+        if (block.timestamp <= uint256(loan.maturity) + RECOVERY_GRACE_PERIOD) {
             revert LibEqualIndexLending.LoanNotExpired(loanId, loan.maturity);
         }
 
