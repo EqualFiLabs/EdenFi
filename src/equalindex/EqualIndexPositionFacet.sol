@@ -287,7 +287,7 @@ contract EqualIndexPositionFacet is EqualIndexBaseV3, ReentrancyGuardModifiers {
         }
         leg.potShare = Math.mulDiv(potBalance, units, totalSupply);
         uint256 gross = leg.bundleOut + leg.potShare;
-        leg.burnFee = Math.mulDiv(gross, idx.burnFeeBps[i], 10_000);
+        leg.burnFee = Math.mulDiv(gross, idx.burnFeeBps[i], 10_000, Math.Rounding.Ceil);
         leg.payout = gross - leg.burnFee;
         leg.poolShare = Math.mulDiv(leg.burnFee, poolFeeShareBps, 10_000);
         leg.potFee = leg.burnFee - leg.poolShare;

@@ -248,7 +248,7 @@ contract EqualIndexActionsFacetV3 is EqualIndexBaseV3, ReentrancyGuardModifiers 
         }
         leg.potShare = Math.mulDiv(potBalance, units, totalSupply);
         uint256 gross = leg.bundleOut + leg.potShare;
-        leg.fee = Math.mulDiv(gross, idx.burnFeeBps[i], 10_000);
+        leg.fee = Math.mulDiv(gross, idx.burnFeeBps[i], 10_000, Math.Rounding.Ceil);
         leg.payout = gross - leg.fee;
     }
 
