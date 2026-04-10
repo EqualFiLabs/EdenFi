@@ -11,3 +11,7 @@ bytecode_hash = "none"
 [fmt]
 line_length = 120
 tab_width = 4
+
+[invariant]
+runs = 64
+depth = 100
