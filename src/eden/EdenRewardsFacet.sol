@@ -106,7 +106,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
             paused: false,
             closed: false
         });
-        store.programs[programId].state.lastRewardUpdate = block.timestamp;
+        store.programs[programId].state.lastRewardUpdate = startTime < block.timestamp ? startTime : block.timestamp;
         store.programs[programId].state.eligibleSupply = LibEdenRewardsConsumer.currentEligibleSupply(target);
         LibEdenRewardsStorage.registerProgramTarget(store, programId, target);
 
