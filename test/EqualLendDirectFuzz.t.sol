@@ -519,7 +519,12 @@ contract EqualLendDirectFixedFuzzTest is Test {
     function _borrowerNetFor(uint256 principal, uint16 aprBps, uint64 duration) internal pure returns (uint256) {
         uint256 platformFee = (principal * 100) / 10_000;
         uint256 effectiveDuration = duration < 1 days ? 1 days : duration;
-        uint256 interestAmount = (principal * uint256(aprBps) * effectiveDuration) / (365 days * 10_000);
+        uint256 interestAmount = Math.mulDiv(
+            principal,
+            uint256(aprBps) * effectiveDuration,
+            365 days * 10_000,
+            Math.Rounding.Ceil
+        );
         return principal - platformFee - interestAmount;
     }
 

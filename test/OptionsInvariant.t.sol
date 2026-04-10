@@ -66,6 +66,8 @@ contract OptionsInvariantHandler is Test {
         bytes32 callMakerPositionKey_,
         bytes32 putMakerPositionKey_
     ) external {
+        if (callMaker != address(0)) return;
+
         callMaker = callMaker_;
         putMaker = putMaker_;
         holderA = holderA_;

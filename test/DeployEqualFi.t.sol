@@ -190,7 +190,13 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
             )
         );
 
-        (LibEdenRewardsStorage.RewardProgramConfig memory config,) = EdenRewardsFacet(deployment.diamond).getRewardProgram(0);
+        uint256[] memory programIds = EdenRewardsFacet(deployment.diamond).getRewardProgramIdsByTarget(
+            LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION, 7
+        );
+        assertEq(programIds.length, 1);
+
+        (LibEdenRewardsStorage.RewardProgramConfig memory config,) =
+            EdenRewardsFacet(deployment.diamond).getRewardProgram(programIds[0]);
         assertEq(uint8(config.target.targetType), uint8(LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION));
         assertEq(config.target.targetId, 7);
         assertEq(config.rewardToken, address(rewardToken));

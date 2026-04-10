@@ -478,7 +478,7 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
         vm.prank(alice);
         EqualScaleAlphaFacet(diamond).draw(lineId, drawAmount);
 
-        vm.warp(block.timestamp + _boundUint(warpSeed, 1 days, PAYMENT_INTERVAL_SECS - 1));
+        vm.warp(block.timestamp + _boundUint(warpSeed, PAYMENT_INTERVAL_SECS, PAYMENT_INTERVAL_SECS + 7 days));
 
         LibEqualScaleAlphaStorage.CreditLine memory lineBefore = EqualScaleAlphaViewFacet(diamond).getCreditLine(lineId);
         EqualScaleAlphaViewFacet.RepayPreview memory preview =
@@ -505,7 +505,7 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
         uint256 borrowerPositionId = _createRegisteredBorrower(alice, borrowerTreasury, 0);
         EqualScaleAlphaFacet.LineProposalParams memory params = _defaultProposal();
         params.aprBps = 0;
-        params.minimumPaymentPerPeriod = 1;
+        params.minimumPaymentPerPeriod = 2e18;
         params.maxDrawPerPeriod = TARGET_LIMIT;
 
         (uint256 lineId,) = _createActiveFourLenderLine(borrowerPositionId, params);
@@ -514,7 +514,7 @@ contract EqualScaleAlphaFuzzTest is EqualScaleAlphaFuzzBase {
         vm.prank(alice);
         EqualScaleAlphaFacet(diamond).draw(lineId, drawAmount);
 
-        uint256 repayAmount = _boundUint(repaySeed, 1e18, drawAmount - 1);
+        uint256 repayAmount = _boundUint(repaySeed, 1, params.minimumPaymentPerPeriod - 1);
         alt.mint(alice, repayAmount);
         vm.startPrank(alice);
         alt.approve(diamond, repayAmount);
@@ -682,14 +682,16 @@ contract EqualScaleAlphaOwnershipHandler {
     function _attemptBorrowerProfileUpdate(address actor, uint256 metadataSeed) internal {
         bool shouldSucceed = actor == positionNft.ownerOf(borrowerPositionId);
         bytes32 metadataHash = keccak256(abi.encodePacked("ownership-handler", metadataSeed));
+        EqualScaleAlphaViewFacet.BorrowerProfileView memory profile =
+            EqualScaleAlphaViewFacet(diamond).getBorrowerProfile(borrowerPositionId);
 
         vm.prank(actor);
         (bool ok,) = diamond.call(
             abi.encodeWithSelector(
                 EqualScaleAlphaFacet.updateBorrowerProfile.selector,
                 borrowerPositionId,
-                actor,
-                bankrToken,
+                profile.treasuryWallet,
+                profile.bankrToken,
                 metadataHash
             )
         );

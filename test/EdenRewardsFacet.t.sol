@@ -40,7 +40,7 @@ contract EdenRewardsFacetTest is LaunchFixture {
             LibEdenRewardsStorage.RewardProgramState memory state
         ) = EdenRewardsFacet(diamond).getRewardProgram(programId);
 
-        assertEq(programId, 0);
+        assertEq(programId, 1);
         assertEq(uint8(config.target.targetType), uint8(LibEdenRewardsStorage.RewardTargetType.EQUAL_INDEX_POSITION));
         assertEq(config.target.targetId, indexId);
         assertEq(config.rewardToken, address(alt));

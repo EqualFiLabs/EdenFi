@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {EqualLendDirectFixedAgreementFacet} from "src/equallend/EqualLendDirectFixedAgreementFacet.sol";
 import {EqualLendDirectFixedOfferFacet} from "src/equallend/EqualLendDirectFixedOfferFacet.sol";
 import {EqualLendDirectLifecycleFacet} from "src/equallend/EqualLendDirectLifecycleFacet.sol";
@@ -470,7 +471,12 @@ contract EqualLendDirectLifecycleFacetTest is Test {
     function _borrowerNetFor(uint256 principal, uint16 aprBps, uint64 duration) internal pure returns (uint256) {
         uint256 platformFee = (principal * 100) / 10_000;
         uint256 effectiveDuration = duration < 1 days ? 1 days : duration;
-        uint256 interestAmount = (principal * uint256(aprBps) * effectiveDuration) / (365 days * 10_000);
+        uint256 interestAmount = Math.mulDiv(
+            principal,
+            uint256(aprBps) * effectiveDuration,
+            365 days * 10_000,
+            Math.Rounding.Ceil
+        );
         return principal - platformFee - interestAmount;
     }
 

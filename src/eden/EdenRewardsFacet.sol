@@ -374,7 +374,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
 
     function _program(uint256 programId) private view returns (LibEdenRewardsStorage.RewardProgram storage program) {
         LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
-        if (programId >= store.nextProgramId) revert RewardProgramNotFound(programId);
+        if (programId == 0 || programId > store.nextProgramId) revert RewardProgramNotFound(programId);
         program = store.programs[programId];
     }
 

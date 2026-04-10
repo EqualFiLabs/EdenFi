@@ -106,7 +106,7 @@ library LibFeeIndex {
         uint256 prevMaintenanceIndex = p.userMaintenanceIndex[user];
         if (globalMaintenanceIndex > prevMaintenanceIndex) {
             uint256 maintenanceDelta = globalMaintenanceIndex - prevMaintenanceIndex;
-            uint256 chargeablePrincipal = _chargeablePrincipal(p, user, principal);
+            uint256 chargeablePrincipal = _chargeablePrincipal(p, pid, user, principal);
             uint256 maintenanceFee = Math.mulDiv(chargeablePrincipal, maintenanceDelta, INDEX_SCALE);
             if (maintenanceFee > 0) {
                 if (maintenanceFee >= principal) {
@@ -170,7 +170,7 @@ library LibFeeIndex {
         }
 
         uint256 maintenanceDelta = globalMaintenanceIndex - userMaintenanceIndex;
-        uint256 chargeablePrincipal = _chargeablePrincipal(p, user, principal);
+        uint256 chargeablePrincipal = _chargeablePrincipal(p, pid, user, principal);
         uint256 maintenanceFee = Math.mulDiv(chargeablePrincipal, maintenanceDelta, INDEX_SCALE);
         if (maintenanceFee >= principal) {
             return 0;
@@ -178,12 +178,16 @@ library LibFeeIndex {
         return principal - maintenanceFee;
     }
 
-    function _chargeablePrincipal(Types.PoolData storage p, bytes32 user, uint256 principal)
+    function _chargeablePrincipal(Types.PoolData storage p, uint256 pid, bytes32 user, uint256 principal)
         private
         view
         returns (uint256)
     {
         uint256 exemptPrincipal = p.userIndexEncumberedPrincipal[user];
+        uint256 indexEncumberedPrincipal = LibEncumbrance.getIndexEncumbered(user, pid);
+        if (indexEncumberedPrincipal > exemptPrincipal) {
+            exemptPrincipal = indexEncumberedPrincipal;
+        }
         if (exemptPrincipal >= principal) {
             return 0;
         }
