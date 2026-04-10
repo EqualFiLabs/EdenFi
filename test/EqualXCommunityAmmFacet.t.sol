@@ -6,7 +6,9 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
-import {EqualXCommunityAmmFacet} from "src/equalx/EqualXCommunityAmmFacet.sol";
+import {EqualXCommunityAmmLiquidityFacet} from "src/equalx/EqualXCommunityAmmLiquidityFacet.sol";
+import {EqualXCommunityAmmSwapFacet} from "src/equalx/EqualXCommunityAmmSwapFacet.sol";
+import {EqualXCommunityAmmTypes} from "src/equalx/EqualXCommunityAmmTypes.sol";
 import {EqualXViewFacet} from "src/equalx/EqualXViewFacet.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {LibAppStorage} from "src/libraries/LibAppStorage.sol";
@@ -36,7 +38,8 @@ contract MockERC20EqualXCommunity is ERC20 {
 contract EqualXCommunityAmmHarness is
     PoolManagementFacet,
     PositionManagementFacet,
-    EqualXCommunityAmmFacet,
+    EqualXCommunityAmmLiquidityFacet,
+    EqualXCommunityAmmSwapFacet,
     EqualXViewFacet
 {
     function setOwner(address owner_) external {
@@ -281,7 +284,7 @@ contract EqualXCommunityAmmFacetTest is Test {
         assertEq(harness.encumberedCapitalOf(charliePositionKey, 2), 50e18);
 
         vm.warp(block.timestamp + 1 days);
-        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory preview =
+        EqualXCommunityAmmTypes.CommunityAmmSwapPreview memory preview =
             harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), 15e18);
         vm.prank(bob);
         harness.swapEqualXCommunityAmmExactIn(marketId, address(tokenA), 15e18, 15e18, preview.amountOut, bob);
@@ -302,7 +305,7 @@ contract EqualXCommunityAmmFacetTest is Test {
         uint256 marketId = _createJoinedCommunityMarket();
 
         vm.warp(block.timestamp + 1 days);
-        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory modulePreview =
+        EqualXCommunityAmmTypes.CommunityAmmSwapPreview memory modulePreview =
             harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), 15e18);
         EqualXViewFacet.EqualXSwapQuote memory viewPreview =
             harness.quoteEqualXCommunityAmmExactIn(marketId, address(tokenA), 15e18);
@@ -398,7 +401,7 @@ contract EqualXCommunityAmmFacetTest is Test {
         uint256 marketId = _createJoinedCommunityMarket();
 
         vm.warp(block.timestamp + 1 days);
-        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory preview =
+        EqualXCommunityAmmTypes.CommunityAmmSwapPreview memory preview =
             harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), 15e18);
         vm.prank(bob);
         harness.swapEqualXCommunityAmmExactIn(marketId, address(tokenA), 15e18, 15e18, preview.amountOut, bob);
@@ -455,7 +458,7 @@ contract EqualXCommunityAmmFacetTest is Test {
         harness.joinEqualXCommunityAmmMarket(marketId, charliePositionId, 50e18, 50e18);
 
         vm.warp(block.timestamp + 1 days);
-        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory preview =
+        EqualXCommunityAmmTypes.CommunityAmmSwapPreview memory preview =
             harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), 10e18);
         vm.prank(bob);
         uint256 amountOut =
@@ -498,7 +501,7 @@ contract EqualXCommunityAmmFacetTest is Test {
         harness.joinEqualXCommunityAmmMarket(marketId, charliePositionId, 50e18, 50e18);
 
         vm.warp(block.timestamp + 1 days);
-        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory preview =
+        EqualXCommunityAmmTypes.CommunityAmmSwapPreview memory preview =
             harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), 10e18);
 
         vm.resumeGasMetering();
@@ -526,7 +529,7 @@ contract EqualXCommunityAmmFacetTest is Test {
         );
 
         vm.warp(block.timestamp + 1 days);
-        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory preview =
+        EqualXCommunityAmmTypes.CommunityAmmSwapPreview memory preview =
             harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), 15e18);
         vm.prank(bob);
         harness.swapEqualXCommunityAmmExactIn(marketId, address(tokenA), 15e18, 15e18, preview.amountOut, bob);
@@ -600,7 +603,7 @@ contract EqualXCommunityAmmFacetTest is Test {
         uint256 marketId = _createJoinedCommunityMarket();
 
         vm.warp(block.timestamp + 1 days);
-        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory preview =
+        EqualXCommunityAmmTypes.CommunityAmmSwapPreview memory preview =
             harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), 15e18);
         vm.prank(bob);
         harness.swapEqualXCommunityAmmExactIn(marketId, address(tokenA), 15e18, 15e18, preview.amountOut, bob);
@@ -641,7 +644,7 @@ contract EqualXCommunityAmmFacetTest is Test {
         );
 
         vm.warp(block.timestamp + 1 days);
-        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory preview =
+        EqualXCommunityAmmTypes.CommunityAmmSwapPreview memory preview =
             harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), 15e18);
         vm.prank(bob);
         harness.swapEqualXCommunityAmmExactIn(marketId, address(tokenA), 15e18, 15e18, preview.amountOut, bob);

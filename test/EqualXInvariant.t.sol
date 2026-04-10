@@ -9,7 +9,9 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {PositionManagementFacet} from "src/equallend/PositionManagementFacet.sol";
 import {EqualXSoloAmmFacet} from "src/equalx/EqualXSoloAmmFacet.sol";
-import {EqualXCommunityAmmFacet} from "src/equalx/EqualXCommunityAmmFacet.sol";
+import {EqualXCommunityAmmLiquidityFacet} from "src/equalx/EqualXCommunityAmmLiquidityFacet.sol";
+import {EqualXCommunityAmmSwapFacet} from "src/equalx/EqualXCommunityAmmSwapFacet.sol";
+import {EqualXCommunityAmmTypes} from "src/equalx/EqualXCommunityAmmTypes.sol";
 import {EqualXCurveCreationFacet} from "src/equalx/EqualXCurveCreationFacet.sol";
 import {EqualXCurveManagementFacet} from "src/equalx/EqualXCurveManagementFacet.sol";
 import {EqualXCurveExecutionFacet} from "src/equalx/EqualXCurveExecutionFacet.sol";
@@ -114,7 +116,7 @@ contract EqualXHarnessBase is PoolManagementFacet, PositionManagementFacet, Equa
 
 contract EqualXSoloInvariantHarness is EqualXHarnessBase, EqualXSoloAmmFacet {}
 
-contract EqualXCommunityInvariantHarness is EqualXHarnessBase, EqualXCommunityAmmFacet {}
+contract EqualXCommunityInvariantHarness is EqualXHarnessBase, EqualXCommunityAmmLiquidityFacet, EqualXCommunityAmmSwapFacet {}
 
 contract EqualXCurveInvariantHarness is
     EqualXHarnessBase,
@@ -408,7 +410,7 @@ contract EqualXCommunityInvariantHandler is Test {
         if (!_marketLive()) return;
         uint256 amountIn = bound(amountSeed, 1e18, 25e18);
 
-        EqualXCommunityAmmFacet.CommunityAmmSwapPreview memory preview =
+        EqualXCommunityAmmTypes.CommunityAmmSwapPreview memory preview =
             harness.previewEqualXCommunityAmmSwapExactIn(marketId, address(tokenA), amountIn);
         vm.prank(taker);
         uint256 amountOut =

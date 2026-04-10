@@ -18,6 +18,12 @@ import {EqualIndexLendingFacet} from "src/equalindex/EqualIndexLendingFacet.sol"
 import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
 import {EqualScaleAlphaAdminFacet} from "src/equalscale/EqualScaleAlphaAdminFacet.sol";
 import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.sol";
+import {EqualXSoloAmmFacet} from "src/equalx/EqualXSoloAmmFacet.sol";
+import {EqualXCommunityAmmLiquidityFacet} from "src/equalx/EqualXCommunityAmmLiquidityFacet.sol";
+import {EqualXCommunityAmmSwapFacet} from "src/equalx/EqualXCommunityAmmSwapFacet.sol";
+import {EqualXCurveCreationFacet} from "src/equalx/EqualXCurveCreationFacet.sol";
+import {EqualXCurveExecutionFacet} from "src/equalx/EqualXCurveExecutionFacet.sol";
+import {EqualXCurveManagementFacet} from "src/equalx/EqualXCurveManagementFacet.sol";
 import {EqualXViewFacet} from "src/equalx/EqualXViewFacet.sol";
 import {FixedDelayTimelockController} from "src/governance/FixedDelayTimelockController.sol";
 import {IDiamondLoupe} from "src/interfaces/IDiamondLoupe.sol";
@@ -26,12 +32,14 @@ import {PositionAgentRegistryFacet} from "src/agent-wallet/erc6551/PositionAgent
 import {PositionAgentTBAFacet} from "src/agent-wallet/erc6551/PositionAgentTBAFacet.sol";
 import {PositionAgentViewFacet} from "src/agent-wallet/erc6551/PositionAgentViewFacet.sol";
 import {LibEdenRewardsStorage} from "src/libraries/LibEdenRewardsStorage.sol";
+import {Types} from "src/libraries/Types.sol";
 import {PositionNFT} from "src/nft/PositionNFT.sol";
 import {OptionToken} from "src/tokens/OptionToken.sol";
 import {OptionTokenAdminFacet} from "src/options/OptionTokenAdminFacet.sol";
 import {OptionTokenViewFacet} from "src/options/OptionTokenViewFacet.sol";
 import {OptionsFacet} from "src/options/OptionsFacet.sol";
 import {OptionsViewFacet} from "src/options/OptionsViewFacet.sol";
+import {PoolManagementFacet} from "src/equallend/PoolManagementFacet.sol";
 import {
     MockEntryPointLaunch,
     MockERC6551RegistryLaunch,
@@ -122,6 +130,12 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         assertTrue(loupe.facetAddress(EqualScaleAlphaFacet.registerBorrowerProfile.selector) != address(0));
         assertTrue(loupe.facetAddress(EqualScaleAlphaAdminFacet.freezeLine.selector) != address(0));
         assertTrue(loupe.facetAddress(EqualScaleAlphaViewFacet.getBorrowerProfile.selector) != address(0));
+        assertTrue(loupe.facetAddress(EqualXSoloAmmFacet.createEqualXSoloAmmMarket.selector) != address(0));
+        assertTrue(loupe.facetAddress(EqualXCommunityAmmLiquidityFacet.createEqualXCommunityAmmMarket.selector) != address(0));
+        assertTrue(loupe.facetAddress(EqualXCommunityAmmSwapFacet.previewEqualXCommunityAmmSwapExactIn.selector) != address(0));
+        assertTrue(loupe.facetAddress(EqualXCurveCreationFacet.createEqualXCurve.selector) != address(0));
+        assertTrue(loupe.facetAddress(EqualXCurveExecutionFacet.previewEqualXCurveQuote.selector) != address(0));
+        assertTrue(loupe.facetAddress(EqualXCurveManagementFacet.updateEqualXCurve.selector) != address(0));
         assertTrue(loupe.facetAddress(EqualXViewFacet.getEqualXSoloAmmPendingRebalance.selector) != address(0));
         assertTrue(loupe.facetAddress(OptionTokenAdminFacet.deployOptionToken.selector) != address(0));
         assertTrue(loupe.facetAddress(OptionTokenViewFacet.getOptionToken.selector) != address(0));
@@ -130,7 +144,7 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         assertTrue(loupe.facetAddress(EdenRewardsFacet.createRewardProgram.selector) != address(0));
 
         _assertNativeFacetSurfaceInstalled(loupe);
-        _assertEqualXViewSurfaceInstalled(loupe);
+        _assertEqualXFacetSurfaceInstalled(loupe);
         _assertDirectFacetSurfaceInstalled(loupe);
 
         assertEq(OptionTokenViewFacet(deployment.diamond).getOptionToken(), deployment.optionToken);
@@ -150,6 +164,48 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         assertEq(loupe.facetAddress(LEGACY_SSC_CLOSE_ROLLING_SELECTOR), address(0));
         assertEq(loupe.facetAddress(LEGACY_SSC_OPEN_FIXED_SELECTOR), address(0));
         assertEq(loupe.facetAddress(LEGACY_SSC_REPAY_FIXED_SELECTOR), address(0));
+    }
+
+    function test_DeployLocalLaunch_BootstrapsCorePoolsAndSeedAssetsForLocalTesting() public {
+        LocalLaunchDeployment memory deployment = deployLocalLaunch(
+            address(this),
+            address(this),
+            treasury,
+            address(entryPoint),
+            address(erc6551Registry),
+            address(identityRegistry)
+        );
+
+        assertEq(OwnershipFacet(deployment.launch.diamond).owner(), deployment.launch.timelockController);
+        assertEq(ERC20(deployment.eveToken).balanceOf(address(this)), LOCAL_TEST_MINT_AMOUNT);
+        assertEq(ERC20(deployment.altToken).balanceOf(address(this)), LOCAL_TEST_MINT_AMOUNT);
+        assertEq(ERC20(deployment.fotToken).balanceOf(address(this)), LOCAL_TEST_MINT_AMOUNT);
+
+        PoolManagementFacet.PoolInfoView memory eveInfo =
+            PoolManagementFacet(deployment.launch.diamond).getPoolInfoView(deployment.evePoolId);
+        PoolManagementFacet.PoolInfoView memory altInfo =
+            PoolManagementFacet(deployment.launch.diamond).getPoolInfoView(deployment.altPoolId);
+        PoolManagementFacet.PoolInfoView memory fotInfo =
+            PoolManagementFacet(deployment.launch.diamond).getPoolInfoView(deployment.fotPoolId);
+        PoolManagementFacet.PoolInfoView memory nativeInfo =
+            PoolManagementFacet(deployment.launch.diamond).getPoolInfoView(deployment.nativePoolId);
+
+        assertTrue(eveInfo.initialized);
+        assertTrue(altInfo.initialized);
+        assertTrue(fotInfo.initialized);
+        assertTrue(nativeInfo.initialized);
+        assertEq(eveInfo.underlying, deployment.eveToken);
+        assertEq(altInfo.underlying, deployment.altToken);
+        assertEq(fotInfo.underlying, deployment.fotToken);
+        assertEq(nativeInfo.underlying, address(0));
+
+        PoolManagementFacet.PoolConfigView memory eveConfig =
+            PoolManagementFacet(deployment.launch.diamond).getPoolConfigView(deployment.evePoolId);
+        assertEq(eveConfig.minDepositAmount, 1e18);
+        assertEq(eveConfig.minLoanAmount, 1e18);
+        assertEq(eveConfig.fixedTermConfigs.length, 1);
+        assertEq(eveConfig.fixedTermConfigs[0].durationSecs, 7 days);
+        assertEq(eveConfig.fixedTermConfigs[0].apyBps, 500);
     }
 
     function test_DeployLaunch_InitializesTimelockGovernanceForEdenRewards() public {
@@ -229,7 +285,13 @@ contract DeployEqualFiTest is Test, DeployEqualFi {
         assertTrue(sscLifecycleFacet != sscViewFacet);
     }
 
-    function _assertEqualXViewSurfaceInstalled(IDiamondLoupe loupe) internal view {
+    function _assertEqualXFacetSurfaceInstalled(IDiamondLoupe loupe) internal view {
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualXSoloAmm());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualXCommunityAmmLiquidity());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualXCommunityAmmSwap());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualXCurveCreation());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualXCurveExecution());
+        _assertFacetSelectorsInstalled(loupe, _selectorsEqualXCurveManagement());
         _assertFacetSelectorsInstalled(loupe, _selectorsEqualXView());
     }
 

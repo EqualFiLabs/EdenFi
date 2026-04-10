@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {Diamond} from "src/core/Diamond.sol";
 import {DiamondCutFacet} from "src/core/DiamondCutFacet.sol";
@@ -39,6 +40,12 @@ import {PositionMSCAImpl} from "src/agent-wallet/erc6900/PositionMSCAImpl.sol";
 import {EqualScaleAlphaFacet} from "src/equalscale/EqualScaleAlphaFacet.sol";
 import {EqualScaleAlphaAdminFacet} from "src/equalscale/EqualScaleAlphaAdminFacet.sol";
 import {EqualScaleAlphaViewFacet} from "src/equalscale/EqualScaleAlphaViewFacet.sol";
+import {EqualXSoloAmmFacet} from "src/equalx/EqualXSoloAmmFacet.sol";
+import {EqualXCommunityAmmLiquidityFacet} from "src/equalx/EqualXCommunityAmmLiquidityFacet.sol";
+import {EqualXCommunityAmmSwapFacet} from "src/equalx/EqualXCommunityAmmSwapFacet.sol";
+import {EqualXCurveCreationFacet} from "src/equalx/EqualXCurveCreationFacet.sol";
+import {EqualXCurveExecutionFacet} from "src/equalx/EqualXCurveExecutionFacet.sol";
+import {EqualXCurveManagementFacet} from "src/equalx/EqualXCurveManagementFacet.sol";
 import {EqualXViewFacet} from "src/equalx/EqualXViewFacet.sol";
 import {EdenRewardsFacet} from "src/eden/EdenRewardsFacet.sol";
 import {OptionTokenAdminFacet} from "src/options/OptionTokenAdminFacet.sol";
@@ -51,11 +58,61 @@ interface IPoolManagementFacetInitDefault {
     function initPool(address underlying) external payable returns (uint256);
 }
 
+contract LocalMockERC20 is ERC20 {
+    uint8 internal immutable localDecimals;
+
+    constructor(string memory name_, string memory symbol_, uint8 decimals_) ERC20(name_, symbol_) {
+        localDecimals = decimals_;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function decimals() public view override returns (uint8) {
+        return localDecimals;
+    }
+}
+
+contract LocalMockFeeOnTransfer is LocalMockERC20 {
+    uint256 internal constant BPS = 10_000;
+
+    uint256 public feeBps = 1000;
+    address public feeSink = address(0xdead);
+
+    constructor(string memory name_, string memory symbol_, uint8 decimals_)
+        LocalMockERC20(name_, symbol_, decimals_)
+    {}
+
+    function setFeeBps(uint256 newFeeBps) external {
+        require(newFeeBps <= BPS, "feeBps");
+        feeBps = newFeeBps;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        if (from == address(0) || to == address(0) || feeBps == 0) {
+            super._update(from, to, value);
+            return;
+        }
+
+        uint256 fee = (value * feeBps) / BPS;
+        uint256 remainder = value - fee;
+        super._update(from, feeSink, fee);
+        super._update(from, to, remainder);
+    }
+}
+
 contract DeployEqualFi is Script {
     string internal constant DEFAULT_OPTION_TOKEN_BASE_URI = "ipfs://equalfi/options";
+    uint256 internal constant LOCAL_TEST_MINT_AMOUNT = 1_000_000e18;
+    uint256 internal constant LOCAL_EVE_POOL_ID = 1;
+    uint256 internal constant LOCAL_ALT_POOL_ID = 2;
+    uint256 internal constant LOCAL_FOT_POOL_ID = 3;
+    uint256 internal constant LOCAL_NATIVE_POOL_ID = 4;
     uint256 internal constant DIAMOND_CORE_FACET_COUNT = 3;
     uint256 internal constant DIRECT_LAUNCH_FACET_COUNT = 9;
-    uint256 internal constant SUBSTRATE_LAUNCH_FACET_COUNT = 21 + DIRECT_LAUNCH_FACET_COUNT;
+    uint256 internal constant EQUALX_LAUNCH_FACET_COUNT = 7;
+    uint256 internal constant SUBSTRATE_LAUNCH_FACET_COUNT = 27 + DIRECT_LAUNCH_FACET_COUNT;
     uint256 internal constant EDEN_REWARDS_FACET_COUNT = 1;
     uint256 internal constant LAUNCH_FACET_COUNT = SUBSTRATE_LAUNCH_FACET_COUNT + EDEN_REWARDS_FACET_COUNT;
     uint256 internal constant TOTAL_FACET_COUNT = DIAMOND_CORE_FACET_COUNT + LAUNCH_FACET_COUNT;
@@ -79,6 +136,48 @@ contract DeployEqualFi is Script {
         address optionToken;
     }
 
+    struct LocalLaunchDeployment {
+        LaunchDeployment launch;
+        address eveToken;
+        address altToken;
+        address fotToken;
+        uint256 evePoolId;
+        uint256 altPoolId;
+        uint256 fotPoolId;
+        uint256 nativePoolId;
+    }
+
+    struct LaunchSetup {
+        BaseDeployment base;
+        address timelockController;
+        address optionToken;
+        address positionMSCAImplementation;
+    }
+
+    struct LocalTestTokens {
+        address eve;
+        address alt;
+        address fot;
+    }
+
+    struct LocalLaunchEnv {
+        address owner;
+        address governor;
+        address treasury;
+        address entryPoint;
+        address erc6551Registry;
+        address identityRegistry;
+        uint256 deployerPrivateKey;
+        address deployer;
+    }
+
+    struct LocalPoolBootstrap {
+        uint256 evePoolId;
+        uint256 altPoolId;
+        uint256 fotPoolId;
+        uint256 nativePoolId;
+    }
+
     function runBase() external returns (BaseDeployment memory deployment) {
         address treasury_ = vm.envAddress("TREASURY");
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
@@ -95,18 +194,12 @@ contract DeployEqualFi is Script {
     }
 
     function run() external returns (LaunchDeployment memory deployment) {
-        address governor_ = vm.envAddress("TIMELOCK");
-        address treasury_ = vm.envAddress("TREASURY");
-        address entryPoint_ = vm.envAddress("ENTRYPOINT_ADDRESS");
-        address erc6551Registry_ = vm.envAddress("ERC6551_REGISTRY");
-        address identityRegistry_ = vm.envAddress("IDENTITY_REGISTRY");
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.addr(deployerPrivateKey);
-        address owner_ = vm.envOr("OWNER", deployer);
-        require(deployer == owner_, "DeployEqualFi: PRIVATE_KEY must be OWNER");
+        LocalLaunchEnv memory env = _loadLaunchEnv();
 
-        vm.startBroadcast(deployerPrivateKey);
-        deployment = deployLaunch(owner_, governor_, treasury_, entryPoint_, erc6551Registry_, identityRegistry_);
+        vm.startBroadcast(env.deployerPrivateKey);
+        deployment = deployLaunch(
+            env.owner, env.governor, env.treasury, env.entryPoint, env.erc6551Registry, env.identityRegistry
+        );
         vm.stopBroadcast();
 
         console2.log("diamond", deployment.diamond);
@@ -119,6 +212,34 @@ contract DeployEqualFi is Script {
         console2.log("identityRegistry", deployment.identityRegistry);
         console2.log("positionMSCAImplementation", deployment.positionMSCAImplementation);
         console2.log("optionToken", deployment.optionToken);
+    }
+
+    function runLocal() external returns (LocalLaunchDeployment memory deployment) {
+        LocalLaunchEnv memory env = _loadLaunchEnv();
+
+        vm.startBroadcast(env.deployerPrivateKey);
+        deployment = deployLocalLaunch(
+            env.owner, env.governor, env.treasury, env.entryPoint, env.erc6551Registry, env.identityRegistry
+        );
+        vm.stopBroadcast();
+
+        console2.log("diamond", deployment.launch.diamond);
+        console2.log("positionNFT", deployment.launch.positionNFT);
+        console2.log("timelockController", deployment.launch.timelockController);
+        console2.log("governor", deployment.launch.governor);
+        console2.log("treasury", deployment.launch.treasury);
+        console2.log("entryPoint", deployment.launch.entryPoint);
+        console2.log("erc6551Registry", deployment.launch.erc6551Registry);
+        console2.log("identityRegistry", deployment.launch.identityRegistry);
+        console2.log("positionMSCAImplementation", deployment.launch.positionMSCAImplementation);
+        console2.log("optionToken", deployment.launch.optionToken);
+        console2.log("eveToken", deployment.eveToken);
+        console2.log("altToken", deployment.altToken);
+        console2.log("fotToken", deployment.fotToken);
+        console2.log("evePoolId", deployment.evePoolId);
+        console2.log("altPoolId", deployment.altPoolId);
+        console2.log("fotPoolId", deployment.fotPoolId);
+        console2.log("nativePoolId", deployment.nativePoolId);
     }
 
     function deployBase(address owner_, address treasury_) public returns (BaseDeployment memory deployment) {
@@ -160,6 +281,67 @@ contract DeployEqualFi is Script {
         address erc6551Registry_,
         address identityRegistry_
     ) public returns (LaunchDeployment memory deployment) {
+        LaunchSetup memory setup =
+            _deployLaunchSetup(owner_, governor_, treasury_, entryPoint_, erc6551Registry_, identityRegistry_);
+        deployment = _finalizeLaunch(setup, governor_, treasury_, entryPoint_, erc6551Registry_, identityRegistry_);
+    }
+
+    function deployLocalLaunch(
+        address owner_,
+        address governor_,
+        address treasury_,
+        address entryPoint_,
+        address erc6551Registry_,
+        address identityRegistry_
+    ) public returns (LocalLaunchDeployment memory deployment) {
+        LaunchSetup memory setup =
+            _deployLaunchSetup(owner_, governor_, treasury_, entryPoint_, erc6551Registry_, identityRegistry_);
+        LocalTestTokens memory tokens = _deployLocalTestTokens(owner_);
+        LocalPoolBootstrap memory pools = _bootstrapLocalProtocol(setup.base.diamond, tokens);
+        LaunchDeployment memory launch =
+            _finalizeLaunch(setup, governor_, treasury_, entryPoint_, erc6551Registry_, identityRegistry_);
+
+        deployment = LocalLaunchDeployment({
+            launch: launch,
+            eveToken: tokens.eve,
+            altToken: tokens.alt,
+            fotToken: tokens.fot,
+            evePoolId: pools.evePoolId,
+            altPoolId: pools.altPoolId,
+            fotPoolId: pools.fotPoolId,
+            nativePoolId: pools.nativePoolId
+        });
+    }
+
+    function _installTimelock(address diamond, address treasury_, address timelock_) internal {
+        DiamondInit initializer = new DiamondInit();
+        IDiamondCut(diamond).diamondCut(
+            new IDiamondCut.FacetCut[](0),
+            address(initializer),
+            abi.encodeWithSelector(DiamondInit.init.selector, timelock_, treasury_, address(0))
+        );
+    }
+
+    function _loadLaunchEnv() internal view returns (LocalLaunchEnv memory env) {
+        env.governor = vm.envAddress("TIMELOCK");
+        env.treasury = vm.envAddress("TREASURY");
+        env.entryPoint = vm.envAddress("ENTRYPOINT_ADDRESS");
+        env.erc6551Registry = vm.envAddress("ERC6551_REGISTRY");
+        env.identityRegistry = vm.envAddress("IDENTITY_REGISTRY");
+        env.deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        env.deployer = vm.addr(env.deployerPrivateKey);
+        env.owner = vm.envOr("OWNER", env.deployer);
+        require(env.deployer == env.owner, "DeployEqualFi: PRIVATE_KEY must be OWNER");
+    }
+
+    function _deployLaunchSetup(
+        address owner_,
+        address governor_,
+        address treasury_,
+        address entryPoint_,
+        address erc6551Registry_,
+        address identityRegistry_
+    ) internal returns (LaunchSetup memory setup) {
         address[] memory proposers = new address[](1);
         proposers[0] = governor_;
         address[] memory executors = new address[](1);
@@ -177,31 +359,99 @@ contract DeployEqualFi is Script {
         PositionAgentConfigFacet(base.diamond).setERC6551Registry(erc6551Registry_);
         PositionAgentConfigFacet(base.diamond).setERC6551Implementation(address(positionMSCAImplementation));
         PositionAgentConfigFacet(base.diamond).setIdentityRegistry(identityRegistry_);
-        _installTimelock(base.diamond, treasury_, address(timelockController));
 
-        OwnershipFacet(base.diamond).transferOwnership(address(timelockController));
+        setup = LaunchSetup({
+            base: base,
+            timelockController: address(timelockController),
+            optionToken: optionToken,
+            positionMSCAImplementation: address(positionMSCAImplementation)
+        });
+    }
+
+    function _finalizeLaunch(
+        LaunchSetup memory setup,
+        address governor_,
+        address treasury_,
+        address entryPoint_,
+        address erc6551Registry_,
+        address identityRegistry_
+    ) internal returns (LaunchDeployment memory deployment) {
+        _installTimelock(setup.base.diamond, treasury_, setup.timelockController);
+        OwnershipFacet(setup.base.diamond).transferOwnership(setup.timelockController);
 
         deployment = LaunchDeployment({
-            diamond: base.diamond,
-            positionNFT: base.positionNFT,
-            timelockController: address(timelockController),
+            diamond: setup.base.diamond,
+            positionNFT: setup.base.positionNFT,
+            timelockController: setup.timelockController,
             governor: governor_,
             treasury: treasury_,
             entryPoint: entryPoint_,
             erc6551Registry: erc6551Registry_,
             identityRegistry: identityRegistry_,
-            positionMSCAImplementation: address(positionMSCAImplementation),
-            optionToken: optionToken
+            positionMSCAImplementation: setup.positionMSCAImplementation,
+            optionToken: setup.optionToken
         });
     }
 
-    function _installTimelock(address diamond, address treasury_, address timelock_) internal {
-        DiamondInit initializer = new DiamondInit();
-        IDiamondCut(diamond).diamondCut(
-            new IDiamondCut.FacetCut[](0),
-            address(initializer),
-            abi.encodeWithSelector(DiamondInit.init.selector, timelock_, treasury_, address(0))
-        );
+    function _deployLocalTestTokens(address initialHolder) internal returns (LocalTestTokens memory tokens) {
+        LocalMockERC20 eve = new LocalMockERC20("EqualFi Launch EVE", "EVE", 18);
+        LocalMockERC20 alt = new LocalMockERC20("EqualFi Launch ALT", "ALT", 18);
+        LocalMockFeeOnTransfer fot = new LocalMockFeeOnTransfer("EqualFi Launch FoT", "FOT", 18);
+
+        eve.mint(initialHolder, LOCAL_TEST_MINT_AMOUNT);
+        alt.mint(initialHolder, LOCAL_TEST_MINT_AMOUNT);
+        fot.mint(initialHolder, LOCAL_TEST_MINT_AMOUNT);
+
+        tokens = LocalTestTokens({eve: address(eve), alt: address(alt), fot: address(fot)});
+    }
+
+    function _bootstrapLocalProtocol(address diamond, LocalTestTokens memory tokens)
+        internal
+        returns (LocalPoolBootstrap memory pools)
+    {
+        Types.PoolConfig memory config = _localLaunchPoolConfig();
+        Types.ActionFeeSet memory actionFees = _localLaunchActionFees();
+
+        PoolManagementFacet(diamond).setDefaultPoolConfig(config);
+        PoolManagementFacet(diamond).initPoolWithActionFees(LOCAL_EVE_POOL_ID, tokens.eve, config, actionFees);
+        PoolManagementFacet(diamond).initPoolWithActionFees(LOCAL_ALT_POOL_ID, tokens.alt, config, actionFees);
+        PoolManagementFacet(diamond).initPoolWithActionFees(LOCAL_FOT_POOL_ID, tokens.fot, config, actionFees);
+        PoolManagementFacet(diamond).initPoolWithActionFees(LOCAL_NATIVE_POOL_ID, address(0), config, actionFees);
+
+        pools = LocalPoolBootstrap({
+            evePoolId: LOCAL_EVE_POOL_ID,
+            altPoolId: LOCAL_ALT_POOL_ID,
+            fotPoolId: LOCAL_FOT_POOL_ID,
+            nativePoolId: LOCAL_NATIVE_POOL_ID
+        });
+    }
+
+    function _localLaunchPoolConfig() internal pure returns (Types.PoolConfig memory cfg) {
+        Types.FixedTermConfig[] memory fixedTerms = new Types.FixedTermConfig[](1);
+        fixedTerms[0] = Types.FixedTermConfig({durationSecs: 7 days, apyBps: 500});
+
+        cfg.rollingApyBps = 500;
+        cfg.depositorLTVBps = 8000;
+        cfg.maintenanceRateBps = 100;
+        cfg.flashLoanFeeBps = 20;
+        cfg.flashLoanAntiSplit = false;
+        cfg.minDepositAmount = 1e18;
+        cfg.minLoanAmount = 1e18;
+        cfg.minTopupAmount = 1e18;
+        cfg.isCapped = false;
+        cfg.depositCap = 0;
+        cfg.maxUserCount = 0;
+        cfg.aumFeeMinBps = 10;
+        cfg.aumFeeMaxBps = 100;
+        cfg.fixedTermConfigs = fixedTerms;
+    }
+
+    function _localLaunchActionFees() internal pure returns (Types.ActionFeeSet memory actionFees) {
+        actionFees.borrowFee = Types.ActionFeeConfig({amount: 0, enabled: false});
+        actionFees.repayFee = Types.ActionFeeConfig({amount: 0, enabled: false});
+        actionFees.withdrawFee = Types.ActionFeeConfig({amount: 0, enabled: false});
+        actionFees.flashFee = Types.ActionFeeConfig({amount: 0, enabled: false});
+        actionFees.closeRollingFee = Types.ActionFeeConfig({amount: 0, enabled: false});
     }
 
     function _installLaunchFacets(address diamond) internal {
@@ -307,6 +557,30 @@ contract DeployEqualFi is Script {
         {
             EqualScaleAlphaViewFacet facet = new EqualScaleAlphaViewFacet();
             cuts[i++] = _cut(address(facet), _selectorsEqualScaleAlphaView());
+        }
+        {
+            EqualXSoloAmmFacet facet = new EqualXSoloAmmFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualXSoloAmm());
+        }
+        {
+            EqualXCommunityAmmLiquidityFacet facet = new EqualXCommunityAmmLiquidityFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualXCommunityAmmLiquidity());
+        }
+        {
+            EqualXCommunityAmmSwapFacet facet = new EqualXCommunityAmmSwapFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualXCommunityAmmSwap());
+        }
+        {
+            EqualXCurveCreationFacet facet = new EqualXCurveCreationFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualXCurveCreation());
+        }
+        {
+            EqualXCurveExecutionFacet facet = new EqualXCurveExecutionFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualXCurveExecution());
+        }
+        {
+            EqualXCurveManagementFacet facet = new EqualXCurveManagementFacet();
+            cuts[i++] = _cut(address(facet), _selectorsEqualXCurveManagement());
         }
         {
             EqualXViewFacet facet = new EqualXViewFacet();
@@ -668,6 +942,58 @@ contract DeployEqualFi is Script {
         s[11] = EqualScaleAlphaViewFacet.getLineLossSummary.selector;
     }
 
+    function _selectorsEqualXSoloAmm() internal pure virtual returns (bytes4[] memory s) {
+        s = new bytes4[](9);
+        s[0] = EqualXSoloAmmFacet.createEqualXSoloAmmMarket.selector;
+        s[1] = EqualXSoloAmmFacet.setEqualXSoloAmmMinRebalanceTimelock.selector;
+        s[2] = EqualXSoloAmmFacet.scheduleEqualXSoloAmmRebalance.selector;
+        s[3] = EqualXSoloAmmFacet.cancelEqualXSoloAmmRebalance.selector;
+        s[4] = EqualXSoloAmmFacet.executeEqualXSoloAmmRebalance.selector;
+        s[5] = EqualXSoloAmmFacet.previewEqualXSoloAmmSwapExactIn.selector;
+        s[6] = EqualXSoloAmmFacet.swapEqualXSoloAmmExactIn.selector;
+        s[7] = EqualXSoloAmmFacet.finalizeEqualXSoloAmmMarket.selector;
+        s[8] = EqualXSoloAmmFacet.cancelEqualXSoloAmmMarket.selector;
+    }
+
+    function _selectorsEqualXCommunityAmmLiquidity() internal pure virtual returns (bytes4[] memory s) {
+        s = new bytes4[](6);
+        s[0] = EqualXCommunityAmmLiquidityFacet.createEqualXCommunityAmmMarket.selector;
+        s[1] = EqualXCommunityAmmLiquidityFacet.joinEqualXCommunityAmmMarket.selector;
+        s[2] = EqualXCommunityAmmLiquidityFacet.claimEqualXCommunityAmmFees.selector;
+        s[3] = EqualXCommunityAmmLiquidityFacet.leaveEqualXCommunityAmmMarket.selector;
+        s[4] = EqualXCommunityAmmLiquidityFacet.finalizeEqualXCommunityAmmMarket.selector;
+        s[5] = EqualXCommunityAmmLiquidityFacet.cancelEqualXCommunityAmmMarket.selector;
+    }
+
+    function _selectorsEqualXCommunityAmmSwap() internal pure virtual returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = EqualXCommunityAmmSwapFacet.previewEqualXCommunityAmmSwapExactIn.selector;
+        s[1] = EqualXCommunityAmmSwapFacet.swapEqualXCommunityAmmExactIn.selector;
+    }
+
+    function _selectorsEqualXCurveCreation() internal pure virtual returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = EqualXCurveCreationFacet.createEqualXCurve.selector;
+        s[1] = EqualXCurveCreationFacet.setEqualXCurveProfile.selector;
+    }
+
+    function _selectorsEqualXCurveExecution() internal pure virtual returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = EqualXCurveExecutionFacet.previewEqualXCurveQuote.selector;
+        s[1] = EqualXCurveExecutionFacet.getEqualXCurveCommitment.selector;
+        s[2] = bytes4(keccak256("executeEqualXCurveSwap(uint256,uint256,uint256,uint256,uint64,address)"));
+        s[3] = bytes4(
+            keccak256("executeEqualXCurveSwap(uint256,uint256,uint256,uint256,uint64,address,uint32,bytes32)")
+        );
+    }
+
+    function _selectorsEqualXCurveManagement() internal pure virtual returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = EqualXCurveManagementFacet.updateEqualXCurve.selector;
+        s[1] = EqualXCurveManagementFacet.cancelEqualXCurve.selector;
+        s[2] = EqualXCurveManagementFacet.expireEqualXCurve.selector;
+    }
+
     function _selectorsEqualXView() internal pure virtual returns (bytes4[] memory s) {
         s = new bytes4[](27);
         s[0] = EqualXViewFacet.getEqualXSoloAmmMarket.selector;
@@ -736,23 +1062,24 @@ contract DeployEqualFi is Script {
     }
 
     function _selectorsEdenRewards() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](16);
+        s = new bytes4[](17);
         s[0] = EdenRewardsFacet.createRewardProgram.selector;
         s[1] = EdenRewardsFacet.setRewardProgramTransferFeeBps.selector;
-        s[2] = EdenRewardsFacet.setRewardProgramEnabled.selector;
-        s[3] = EdenRewardsFacet.pauseRewardProgram.selector;
-        s[4] = EdenRewardsFacet.resumeRewardProgram.selector;
-        s[5] = EdenRewardsFacet.endRewardProgram.selector;
-        s[6] = EdenRewardsFacet.closeRewardProgram.selector;
-        s[7] = EdenRewardsFacet.fundRewardProgram.selector;
-        s[8] = EdenRewardsFacet.accrueRewardProgram.selector;
-        s[9] = EdenRewardsFacet.settleRewardProgramPosition.selector;
-        s[10] = EdenRewardsFacet.claimRewardProgram.selector;
-        s[11] = EdenRewardsFacet.getRewardProgram.selector;
-        s[12] = EdenRewardsFacet.previewRewardProgramState.selector;
-        s[13] = EdenRewardsFacet.getRewardProgramIdsByTarget.selector;
-        s[14] = EdenRewardsFacet.previewRewardProgramPosition.selector;
-        s[15] = EdenRewardsFacet.previewRewardProgramsForPosition.selector;
+        s[2] = EdenRewardsFacet.setRewardProgramManager.selector;
+        s[3] = EdenRewardsFacet.setRewardProgramEnabled.selector;
+        s[4] = EdenRewardsFacet.pauseRewardProgram.selector;
+        s[5] = EdenRewardsFacet.resumeRewardProgram.selector;
+        s[6] = EdenRewardsFacet.endRewardProgram.selector;
+        s[7] = EdenRewardsFacet.closeRewardProgram.selector;
+        s[8] = EdenRewardsFacet.fundRewardProgram.selector;
+        s[9] = EdenRewardsFacet.accrueRewardProgram.selector;
+        s[10] = EdenRewardsFacet.settleRewardProgramPosition.selector;
+        s[11] = EdenRewardsFacet.claimRewardProgram.selector;
+        s[12] = EdenRewardsFacet.getRewardProgram.selector;
+        s[13] = EdenRewardsFacet.previewRewardProgramState.selector;
+        s[14] = EdenRewardsFacet.getRewardProgramIdsByTarget.selector;
+        s[15] = EdenRewardsFacet.previewRewardProgramPosition.selector;
+        s[16] = EdenRewardsFacet.previewRewardProgramsForPosition.selector;
     }
 
 }

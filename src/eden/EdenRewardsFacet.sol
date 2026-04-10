@@ -228,7 +228,14 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         if (program.config.closed) revert InvalidParameterRange("programClosed");
 
         LibEdenRewardsStorage.RewardProgramState memory stateBefore = program.state;
+        bool preserveInitialCheckpoint = stateBefore.fundedReserve == 0 && stateBefore.globalRewardIndex == 0
+            && program.config.startTime != 0 && program.config.startTime < block.timestamp;
         LibEdenRewardsStorage.RewardProgramState memory stateAfterAccrual = LibEdenRewardsEngine.accrueProgram(programId);
+        if (preserveInitialCheckpoint && stateAfterAccrual.fundedReserve == 0) {
+            // Preserve the configured start checkpoint until the first real funding arrives.
+            program.state.lastRewardUpdate = stateBefore.lastRewardUpdate;
+            stateAfterAccrual.lastRewardUpdate = stateBefore.lastRewardUpdate;
+        }
         funded = LibCurrency.pullAtLeast(program.config.rewardToken, msg.sender, amount, maxAmount);
         program.state.fundedReserve = stateAfterAccrual.fundedReserve + funded;
         program.state.programBackingBalance += funded;
