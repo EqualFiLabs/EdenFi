@@ -213,6 +213,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         LibEdenRewardsStorage.RewardProgramState memory stateAfterAccrual = LibEdenRewardsEngine.accrueProgram(programId);
         funded = LibCurrency.pullAtLeast(program.config.rewardToken, msg.sender, amount, maxAmount);
         program.state.fundedReserve = stateAfterAccrual.fundedReserve + funded;
+        program.state.programBackingBalance += funded;
 
         _emitAccrual(programId, stateBefore, stateAfterAccrual);
         emit RewardProgramFunded(programId, msg.sender, funded);
@@ -256,20 +257,19 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
         uint256 grossClaimAmount =
             LibEdenRewardsEngine.grossUpNetAmount(claimed, program.config.outboundTransferBps);
-        uint256 availableGross = LibCurrency.balanceOfSelf(program.config.rewardToken);
+        uint256 availableGross = _availableProgramBacking(programId, program.config.rewardToken);
         if (grossClaimAmount > availableGross) {
-            grossClaimAmount = availableGross;
+            revert InvalidParameterRange("insufficientProgramBacking");
         }
-        if (grossClaimAmount == 0) revert InvalidParameterRange("programBalance");
 
         uint256 recipientBalanceBefore = IERC20(program.config.rewardToken).balanceOf(to);
         LibEdenRewardsStorage.s().accruedRewards[programId][positionKey] = 0;
+        program.state.programBackingBalance -= grossClaimAmount;
         LibCurrency.transfer(program.config.rewardToken, to, grossClaimAmount);
         uint256 recipientBalanceAfter = IERC20(program.config.rewardToken).balanceOf(to);
         uint256 netReceived = recipientBalanceAfter - recipientBalanceBefore;
-        if (netReceived < claimed) {
-            LibEdenRewardsStorage.s().accruedRewards[programId][positionKey] = claimed - netReceived;
-            claimed = netReceived;
+        if (netReceived != claimed) {
+            revert InvalidParameterRange("claimDeliveryMismatch");
         }
 
         emit RewardProgramClaimed(programId, positionId, positionKey, to, claimed);
@@ -452,6 +452,31 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         }
 
         return accrued;
+    }
+
+    function _availableProgramBacking(uint256 programId, address rewardToken) private view returns (uint256 availableGross) {
+        LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
+        uint256 liveBalance = LibCurrency.balanceOfSelf(rewardToken);
+        uint256 reservedOtherPrograms;
+
+        for (uint256 otherProgramId = 1; otherProgramId <= store.nextProgramId; otherProgramId++) {
+            if (otherProgramId == programId) continue;
+
+            LibEdenRewardsStorage.RewardProgram storage otherProgram = store.programs[otherProgramId];
+            if (otherProgram.config.rewardToken != rewardToken) continue;
+
+            reservedOtherPrograms += otherProgram.state.programBackingBalance;
+        }
+
+        if (reservedOtherPrograms >= liveBalance) {
+            return 0;
+        }
+
+        availableGross = liveBalance - reservedOtherPrograms;
+        uint256 programBackingBalance = store.programs[programId].state.programBackingBalance;
+        if (availableGross > programBackingBalance) {
+            availableGross = programBackingBalance;
+        }
     }
 
     function _emitAccrual(

@@ -53,7 +53,8 @@ contract EdenRewardsStorageHarness {
             lastRewardUpdate: lastRewardUpdate,
             globalRewardIndex: globalRewardIndex,
             eligibleSupply: eligibleSupply,
-            rewardIndexRemainder: 0
+            rewardIndexRemainder: 0,
+            programBackingBalance: 0
         });
     }
 

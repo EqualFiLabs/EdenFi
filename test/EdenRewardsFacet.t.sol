@@ -133,9 +133,6 @@ contract EdenRewardsFacetTest is LaunchFixture {
         vm.warp(block.timestamp + 10);
         driftReward.forceTransfer(diamond, sink, 50e18);
 
-        vm.prank(alice);
-        EdenRewardsFacet(diamond).claimRewardProgram(programA, alicePositionId, alice);
-
         uint256 programB = _createEqualIndexRewardProgram(indexB, address(driftReward), manager, 10e18, 0, 0, true);
         _fundRewardProgram(address(this), programB, driftReward, 100e18);
 

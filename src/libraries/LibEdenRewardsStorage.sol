@@ -34,6 +34,7 @@ library LibEdenRewardsStorage {
         uint256 globalRewardIndex;
         uint256 eligibleSupply;
         uint256 rewardIndexRemainder;
+        uint256 programBackingBalance;
     }
 
     struct RewardProgram {
