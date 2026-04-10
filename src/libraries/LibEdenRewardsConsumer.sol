@@ -28,6 +28,7 @@ library LibEdenRewardsConsumer {
         uint256 eligibleSupply = currentEligibleSupply(target);
         for (uint256 i = 0; i < len; i++) {
             uint256 programId = programIds[i];
+            if (store.programs[programId].config.closed) continue;
             store.programs[programId].state.eligibleSupply = eligibleSupply;
         }
     }
@@ -41,7 +42,9 @@ library LibEdenRewardsConsumer {
         uint256[] storage programIds = LibEdenRewardsStorage.programIdsForTarget(store, target);
         uint256 len = programIds.length;
         for (uint256 i = 0; i < len; i++) {
-            LibEdenRewardsEngine.settleProgramPosition(programIds[i], positionKey, eligibleBalance);
+            uint256 programId = programIds[i];
+            if (store.programs[programId].config.closed) continue;
+            LibEdenRewardsEngine.settleProgramPosition(programId, positionKey, eligibleBalance);
         }
     }
 }

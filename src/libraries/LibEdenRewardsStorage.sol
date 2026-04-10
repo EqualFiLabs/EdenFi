@@ -68,6 +68,23 @@ library LibEdenRewardsStorage {
         store.targetProgramIds[targetKey(target)].push(programId);
     }
 
+    function removeProgramFromTarget(RewardsStorage storage store, uint256 programId, RewardTarget memory target)
+        internal
+    {
+        uint256[] storage programIds = store.targetProgramIds[targetKey(target)];
+        uint256 len = programIds.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (programIds[i] != programId) continue;
+
+            uint256 lastIndex = len - 1;
+            if (i != lastIndex) {
+                programIds[i] = programIds[lastIndex];
+            }
+            programIds.pop();
+            return;
+        }
+    }
+
     function targetKey(RewardTarget memory target) internal pure returns (bytes32) {
         return targetKey(target.targetType, target.targetId);
     }

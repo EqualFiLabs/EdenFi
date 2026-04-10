@@ -744,7 +744,7 @@ contract EdenRewardsFacetTest is LaunchFixture {
         assertEq(claimed, 200e18);
     }
 
-    function test_EqualIndexRewards_ClosedProgramStillAllowsOutstandingClaims() public {
+    function test_EqualIndexRewards_CloseProgramRequiresDrainBeforeClose() public {
         uint256 alicePositionId = _fundEvePosition(alice, 20e18);
         uint256 indexId = _createRewardIndex("Closed Reward Index", "CLRI");
 
@@ -761,12 +761,11 @@ contract EdenRewardsFacetTest is LaunchFixture {
 
         (, LibEdenRewardsStorage.RewardProgramState memory state) = EdenRewardsFacet(diamond).getRewardProgram(programId);
         assertEq(state.fundedReserve, 0);
+        assertEq(state.programBackingBalance, 100e18);
 
         vm.prank(address(timelockController));
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "programBacking"));
         EdenRewardsFacet(diamond).closeRewardProgram(programId);
-
-        (LibEdenRewardsStorage.RewardProgramConfig memory config,) = EdenRewardsFacet(diamond).getRewardProgram(programId);
-        assertTrue(config.closed);
 
         EdenRewardsFacet.RewardProgramPositionView memory preview =
             EdenRewardsFacet(diamond).previewRewardProgramPosition(programId, alicePositionId);
@@ -776,6 +775,15 @@ contract EdenRewardsFacetTest is LaunchFixture {
         uint256 claimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, alicePositionId, alice);
         assertEq(claimed, 100e18);
         assertEq(alt.balanceOf(alice), 100e18);
+
+        (, state) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(state.programBackingBalance, 0);
+
+        vm.prank(address(timelockController));
+        EdenRewardsFacet(diamond).closeRewardProgram(programId);
+
+        (LibEdenRewardsStorage.RewardProgramConfig memory config,) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertTrue(config.closed);
     }
 
     function test_EqualIndexRewards_FeeOnTransferProgramHandlesLiveHookDrivenEligibility() public {

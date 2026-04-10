@@ -181,11 +181,13 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
 
     function closeRewardProgram(uint256 programId) external nonReentrant {
         LibCurrency.assertZeroMsgValue();
+        LibEdenRewardsStorage.RewardsStorage storage store = LibEdenRewardsStorage.s();
         LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
         _enforceManagerOrGovernance(program.config.manager);
         if (program.config.closed) revert InvalidParameterRange("programClosed");
         _accrueBeforeLifecycleMutation(programId, program);
         if (program.state.fundedReserve != 0) revert InvalidParameterRange("programReserve");
+        if (program.state.programBackingBalance != 0) revert InvalidParameterRange("programBacking");
 
         uint256 endTime = program.config.endTime;
         if (endTime == 0 || endTime > block.timestamp) revert InvalidParameterRange("programNotEnded");
@@ -193,6 +195,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         program.config.closed = true;
         program.config.enabled = false;
         program.config.paused = false;
+        LibEdenRewardsStorage.removeProgramFromTarget(store, programId, program.config.target);
 
         emit RewardProgramClosed(programId);
     }
