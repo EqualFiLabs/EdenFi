@@ -203,6 +203,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
         nonReentrant
         returns (uint256 funded)
     {
+        LibCurrency.assertZeroMsgValue();
         if (amount == 0) revert InvalidParameterRange("amount=0");
 
         LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
