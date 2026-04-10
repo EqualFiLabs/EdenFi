@@ -50,6 +50,7 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
     event RewardProgramResumed(uint256 indexed programId);
     event RewardProgramEnded(uint256 indexed programId, uint256 endTime);
     event RewardProgramClosed(uint256 indexed programId);
+    event RewardProgramManagerUpdated(uint256 indexed programId, address indexed oldManager, address indexed newManager);
     event RewardProgramTransferFeeUpdated(uint256 indexed programId, uint16 outboundTransferBps);
     event RewardProgramFunded(uint256 indexed programId, address indexed funder, uint256 amount);
     event RewardProgramAccrued(
@@ -128,6 +129,20 @@ contract EdenRewardsFacet is ReentrancyGuardModifiers {
 
         program.config.outboundTransferBps = outboundTransferBps;
         emit RewardProgramTransferFeeUpdated(programId, outboundTransferBps);
+    }
+
+    function setRewardProgramManager(uint256 programId, address newManager) external nonReentrant {
+        LibCurrency.assertZeroMsgValue();
+        if (newManager == address(0)) revert InvalidParameterRange("manager");
+
+        LibEdenRewardsStorage.RewardProgram storage program = _program(programId);
+        _enforceManagerOrGovernance(program.config.manager);
+        if (program.config.closed) revert InvalidParameterRange("programClosed");
+
+        address oldManager = program.config.manager;
+        program.config.manager = newManager;
+
+        emit RewardProgramManagerUpdated(programId, oldManager, newManager);
     }
 
     function setRewardProgramEnabled(uint256 programId, bool enabled) external nonReentrant {

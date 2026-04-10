@@ -40,6 +40,7 @@ contract EdenRewardsFacetTest is LaunchFixture {
         bool enabled
     );
     event RewardProgramFunded(uint256 indexed programId, address indexed funder, uint256 amount);
+    event RewardProgramManagerUpdated(uint256 indexed programId, address indexed oldManager, address indexed newManager);
     event RewardProgramAccrued(
         uint256 indexed programId, uint256 allocated, uint256 globalRewardIndex, uint256 fundedReserve, uint256 lastRewardUpdate
     );
@@ -870,6 +871,84 @@ contract EdenRewardsFacetTest is LaunchFixture {
         vm.prank(alice);
         uint256 claimed = EdenRewardsFacet(diamond).claimRewardProgram(programId, alicePositionId, alice);
         assertEq(claimed, 200e18);
+    }
+
+    function test_ManagerRotation_CurrentManagerCanRotateAndNewManagerControlsLifecycle() public {
+        uint256 indexId = _createRewardIndex("Manager Rotation Index", "MRI");
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), manager, 1e18, 0, 0, true);
+        address newManager = makeAddr("newManager");
+
+        vm.expectEmit(true, true, true, false);
+        emit RewardProgramManagerUpdated(programId, manager, newManager);
+
+        vm.prank(manager);
+        EdenRewardsFacet(diamond).setRewardProgramManager(programId, newManager);
+
+        (LibEdenRewardsStorage.RewardProgramConfig memory config,) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(config.manager, newManager);
+
+        vm.prank(newManager);
+        EdenRewardsFacet(diamond).pauseRewardProgram(programId);
+
+        (config,) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertTrue(config.paused);
+    }
+
+    function test_ManagerRotation_GovernanceCanRotateTheManager() public {
+        uint256 indexId = _createRewardIndex("Governed Manager Rotation", "GMR");
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), manager, 1e18, 0, 0, true);
+        address newManager = makeAddr("governanceRotatedManager");
+
+        vm.prank(address(timelockController));
+        EdenRewardsFacet(diamond).setRewardProgramManager(programId, newManager);
+
+        (LibEdenRewardsStorage.RewardProgramConfig memory config,) = EdenRewardsFacet(diamond).getRewardProgram(programId);
+        assertEq(config.manager, newManager);
+    }
+
+    function test_RevertWhen_ManagerRotationUnauthorizedCallerAttemptsUpdate() public {
+        uint256 indexId = _createRewardIndex("Unauthorized Rotation Index", "URI");
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), manager, 1e18, 0, 0, true);
+
+        vm.prank(stranger);
+        vm.expectRevert(Unauthorized.selector);
+        EdenRewardsFacet(diamond).setRewardProgramManager(programId, makeAddr("unauthorizedTarget"));
+    }
+
+    function test_RevertWhen_ManagerRotationUsesZeroAddress() public {
+        uint256 indexId = _createRewardIndex("Zero Manager Rotation", "ZMR");
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), manager, 1e18, 0, 0, true);
+
+        vm.prank(manager);
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "manager"));
+        EdenRewardsFacet(diamond).setRewardProgramManager(programId, address(0));
+    }
+
+    function test_RevertWhen_ManagerRotationTargetsClosedProgram() public {
+        uint256 indexId = _createRewardIndex("Closed Manager Rotation", "CMR");
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), manager, 1e18, 0, 0, true);
+
+        vm.prank(address(timelockController));
+        EdenRewardsFacet(diamond).endRewardProgram(programId);
+        vm.prank(address(timelockController));
+        EdenRewardsFacet(diamond).closeRewardProgram(programId);
+
+        vm.prank(address(timelockController));
+        vm.expectRevert(abi.encodeWithSelector(InvalidParameterRange.selector, "programClosed"));
+        EdenRewardsFacet(diamond).setRewardProgramManager(programId, makeAddr("closedProgramManager"));
+    }
+
+    function test_ManagerRotation_OldManagerIsRejectedAfterRotation() public {
+        uint256 indexId = _createRewardIndex("Old Manager Rejected", "OMR");
+        uint256 programId = _createEqualIndexRewardProgram(indexId, address(alt), manager, 1e18, 0, 0, true);
+        address newManager = makeAddr("replacementManager");
+
+        vm.prank(manager);
+        EdenRewardsFacet(diamond).setRewardProgramManager(programId, newManager);
+
+        vm.prank(manager);
+        vm.expectRevert(Unauthorized.selector);
+        EdenRewardsFacet(diamond).pauseRewardProgram(programId);
     }
 
     function _fundEvePosition(address user, uint256 amount) internal returns (uint256 positionId) {
